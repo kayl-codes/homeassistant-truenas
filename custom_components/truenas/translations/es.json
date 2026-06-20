@@ -21,6 +21,14 @@
                     "cronjob_skip_disabled": "Omitir cronjobs deshabilitados en la ejecución manual",
                     "data_unit": "Unidad de tamaño de datos (GB o GiB)"
                 }
+            },
+            "migrate": {
+                "title": "Se encontró una configuración de TrueNAS existente",
+                "description": "Se detectó una integración de TrueNAS anterior. Puede adoptar sus ajustes (anfitrión, clave API y opciones) para no tener que introducirlos de nuevo — sus entidades existentes y su historial se conservan. O configure TrueNAS CE desde cero.",
+                "menu_options": {
+                    "migrate_import": "Adoptar la configuración existente",
+                    "migrate_manual": "Configurar desde cero"
+                }
             }
         },
         "error": {
@@ -76,12 +84,30 @@
                     }
                 }
             }
+        },
+        "migration_rollback_available": {
+            "title": "Migración de TrueNAS CE — reversión disponible",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "¿Revertir la migración de TrueNAS CE?",
+                        "description": "TrueNAS Community Edition adoptó {count} entidad(es) y su historial de su integración de TrueNAS anterior, que ahora está deshabilitada (no eliminada). Conserve TrueNAS CE, o revierta para devolver las entidades y el historial a la integración antigua. Al revertir se elimina la integración de TrueNAS CE. Esto solo es posible mientras la integración antigua siga existiendo.",
+                        "menu_options": {
+                            "rollback": "Volver a la integración anterior",
+                            "ignore": "Conservar TrueNAS CE (descartar)"
+                        }
+                    }
+                }
+            }
         }
     },
     "entity": {
         "button": {
             "statistics_cleanup": {
                 "name": "Limpiar estadísticas huérfanas"
+            },
+            "migration_rollback": {
+                "name": "Revertir la migración"
             }
         }
     }

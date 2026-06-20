@@ -17,7 +17,13 @@ from .button_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
 )
-from .const import BUTTON_STATISTICS_CLEANUP, DOMAIN
+from .const import (
+    BUTTON_MIGRATION_ROLLBACK,
+    BUTTON_STATISTICS_CLEANUP,
+    DOMAIN,
+    LEGACY_DOMAIN,
+    MIGRATION_LEGACY_ENTRY_ID,
+)
 from .coordinator import TrueNASCoordinator
 from .entity import (
     TrueNASEntity,
@@ -47,6 +53,13 @@ async def async_setup_entry(
     # config entry, not tied to a TrueNAS object, so it is added directly.
     coordinator: TrueNASCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     _async_add_entities([TrueNASStatisticsCleanupButton(coordinator)])
+
+    # Migration rollback: a safe diagnostic button that only opens the Repairs
+    # confirm dialog (it never rolls back directly). Created only after a
+    # Community-Edition migration adopted a legacy entry — never on the original
+    # "truenas" integration.
+    if DOMAIN != LEGACY_DOMAIN and config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID):
+        _async_add_entities([TrueNASMigrationRollbackButton(coordinator)])
 
 
 # ---------------------------
@@ -107,3 +120,44 @@ class TrueNASStatisticsCleanupButton(
     async def async_press(self) -> None:
         """Clear the orphaned statistics."""
         await self.coordinator.async_clear_orphaned_statistics()
+
+
+# ---------------------------
+#   TrueNASMigrationRollbackButton
+# ---------------------------
+class TrueNASMigrationRollbackButton(
+    CoordinatorEntity[TrueNASCoordinator], ButtonEntity
+):
+    """Diagnostic button that opens the Community-Edition rollback confirmation.
+
+    It is intentionally non-destructive: pressing it only raises the rollback
+    Repairs issue (a confirm dialog), so an accidental press can never tear the
+    integration down — the actual rollback happens only after the user confirms
+    in Repairs. Available, and the issue re-raisable, only while the disabled
+    legacy "truenas" entry still exists.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = BUTTON_MIGRATION_ROLLBACK
+    _attr_icon = "mdi:backup-restore"
+
+    def __init__(self, coordinator: TrueNASCoordinator) -> None:
+        """Initialize the rollback button."""
+        super().__init__(coordinator)
+        inst = coordinator.config_entry.data[CONF_NAME]
+        self._attr_unique_id = format_unique_id(inst, BUTTON_MIGRATION_ROLLBACK)
+        hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, format_device_identifier(inst, hostname))},
+        )
+
+    @property
+    def available(self) -> bool:
+        """Available only while the legacy entry to roll back to still exists."""
+        legacy_id = self.coordinator.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID)
+        return bool(legacy_id and self.hass.config_entries.async_get_entry(legacy_id))
+
+    async def async_press(self) -> None:
+        """Open the rollback confirmation by raising its Repairs issue."""
+        self.coordinator.raise_migration_rollback_issue()

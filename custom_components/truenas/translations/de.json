@@ -21,6 +21,14 @@
                     "cronjob_skip_disabled": "Deaktivierte Cronjobs bei manueller Ausführung überspringen",
                     "data_unit": "Einheit der Datengröße (GB oder GiB)"
                 }
+            },
+            "migrate": {
+                "title": "Vorhandene TrueNAS-Konfiguration gefunden",
+                "description": "Eine frühere TrueNAS-Integration wurde erkannt. Du kannst ihre Einstellungen (Host, API-Schlüssel und Optionen) übernehmen, damit du sie nicht erneut eingeben musst — deine vorhandenen Entitäten und deren Verlauf bleiben erhalten. Oder richte TrueNAS CE von Grund auf neu ein.",
+                "menu_options": {
+                    "migrate_import": "Vorhandene Konfiguration übernehmen",
+                    "migrate_manual": "Von Grund auf einrichten"
+                }
             }
         },
         "error": {
@@ -76,12 +84,30 @@
                     }
                 }
             }
+        },
+        "migration_rollback_available": {
+            "title": "TrueNAS-CE-Migration — Rückgängig möglich",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "TrueNAS-CE-Migration rückgängig machen?",
+                        "description": "TrueNAS Community Edition hat {count} Entität(en) und deren Verlauf von deiner früheren TrueNAS-Integration übernommen, die nun deaktiviert (nicht gelöscht) ist. Behalte TrueNAS CE oder mache die Migration rückgängig, um die Entitäten und den Verlauf an die alte Integration zurückzugeben. Beim Rückgängigmachen wird die TrueNAS-CE-Integration entfernt. Dies ist nur möglich, solange die alte Integration noch existiert.",
+                        "menu_options": {
+                            "rollback": "Zur früheren Integration zurückkehren",
+                            "ignore": "TrueNAS CE behalten (verwerfen)"
+                        }
+                    }
+                }
+            }
         }
     },
     "entity": {
         "button": {
             "statistics_cleanup": {
                 "name": "Verwaiste Statistiken bereinigen"
+            },
+            "migration_rollback": {
+                "name": "Migration rückgängig machen"
             }
         }
     }

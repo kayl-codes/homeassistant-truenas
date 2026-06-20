@@ -21,6 +21,14 @@
                     "cronjob_skip_disabled": "Pri manuálnom spustení preskočiť zakázané cron úlohy",
                     "data_unit": "Jednotka veľkosti údajov (GB alebo GiB)"
                 }
+            },
+            "migrate": {
+                "title": "Nájdená existujúca konfigurácia TrueNAS",
+                "description": "Bola zistená predchádzajúca integrácia TrueNAS. Môžete prevziať jej nastavenia (hostiteľ, kľúč API a možnosti), aby ste ich nemuseli zadávať znova — vaše existujúce entity a ich história sa zachovajú. Alebo nastavte TrueNAS CE od začiatku.",
+                "menu_options": {
+                    "migrate_import": "Prevziať existujúcu konfiguráciu",
+                    "migrate_manual": "Nastaviť od začiatku"
+                }
             }
         },
         "error": {
@@ -76,12 +84,30 @@
                     }
                 }
             }
+        },
+        "migration_rollback_available": {
+            "title": "Migrácia TrueNAS CE — vrátenie možné",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "Vrátiť migráciu TrueNAS CE?",
+                        "description": "TrueNAS Community Edition prevzal {count} entitu(y) a ich históriu z vašej predchádzajúcej integrácie TrueNAS, ktorá je teraz zakázaná (nie odstránená). Ponechajte TrueNAS CE alebo vráťte migráciu, aby ste entity a históriu vrátili starej integrácii. Vrátením sa integrácia TrueNAS CE odstráni. Je to možné len kým stará integrácia ešte existuje.",
+                        "menu_options": {
+                            "rollback": "Vrátiť sa k predchádzajúcej integrácii",
+                            "ignore": "Ponechať TrueNAS CE (zrušiť)"
+                        }
+                    }
+                }
+            }
         }
     },
     "entity": {
         "button": {
             "statistics_cleanup": {
                 "name": "Vyčistiť osirotené štatistiky"
+            },
+            "migration_rollback": {
+                "name": "Vrátiť migráciu"
             }
         }
     }

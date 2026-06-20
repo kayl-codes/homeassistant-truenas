@@ -14,7 +14,7 @@ __pycache__/
 /requirements_tests.txt
 
 # Claude Code (personal/local settings — permission rules etc.)
-.claude/settings.local.json
+.claude/
 
 # Editor / OS junk
 .DS_Store
