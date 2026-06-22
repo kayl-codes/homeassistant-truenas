@@ -15,10 +15,22 @@
   <img alt="TrueNAS Community Edition" src="https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/header-ce.png">
 </picture>
 
-> **Note:** This is an actively maintained and updated fork of the original
-> [TrueNAS integration by tomaae](https://github.com/tomaae/homeassistant-truenas).
-> See the **[Changelog](CHANGELOG.md)** for a summary of everything that has changed
-> since the fork (new features, fixes and improvements per version).
+> **Note:** This is an independent integration, originally forked from the
+> [TrueNAS integration by tomaae](https://github.com/tomaae/homeassistant-truenas)
+> and now maintained as a standalone project. See the **[Changelog](CHANGELOG.md)**
+> for a summary of everything that has changed per version.
+
+> ### ⚠️ Version 2.0.0 — breaking change & independent project
+> The Home Assistant **domain changed from `truenas` to `truenas_ce`** as this
+> project became independent. Your data is safe: after updating, add **“TrueNAS CE”**
+> once — host, API key, options, **entities, history and long-term statistics are
+> migrated automatically** (one-click config takeover, with a Repairs-based rollback
+> while the old integration is still installed). Full guide:
+> **[docs/migration.md](docs/migration.md)**.
+>
+> ⭐ The repository was **re-created** as a standalone (non-fork) project. If you
+> starred the old repo, please **re-star this one** — old stars stay on the legacy
+> repository and don't carry over.
 
 Monitor and control your TrueNAS device from Home Assistant.
  * Monitor System (CPU, Load, Memory, Temperature, ARC/L2ARC, Uptime)
@@ -36,6 +48,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
  * Monitor Active Alerts and Diagnostics
  * Create a Dataset Snapshot
+ * Lock / unlock encrypted Datasets
  * Update Sensor
  * Reboot and Shutdown TrueNAS system
  * Configurable poll interval, data unit, behaviour and per-group sensor toggles (Options)

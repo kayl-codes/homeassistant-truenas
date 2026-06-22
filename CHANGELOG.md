@@ -14,6 +14,40 @@ Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNA
 
 ---
 
+## [2.0.0] — Independent project: rename to `truenas_ce`, dataset lock/unlock
+
+> **Breaking change.** The integration **domain** changed from `truenas` to
+> `truenas_ce` as the project became an independent, standalone integration.
+> Updating is safe: the old code stays in place, and when you add **TrueNAS CE**
+> your existing entities, **history and long-term statistics are migrated
+> automatically** (one-click config takeover, with a Repairs-based rollback while
+> the old integration is still installed). See [docs/migration.md](docs/migration.md).
+
+### Added
+- **Lock / unlock encrypted datasets (#53):** new `dataset_lock` and `dataset_unlock`
+  actions (target a dataset sensor) for passphrase-encrypted datasets, plus new
+  dataset attributes **Encrypted**, **Locked** and **Encryption key format**
+  (passphrase/key). Unlock failures (e.g. a wrong passphrase) surface as a clear
+  error, and locking/unlocking a non-encrypted dataset is rejected up front.
+- **Community-Edition migration (config takeover):** adding **TrueNAS CE** detects an
+  existing `truenas` integration and imports its host, API key and options in one
+  click; existing entity IDs, history and statistics are adopted, and a
+  post-migration notification summarizes what was migrated.
+- **Rollback safety net:** a diagnostic button opens a **Repairs** confirmation flow
+  that undoes the migration (re-enables the old integration) while it is still
+  installed; a `.storage` backup snapshot is written before any change.
+
+### Changed
+- **The project is now independent** (de-forked) and renamed to `truenas_ce`. The
+  display name stays **TrueNAS** and entity IDs are preserved across the migration.
+- CI: the release upload action was bumped to a Node 24 version (SHA-pinned) and
+  curated release notes are now preserved on publish (#52).
+
+### Notes
+- ⭐ **The repository was re-created** to become a standalone (non-fork) project. If
+  you had **starred** the old repository, please **re-star** the new one — the old
+  stars stay on the legacy repository and don't carry over.
+
 ## [1.9.1] — Orphaned statistics cleanup, reverse-proxy detection & translations
 
 ### Added
@@ -237,6 +271,7 @@ Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNA
 - Handle JSON-RPC parsing errors to prevent crashes on unexpected API formats.
 - Modern type hints and `.get()` fallbacks to avoid `KeyError` crashes.
 
+[2.0.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/2.0.0
 [1.9.1]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/1.9.1
 [1.9.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/1.9.0
 [1.8.1]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/1.8.1

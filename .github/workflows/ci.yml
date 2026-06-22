@@ -71,7 +71,7 @@ jobs:
       - name: Install Bandit
         run: pip install bandit
       - name: Security check - Bandit
-        run: bandit -r custom_components/truenas
+        run: bandit -r custom_components/truenas_ce
 
   translations:
     name: Validate translations

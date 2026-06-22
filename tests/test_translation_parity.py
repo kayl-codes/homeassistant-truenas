@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-_TRANSLATIONS = _REPO / "custom_components" / "truenas" / "translations"
+_TRANSLATIONS = _REPO / "custom_components" / "truenas_ce" / "translations"
 
 _spec = importlib.util.spec_from_file_location(
     "validate_translations", _REPO / ".github" / "validate_translations.py"

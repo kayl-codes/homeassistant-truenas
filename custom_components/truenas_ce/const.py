@@ -12,7 +12,7 @@ PLATFORMS = [
     Platform.SWITCH,
 ]
 
-DOMAIN = "truenas"
+DOMAIN = "truenas_ce"
 # Domain of the original (pre-rename) integration. While DOMAIN equals
 # LEGACY_DOMAIN the Community-Edition migration is inert; once DOMAIN is renamed
 # to "truenas_ce" the migration adopts the entities/history left behind by the
