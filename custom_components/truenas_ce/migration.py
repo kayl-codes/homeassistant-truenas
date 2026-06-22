@@ -22,6 +22,7 @@ rename. Forward adoption runs in two phases around the platform setup:
 
 from __future__ import annotations
 
+import os
 from logging import getLogger
 
 from homeassistant.components import persistent_notification
@@ -213,7 +214,36 @@ async def _write_migration_backup(
         _LOGGER.warning("Could not write CE migration backup snapshot: %s", err)
         return None
     _LOGGER.info("Wrote CE migration backup snapshot '%s'", store.key)
+    await _prune_old_backups(hass, store.key)
     return store.key
+
+
+async def _prune_old_backups(hass: HomeAssistant, keep_key: str) -> None:
+    """Keep only the most recent migration backup snapshot in ``.storage``.
+
+    Each migration writes a uniquely-timestamped snapshot; without pruning a user
+    who migrates repeatedly (rollback + re-migrate) would accumulate stale ones.
+    Removes every ``truenas_ce_migration_backup_*`` store except ``keep_key``.
+    Best effort — failures are logged, never raised.
+    """
+    storage_dir = hass.config.path(".storage")
+
+    def _stale_keys() -> list[str]:
+        try:
+            return [
+                name
+                for name in os.listdir(storage_dir)
+                if name.startswith(_BACKUP_KEY_PREFIX) and name != keep_key
+            ]
+        except OSError:
+            return []
+
+    for key in await hass.async_add_executor_job(_stale_keys):
+        try:
+            await Store(hass, _BACKUP_VERSION, key).async_remove()
+            _LOGGER.debug("Pruned old CE migration backup snapshot '%s'", key)
+        except OSError as err:
+            _LOGGER.warning("Could not prune old backup '%s': %s", key, err)
 
 
 def _persist_migration_state(
@@ -449,6 +479,7 @@ async def async_rollback_to_legacy(
         return False
 
     records = config_entry.data.get(MIGRATION_RECORDS, [])
+    backup_key = config_entry.data.get(MIGRATION_BACKUP_KEY)
 
     _LOGGER.info(
         "Rolling back '%s' adoption: returning %d entities to legacy entry %s",
@@ -477,5 +508,15 @@ async def async_rollback_to_legacy(
         is not None
     ]
     _remap_and_restore(ent_reg, pairs)
+
+    # The migration is undone — drop the now-obsolete safety snapshot.
+    if backup_key:
+        try:
+            await Store(hass, _BACKUP_VERSION, backup_key).async_remove()
+            _LOGGER.debug("Removed CE migration backup '%s' on rollback", backup_key)
+        except OSError as err:
+            _LOGGER.warning(
+                "Could not remove backup '%s' on rollback: %s", backup_key, err
+            )
 
     return True
