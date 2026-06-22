@@ -344,30 +344,49 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             truenas_config[CONF_HOST] = default_host
 
         if user_input is not None:
-            if CONF_HOST in user_input:
-                user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            truenas_config.update(user_input)
-
-            # Check if instance with this name already exists
-            if truenas_config[CONF_NAME] in configured_instances(self.hass):
-                errors["base"] = "name_exists"
-
-            if not errors:
-                await self._validate_connection(truenas_config, errors)
-
-            # Save instance
-            if not errors:
-                return self.async_create_entry(
-                    title=truenas_config[CONF_NAME],
-                    data=truenas_config,
-                    options=self._legacy_options or None,
-                )
+            result = await self._async_apply_user_input(
+                user_input, truenas_config, errors
+            )
+            if result is not None:
+                return result
 
         return self.async_show_form(
             step_id="user",
             data_schema=_base_schema(truenas_config),
             errors=errors,
         )
+
+    async def _async_apply_user_input(
+        self,
+        user_input: dict[str, Any],
+        truenas_config: dict[str, Any],
+        errors: dict[str, str],
+    ) -> ConfigFlowResult | None:
+        """Validate a submitted user form.
+
+        Returns the created entry on success, or ``None`` to re-show the form
+        with ``errors`` populated. Split out of ``async_step_user`` to keep its
+        cognitive complexity within bounds (SonarQube S3776).
+        """
+        if CONF_HOST in user_input:
+            user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
+        truenas_config.update(user_input)
+
+        # Check if instance with this name already exists
+        if truenas_config[CONF_NAME] in configured_instances(self.hass):
+            errors["base"] = "name_exists"
+
+        if not errors:
+            await self._validate_connection(truenas_config, errors)
+
+        # Save instance
+        if not errors:
+            return self.async_create_entry(
+                title=truenas_config[CONF_NAME],
+                data=truenas_config,
+                options=self._legacy_options or None,
+            )
+        return None
 
     def _find_legacy_config(self) -> ConfigEntry | None:
         """Return a legacy ``truenas`` entry to optionally take over, if any.
