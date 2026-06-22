@@ -12,7 +12,12 @@ PLATFORMS = [
     Platform.SWITCH,
 ]
 
-DOMAIN = "truenas"
+DOMAIN = "truenas_ce"
+# Domain of the original (pre-rename) integration. While DOMAIN equals
+# LEGACY_DOMAIN the Community-Edition migration is inert; once DOMAIN is renamed
+# to "truenas_ce" the migration adopts the entities/history left behind by the
+# old "truenas" integration. See migration.py.
+LEGACY_DOMAIN = "truenas"
 DEFAULT_NAME = "root"
 ATTRIBUTION = "Data provided by TrueNAS integration"
 
@@ -141,6 +146,25 @@ CONF_DATA_UNIT = "data_unit"
 CONF_STATISTICS_CLEANUP_IGNORED = "statistics_cleanup_ignored"
 ISSUE_STATISTICS_ORPHANED = "statistics_orphaned"
 BUTTON_STATISTICS_CLEANUP = "statistics_cleanup"
+
+# Community-Edition migration rollback. A diagnostic button (safe: it only opens a
+# Repairs confirm dialog, it never rolls back directly) raises a fixable Repairs
+# issue on demand — the issue is NOT shown automatically after the migration.
+# Dismissing it just closes it; pressing the button again re-raises it.
+BUTTON_MIGRATION_ROLLBACK = "migration_rollback"
+ISSUE_MIGRATION_ROLLBACK = "migration_rollback_available"
+
+# Community-Edition migration state, persisted on the (new) config entry's data.
+# MIGRATION_DONE is the idempotency flag; MIGRATION_RECORDS holds the reverse map
+# (unique_id -> old entity_id + registry overrides) so the adoption can be rolled
+# back; MIGRATION_LEGACY_ENTRY_ID/​_CONFIG remember the disabled legacy entry and
+# a snapshot of its data+options for a clean rollback; MIGRATION_BACKUP_KEY is the
+# .storage key of the standalone safety snapshot. See migration.py.
+MIGRATION_DONE = "ce_migration_done"
+MIGRATION_RECORDS = "ce_migration_records"
+MIGRATION_LEGACY_ENTRY_ID = "ce_migration_legacy_entry_id"
+MIGRATION_LEGACY_CONFIG = "ce_migration_legacy_config"
+MIGRATION_BACKUP_KEY = "ce_migration_backup_key"
 
 # Options-Flow
 CONF_POLL_INTERVAL = "poll_interval"

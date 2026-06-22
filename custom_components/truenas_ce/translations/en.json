@@ -21,6 +21,14 @@
                     "cronjob_skip_disabled": "Skip disabled cronjobs on manual run",
                     "data_unit": "Data size unit (GB or GiB)"
                 }
+            },
+            "migrate": {
+                "title": "Existing TrueNAS configuration found",
+                "description": "A previous TrueNAS integration was detected. You can take over its settings (host, API key and options) so you don't have to enter them again — your existing entities and their history are preserved. Or set up TrueNAS CE from scratch.",
+                "menu_options": {
+                    "migrate_import": "Take over existing configuration",
+                    "migrate_manual": "Set up from scratch"
+                }
             }
         },
         "error": {
@@ -76,12 +84,30 @@
                     }
                 }
             }
+        },
+        "migration_rollback_available": {
+            "title": "TrueNAS CE migration — rollback available",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "Roll back the TrueNAS CE migration?",
+                        "description": "TrueNAS Community Edition adopted {count} entity(ies) and their history from your previous TrueNAS integration, which is now disabled (not deleted). Keep TrueNAS CE, or roll back to hand the entities and history back to the old integration. Rolling back removes the TrueNAS CE integration. This is only possible while the old integration still exists.",
+                        "menu_options": {
+                            "rollback": "Roll back to the previous integration",
+                            "ignore": "Keep TrueNAS CE (dismiss)"
+                        }
+                    }
+                }
+            }
         }
     },
     "entity": {
         "button": {
             "statistics_cleanup": {
                 "name": "Clean up orphaned statistics"
+            },
+            "migration_rollback": {
+                "name": "Roll back migration"
             }
         }
     }

@@ -25,17 +25,17 @@ jobs:
         run: |
           python3 ${{ github.workspace }}/.github/update_version.py --version $TAG_NAME
 
-      - name: Zip truenas dir
+      - name: Zip truenas_ce dir
         run: |
-          cd ${{ github.workspace }}/custom_components/truenas
-          zip truenas.zip -r ./
+          cd ${{ github.workspace }}/custom_components/truenas_ce
+          zip truenas_ce.zip -r ./
       - name: Upload zip to release
-        uses: svenstaro/upload-release-action@14569a2d348419d066e34e5dfa65071ecd30b64b # v1-release
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2.11.5
 
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ github.workspace }}/custom_components/truenas/truenas.zip
-          asset_name: truenas.zip
+          file: ${{ github.workspace }}/custom_components/truenas_ce/truenas_ce.zip
+          asset_name: truenas_ce.zip
           tag: ${{ github.ref }}
           overwrite: true
 

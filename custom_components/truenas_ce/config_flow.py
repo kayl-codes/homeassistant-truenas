@@ -58,6 +58,7 @@ from .const import (
     ERR_UNKNOWN_HOSTNAME,
     ERR_WS_NOT_SUPPORTED,
     KNOWN_DOMAINS,
+    LEGACY_DOMAIN,
     MONITOR_GROUP_CLOUDSYNC,
     MONITOR_GROUP_CONTAINERS,
     MONITOR_GROUP_DATASETS,
@@ -276,6 +277,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self.truenas_config: dict[str, Any] = {}
+        # Options of a taken-over legacy entry, applied when the entry is created.
+        self._legacy_options: dict[str, Any] = {}
+        # Guard so the legacy-takeover offer is made at most once per flow.
+        self._migration_checked = False
 
     @staticmethod
     @callback
@@ -322,6 +327,14 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle a flow initialized by the user."""
+        # Offer to take over an existing legacy ``truenas`` configuration once,
+        # before the (possibly prefilled) form is shown. Inert in the legacy
+        # integration itself (see _find_legacy_config).
+        if user_input is None and not self._migration_checked:
+            self._migration_checked = True
+            if self._find_legacy_config() is not None:
+                return await self.async_step_migrate()
+
         truenas_config = self.truenas_config
         errors = {}
 
@@ -331,28 +344,102 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             truenas_config[CONF_HOST] = default_host
 
         if user_input is not None:
-            if CONF_HOST in user_input:
-                user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            truenas_config.update(user_input)
-
-            # Check if instance with this name already exists
-            if truenas_config[CONF_NAME] in configured_instances(self.hass):
-                errors["base"] = "name_exists"
-
-            if not errors:
-                await self._validate_connection(truenas_config, errors)
-
-            # Save instance
-            if not errors:
-                return self.async_create_entry(
-                    title=truenas_config[CONF_NAME], data=truenas_config
-                )
+            result = await self._async_apply_user_input(
+                user_input, truenas_config, errors
+            )
+            if result is not None:
+                return result
 
         return self.async_show_form(
             step_id="user",
             data_schema=_base_schema(truenas_config),
             errors=errors,
         )
+
+    async def _async_apply_user_input(
+        self,
+        user_input: dict[str, Any],
+        truenas_config: dict[str, Any],
+        errors: dict[str, str],
+    ) -> ConfigFlowResult | None:
+        """Validate a submitted user form.
+
+        Returns the created entry on success, or ``None`` to re-show the form
+        with ``errors`` populated. Split out of ``async_step_user`` to keep its
+        cognitive complexity within bounds (SonarQube S3776).
+        """
+        if CONF_HOST in user_input:
+            user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
+        truenas_config.update(user_input)
+
+        # Check if instance with this name already exists
+        if truenas_config[CONF_NAME] in configured_instances(self.hass):
+            errors["base"] = "name_exists"
+
+        if not errors:
+            await self._validate_connection(truenas_config, errors)
+
+        # Save instance
+        if not errors:
+            return self.async_create_entry(
+                title=truenas_config[CONF_NAME],
+                data=truenas_config,
+                options=self._legacy_options or None,
+            )
+        return None
+
+    def _find_legacy_config(self) -> ConfigEntry | None:
+        """Return a legacy ``truenas`` entry to optionally take over, if any.
+
+        Only relevant in the renamed (``truenas_ce``) integration; inert while
+        ``DOMAIN == LEGACY_DOMAIN`` so the takeover never appears pre-rename.
+        """
+        if DOMAIN == LEGACY_DOMAIN:
+            return None
+        legacy_entries = self.hass.config_entries.async_entries(LEGACY_DOMAIN)
+        return legacy_entries[0] if legacy_entries else None
+
+    async def async_step_migrate(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer to import an existing TrueNAS configuration or start fresh."""
+        return self.async_show_menu(
+            step_id="migrate",
+            menu_options=["migrate_import", "migrate_manual"],
+        )
+
+    async def async_step_migrate_import(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Prefill the form from the detected legacy entry, then show it.
+
+        Importing the same name is required: the entity unique_ids derive from
+        it, so the migration in __init__.py can re-attach the old entity_ids.
+        """
+        legacy = self._find_legacy_config()
+        if legacy is not None:
+            self.truenas_config.update(
+                {
+                    CONF_NAME: legacy.data.get(CONF_NAME, DEFAULT_DEVICE_NAME),
+                    CONF_HOST: legacy.data.get(CONF_HOST, DEFAULT_HOST),
+                    CONF_API_KEY: legacy.data.get(CONF_API_KEY, ""),
+                    CONF_VERIFY_SSL: legacy.data.get(
+                        CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY
+                    ),
+                    CONF_CRONJOB_SKIP_DISABLED: legacy.data.get(
+                        CONF_CRONJOB_SKIP_DISABLED, DEFAULT_CRONJOB_SKIP_DISABLED
+                    ),
+                    CONF_DATA_UNIT: legacy.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT),
+                }
+            )
+            self._legacy_options = dict(legacy.options)
+        return await self.async_step_user()
+
+    async def async_step_migrate_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Skip the takeover and configure TrueNAS CE from scratch."""
+        return await self.async_step_user()
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None

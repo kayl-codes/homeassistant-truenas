@@ -1,6 +1,6 @@
 """Validate that all translation locale files stay in parity with ``en.json``.
 
-For every ``custom_components/truenas/translations/<lang>.json`` this checks,
+For every ``custom_components/truenas_ce/translations/<lang>.json`` this checks,
 against the English source ``en.json``:
 
   * no **missing** keys,
@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-TRANSLATIONS_DIR = Path("custom_components/truenas/translations")
+TRANSLATIONS_DIR = Path("custom_components/truenas_ce/translations")
 REFERENCE = "en.json"
 _PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 

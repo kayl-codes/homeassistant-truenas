@@ -21,6 +21,14 @@
                     "cronjob_skip_disabled": "Ignorar cronjobs desativados na execução manual",
                     "data_unit": "Unidade de tamanho de dados (GB ou GiB)"
                 }
+            },
+            "migrate": {
+                "title": "Configuração existente do TrueNAS encontrada",
+                "description": "Uma integração TrueNAS anterior foi detectada. Você pode adotar suas configurações (host, chave API e opções) para não precisar inseri-las novamente — suas entidades existentes e seu histórico são preservados. Ou configure o TrueNAS CE do zero.",
+                "menu_options": {
+                    "migrate_import": "Adotar a configuração existente",
+                    "migrate_manual": "Configurar do zero"
+                }
             }
         },
         "error": {
@@ -76,12 +84,30 @@
                     }
                 }
             }
+        },
+        "migration_rollback_available": {
+            "title": "Migração do TrueNAS CE — reversão disponível",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "Reverter a migração do TrueNAS CE?",
+                        "description": "O TrueNAS Community Edition adotou {count} entidade(s) e seu histórico da sua integração TrueNAS anterior, que agora está desativada (não excluída). Mantenha o TrueNAS CE ou reverta para devolver as entidades e o histórico à integração antiga. Reverter remove a integração do TrueNAS CE. Isso só é possível enquanto a integração antiga ainda existir.",
+                        "menu_options": {
+                            "rollback": "Voltar para a integração anterior",
+                            "ignore": "Manter o TrueNAS CE (descartar)"
+                        }
+                    }
+                }
+            }
         }
     },
     "entity": {
         "button": {
             "statistics_cleanup": {
                 "name": "Limpar estatísticas órfãs"
+            },
+            "migration_rollback": {
+                "name": "Reverter a migração"
             }
         }
     }

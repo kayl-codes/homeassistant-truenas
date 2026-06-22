@@ -29,6 +29,11 @@ from .const import (
 from .coordinator import TrueNASCoordinator
 from .entity import _is_uid_excluded, format_unique_id
 from .helper import scaled_data_unit
+from .migration import (
+    async_adopt_legacy_entities,
+    async_notify_migration_result,
+    finalize_legacy_adoption,
+)
 from .sensor_types import SENSOR_TYPES
 from .switch_types import SENSOR_TYPES as SWITCH_SENSOR_TYPES
 from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
@@ -257,10 +262,19 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = coordinator
 
+    # Community-Edition rename: free the legacy "truenas" entity_ids before the
+    # platforms create the new entities (no-op until the domain is renamed).
+    adopted = await async_adopt_legacy_entities(hass, config_entry)
+
     _migrate_data_size_units(hass, config_entry, coordinator)
     _cleanup_orphaned_entities(hass, config_entry, coordinator)
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+
+    # Re-attach the freed legacy entity_ids now that the new entities exist, then
+    # report the outcome once (validation checks + guide link + rollback hint).
+    finalize_legacy_adoption(hass, adopted)
+    async_notify_migration_result(hass, config_entry, adopted)
 
     # Re-run entity discovery on every coordinator refresh so entities for newly
     # appearing objects (e.g. a network interface coming up, a new pool/dataset)

@@ -33,9 +33,13 @@ from .const import (
     DEFAULT_MONITORED_GROUPS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    ISSUE_MIGRATION_ROLLBACK,
     ISSUE_STATISTICS_ORPHANED,
     KILOBITS_TO_KIBIBYTES_FACTOR,
+    LEGACY_DOMAIN,
     LINK_STATE_UP,
+    MIGRATION_LEGACY_ENTRY_ID,
+    MIGRATION_RECORDS,
     MONITOR_GROUP_CLOUDSYNC,
     MONITOR_GROUP_CONTAINERS,
     MONITOR_GROUP_DATASETS,
@@ -471,6 +475,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # button and Repairs issue track the current state automatically.
         await self.async_detect_orphaned_statistics()
 
+        # Withdraw a lingering rollback issue once the old integration is gone.
+        # (The issue is only ever raised on demand by the diagnostic button.)
+        self._clear_stale_migration_rollback_issue()
+
         return self.ds
 
     # ---------------------------
@@ -529,6 +537,55 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         else:
             ir.async_delete_issue(self.hass, DOMAIN, self._statistics_issue_id())
+
+    # ---------------------------
+    #   Community-Edition migration rollback
+    # ---------------------------
+    def _migration_rollback_issue_id(self) -> str:
+        """Return the per-entry Repairs issue id for the migration rollback."""
+        return f"{ISSUE_MIGRATION_ROLLBACK}_{self.config_entry.entry_id}"
+
+    def _rollback_possible(self) -> bool:
+        """Whether a rollback to the disabled legacy entry is still possible."""
+        if DOMAIN == LEGACY_DOMAIN:
+            return False
+        legacy_id = self.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID)
+        return bool(legacy_id and self.hass.config_entries.async_get_entry(legacy_id))
+
+    def raise_migration_rollback_issue(self) -> None:
+        """Raise the rollback confirm issue on demand (from the diagnostic button).
+
+        The issue is never shown automatically; it is only opened when the user
+        presses the rollback button. Creating it is idempotent (stable id), so
+        re-pressing after a dismiss simply re-opens it. No-op while a rollback is
+        not possible.
+        """
+        if not self._rollback_possible():
+            return
+        count = len(self.config_entry.data.get(MIGRATION_RECORDS, []))
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._migration_rollback_issue_id(),
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_MIGRATION_ROLLBACK,
+            translation_placeholders={"count": str(count)},
+        )
+
+    def _clear_stale_migration_rollback_issue(self) -> None:
+        """Withdraw a lingering rollback issue once a rollback is no longer possible.
+
+        Runs each poll. It only ever *deletes* — the issue is raised solely by the
+        diagnostic button — so a leftover dialog is cleared after the user removes
+        the old "truenas" integration (the bridge is then permanently burned).
+        """
+        if DOMAIN == LEGACY_DOMAIN:
+            return
+        if not self._rollback_possible():
+            ir.async_delete_issue(
+                self.hass, DOMAIN, self._migration_rollback_issue_id()
+            )
 
     async def async_clear_orphaned_statistics(self) -> None:
         """Delete the detected orphaned statistics and refresh entities/issue."""
