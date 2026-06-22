@@ -1,6 +1,6 @@
 {
     "domain": "truenas_ce",
-    "name": "TrueNAS",
+    "name": "TrueNAS CE",
     "after_dependencies": ["recorder"],
     "codeowners": [
         "@kayl-codes"

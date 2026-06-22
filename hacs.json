@@ -1,5 +1,5 @@
 {
-    "name": "TrueNAS",
+    "name": "TrueNAS CE",
     "homeassistant": "2024.8.0",
     "render_readme": false,
     "zip_release": true,
