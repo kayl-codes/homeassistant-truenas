@@ -222,14 +222,19 @@ target:
 > **Run buttons:** snapshot, rsync, replication and cloudsync tasks also expose a one-tap
 > **Run** button on their device page, so you can trigger them without calling an action.
 
-# Install integration from Custom Repository
-1. Open HACS, click the 3-dot menu in the upper right corner and select **Custom repositories**.
-2. Add the following details:
-   * **Repository:** `https://github.com/kayl-codes/homeassistant-truenas.git`
-   * **Category:** Integration
-3. Click **Add** and download the integration.
-4. Restart Home Assistant (full restart, not quick reload).
-5. Navigate to **Settings -> Devices & services -> Add Integration** and search for **TrueNAS**.
+# Install using HACS (recommended)
+
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kayl-codes&repository=homeassistant-truenas&category=integration)
+
+1. Click the **My Home Assistant** button above — it opens HACS on your own instance directly on this
+   repository. (Manual alternative: open **HACS → 3-dot menu → Custom repositories**, add
+   `https://github.com/kayl-codes/homeassistant-truenas` with **Category: Integration**.)
+2. Click **Download** to install the integration.
+3. Restart Home Assistant (full restart, not quick reload).
+4. Navigate to **Settings → Devices & services → Add Integration** and search for **TrueNAS CE**.
+
+> Once the integration is accepted into the HACS default store you can also just search for
+> **TrueNAS CE** directly in HACS — until then, use the button or the custom-repository steps above.
 
 
 Minimum requirements:

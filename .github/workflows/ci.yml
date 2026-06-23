@@ -6,12 +6,16 @@ on:
       - 'custom_components/**'
       - 'tests/**'
       - '.github/**'
+      - '**.md'
+      - 'docs/**'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - 'custom_components/**'
       - 'tests/**'
       - '.github/**'
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
