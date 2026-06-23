@@ -798,7 +798,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_data_hit_percent",
         name="Data hit ratio",
-        icon="mdi:memory",
+        icon=ICON_MEMORY,
         native_unit_of_measurement=PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
@@ -813,7 +813,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_metadata_hit_percent",
         name="Metadata hit ratio",
-        icon="mdi:memory",
+        icon=ICON_MEMORY,
         native_unit_of_measurement=PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
@@ -828,7 +828,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_l2_hit_percent",
         name="L2 ARC hit ratio",
-        icon="mdi:memory",
+        icon=ICON_MEMORY,
         native_unit_of_measurement=PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
