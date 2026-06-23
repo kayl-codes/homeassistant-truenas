@@ -53,6 +53,24 @@ def utc_from_timestamp(timestamp: float) -> datetime:
 
 
 # ---------------------------
+#   human_date_to_utc
+# ---------------------------
+def human_date_to_utc(date_str: str) -> datetime:
+    """Parse human-readable date string to UTC datetime.
+
+    Expects format: "Fri Mar 26 00:59:59 2100" (TrueNAS certificate 'until' format).
+    Returns UTC datetime object.
+    """
+    if not isinstance(date_str, str):
+        return datetime.now(tz=utc)
+    try:
+        return datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y").replace(tzinfo=utc)
+    except (ValueError, AttributeError):
+        _LOGGER.warning("Failed to parse certificate date: %s", date_str)
+        return datetime.now(tz=utc)
+
+
+# ---------------------------
 #   _resolve_source
 # ---------------------------
 def _resolve_source(entry: dict[str, Any] | None, param: str) -> Any:
@@ -352,6 +370,16 @@ def _convert_timestamp(target: dict[str, Any], name: str) -> None:
 
 
 # ---------------------------
+#   _convert_human_date
+# ---------------------------
+def _convert_human_date(target: dict[str, Any], name: str) -> None:
+    """Convert a human-readable date string at target[name] into UTC datetime."""
+    value = target.get(name)
+    if isinstance(value, str):
+        target[name] = human_date_to_utc(value)
+
+
+# ---------------------------
 #   _set_val
 # ---------------------------
 def _set_val(
@@ -370,6 +398,8 @@ def _set_val(
 
     if val.get("convert") == "utc_from_timestamp":
         _convert_timestamp(target, name)
+    elif val.get("convert") == "human_date_to_utc":
+        _convert_human_date(target, name)
 
 
 # ---------------------------

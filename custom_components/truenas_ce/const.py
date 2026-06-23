@@ -89,6 +89,8 @@ TO_REDACT = {
     "ip6_addr",
     "account",
     "key",
+    "certificate",
+    "privatekey",
 }
 
 SERVICE_CLOUDSYNC_RUN = "cloudsync_run"

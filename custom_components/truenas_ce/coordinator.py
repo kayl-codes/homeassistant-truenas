@@ -142,6 +142,21 @@ _JOB_STATUS_VALS = [
     *_JOB_PROGRESS_VALS,
 ]
 
+# Certificate expiry monitoring (certificate.query).
+_CERTIFICATE_VALS = [
+    {"name": "id", "default": 0},
+    {"name": "name", "default": "unknown"},
+    {"name": "cert_type", "default": "unknown"},
+    {"name": "common", "default": ""},
+    {
+        "name": "until",
+        "default": 0,
+        "convert": "human_date_to_utc",
+    },
+    {"name": "expired", "type": "bool", "default": False},
+    {"name": "renew_days", "default": 0},
+]
+
 
 # ---------------------------
 #   _stat_name_similar
@@ -433,6 +448,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_app,
             self.get_cronjob,
             self.get_alerts,
+            self.get_certificates,
             self.get_smb,
             self.get_ups,
         ]
@@ -1878,6 +1894,19 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "info": sum(a.get("level") == "INFO" for a in active_alerts),
             "disk_issues": disk_issues,
         }
+
+    # ---------------------------
+    #   get_certificates
+    # ---------------------------
+    def get_certificates(self) -> None:
+        """Get TrueNAS certificates."""
+        certificates = self.api.query("certificate.query")
+        self.ds["certificate"] = parse_api(
+            data={},
+            source=certificates,
+            key="id",
+            vals=_CERTIFICATE_VALS,
+        )
 
     # ---------------------------
     #   get_smb
