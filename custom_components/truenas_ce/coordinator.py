@@ -279,6 +279,9 @@ def _arc_value(graph_data: Any) -> float | None:
         return None
 
     mean = item.get("aggregations", {}).get("mean", {})
+    if not isinstance(mean, dict):
+        return None
+
     values = [v for v in mean.values() if isinstance(v, (int, float))]
     return round(sum(values) / len(values), 2) if values else None
 
@@ -1951,6 +1954,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _NETDATA_GRAPH,
                 params=[graph_name, graph_query],
             )
+            if graph_data is None:
+                self.ds["arc"][field_name] = None
+                continue
+
             value = _arc_value(graph_data)
             self.ds["arc"][field_name] = value
 
