@@ -20,6 +20,3 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "integration"
-          # truenas_ce is not yet in home-assistant/brands; remove this once the
-          # brands PR (home-assistant/brands -> custom_integrations/truenas_ce) is merged.
-          ignore: brands
