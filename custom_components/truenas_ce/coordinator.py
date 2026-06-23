@@ -150,7 +150,7 @@ _CERTIFICATE_VALS = [
     {"name": "common", "default": ""},
     {
         "name": "until",
-        "default": 0,
+        "default": None,
         "convert": "human_date_to_utc",
     },
     {"name": "expired", "type": "bool", "default": False},
@@ -1952,7 +1952,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 params=[graph_name, graph_query],
             )
             value = _arc_value(graph_data)
-            self.ds["arc"][field_name] = value if value is not None else 0
+            self.ds["arc"][field_name] = value
 
     # ---------------------------
     #   get_smb
