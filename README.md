@@ -30,7 +30,7 @@
 > repository and don't carry over.
 
 Monitor and control your TrueNAS device from Home Assistant.
- * Monitor System (CPU, Load, Memory, Temperature, ARC/L2ARC, Uptime)
+ * Monitor System (CPU, Load, Memory, Temperature, **ARC Hit Ratio**, Uptime)
  * Monitor Network interfaces in a dedicated device group (RX/TX traffic + link connectivity per NIC)
  * Monitor Disks
  * Monitor Pools (including the boot-pool)
@@ -43,9 +43,11 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Control and Monitor Containers (Incus instances: start / stop / restart)
  * Control and Monitor Cloudsync
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
+ * **Monitor Certificate Expiry** (expiration time, days remaining, expired status)
  * Monitor Active Alerts and Diagnostics
  * Create a Dataset Snapshot
  * Lock / unlock encrypted Datasets
+ * **Refresh coordinator data on demand** (System Refresh action)
  * Update Sensor
  * Reboot and Shutdown TrueNAS system
  * Configurable poll interval, data unit, behaviour and per-group sensor toggles (Options)
@@ -176,6 +178,22 @@ so systems without AD/LDAP get no entity.
 
 > **Directory Services** is a monitored group (enabled by default). You can disable it under
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
+
+## Certificates
+Monitor **TrueNAS certificate expiry** and status. Each certificate is exposed as:
+- **Expiration time sensor** — Timestamp when the certificate expires
+- **Days until expiry sensor** — Number of days remaining (useful for automation warnings)
+- **Expired status binary sensor** — Problem-class indicator when a certificate is already expired or no longer valid
+
+Use these sensors in automations to send notifications before certificates expire, or to trigger renewal workflows.
+
+## System Refresh
+Force an immediate refresh of all TrueNAS data without waiting for the regular poll interval (default: 60 seconds).
+Available through:
+- **`system_refresh` action** — Target the System uptime sensor to trigger a refresh from an automation
+- **Diagnostic "Refresh data" button** — One-tap refresh on the TrueNAS device page
+
+Useful when you run an action (e.g., dataset lock/unlock, service restart) and need to capture the updated state immediately in an automation.
 
 ## Diagnostics
 Monitor overall system health and active alerts directly from the device page. The integration provides a dedicated diagnostic sensor that automatically detects any disk or pool issues.
