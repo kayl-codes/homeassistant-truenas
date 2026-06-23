@@ -108,6 +108,9 @@
             },
             "migration_rollback": {
                 "name": "Migration rückgängig machen"
+            },
+            "system_refresh": {
+                "name": "Daten aktualisieren"
             }
         }
     }

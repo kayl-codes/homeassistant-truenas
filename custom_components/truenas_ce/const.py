@@ -139,6 +139,9 @@ SCHEMA_SERVICE_SYSTEM_REBOOT = {}
 SERVICE_SYSTEM_SHUTDOWN = "system_shutdown"
 SCHEMA_SERVICE_SYSTEM_SHUTDOWN = {}
 
+SERVICE_SYSTEM_REFRESH = "system_refresh"
+SCHEMA_SERVICE_SYSTEM_REFRESH = {}
+
 CONF_CRONJOB_SKIP_DISABLED = "cronjob_skip_disabled"
 CONF_DATA_UNIT = "data_unit"
 
@@ -146,6 +149,10 @@ CONF_DATA_UNIT = "data_unit"
 CONF_STATISTICS_CLEANUP_IGNORED = "statistics_cleanup_ignored"
 ISSUE_STATISTICS_ORPHANED = "statistics_orphaned"
 BUTTON_STATISTICS_CLEANUP = "statistics_cleanup"
+
+# Diagnostic button that forces an immediate coordinator re-poll (same effect as
+# the system_refresh action), so the data can be refreshed on demand from the UI.
+BUTTON_SYSTEM_REFRESH = "system_refresh"
 
 # Community-Edition migration rollback. A diagnostic button (safe: it only opens a
 # Repairs confirm dialog, it never rolls back directly) raises a fixable Repairs

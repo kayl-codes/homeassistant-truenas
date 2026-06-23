@@ -20,6 +20,7 @@ from .button_types import (  # noqa: F401
 from .const import (
     BUTTON_MIGRATION_ROLLBACK,
     BUTTON_STATISTICS_CLEANUP,
+    BUTTON_SYSTEM_REFRESH,
     DOMAIN,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
@@ -53,6 +54,10 @@ async def async_setup_entry(
     # config entry, not tied to a TrueNAS object, so it is added directly.
     coordinator: TrueNASCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     _async_add_entities([TrueNASStatisticsCleanupButton(coordinator)])
+
+    # On-demand data refresh: a diagnostic button that forces an immediate
+    # coordinator re-poll (mirrors the system_refresh action). One per entry.
+    _async_add_entities([TrueNASRefreshButton(coordinator)])
 
     # Migration rollback: a safe diagnostic button that only opens the Repairs
     # confirm dialog (it never rolls back directly). Created only after a
@@ -161,3 +166,34 @@ class TrueNASMigrationRollbackButton(
     async def async_press(self) -> None:
         """Open the rollback confirmation by raising its Repairs issue."""
         self.coordinator.raise_migration_rollback_issue()
+
+
+# ---------------------------
+#   TrueNASRefreshButton
+# ---------------------------
+class TrueNASRefreshButton(CoordinatorEntity[TrueNASCoordinator], ButtonEntity):
+    """Diagnostic button to force an immediate coordinator re-poll of TrueNAS.
+
+    Mirrors the ``system_refresh`` action: it triggers the same update cycle that
+    otherwise runs on the poll interval, so the data can be refreshed on demand
+    from the UI without waiting for the next poll.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = BUTTON_SYSTEM_REFRESH
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: TrueNASCoordinator) -> None:
+        """Initialize the refresh button."""
+        super().__init__(coordinator)
+        inst = coordinator.config_entry.data[CONF_NAME]
+        self._attr_unique_id = format_unique_id(inst, BUTTON_SYSTEM_REFRESH)
+        hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, format_device_identifier(inst, hostname))},
+        )
+
+    async def async_press(self) -> None:
+        """Force an immediate coordinator re-poll."""
+        await self.coordinator.async_refresh()

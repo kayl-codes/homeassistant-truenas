@@ -208,6 +208,7 @@ TrueNAS object they act on). Each action has a name and description in
 | `dataset_lock` | Dataset sensor | Lock an encrypted dataset |
 | `dataset_unlock` | Dataset sensor | Unlock an encrypted dataset with a passphrase |
 | `system_reboot` · `system_shutdown` | Uptime sensor | Reboot / shut down the TrueNAS system |
+| `system_refresh` | Uptime sensor | Force an immediate re-poll so automations can act on current data without waiting for the next poll |
 
 Example:
 ```yaml
@@ -218,6 +219,9 @@ target:
 
 > **Run buttons:** snapshot, rsync, replication and cloudsync tasks also expose a one-tap
 > **Run** button on their device page, so you can trigger them without calling an action.
+>
+> **Refresh data button:** the TrueNAS device also has a diagnostic **Refresh data** button
+> that triggers `system_refresh` (an immediate re-poll) with one tap, no action call needed.
 
 # Install using HACS (recommended)
 

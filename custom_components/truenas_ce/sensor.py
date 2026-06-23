@@ -155,6 +155,14 @@ class TrueNASUptimeSensor(TrueNASSensor):
             ["Home Assistant Integration"],
         )
 
+    async def refresh(self) -> None:
+        """Force an immediate coordinator re-poll of TrueNAS.
+
+        Triggers the same update cycle that otherwise runs on the poll interval,
+        so automations can act on current data without waiting for the next poll.
+        """
+        await self.coordinator.async_refresh()
+
 
 # ---------------------------
 #   TrueNASDatasetSensor

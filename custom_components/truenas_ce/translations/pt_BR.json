@@ -108,6 +108,9 @@
             },
             "migration_rollback": {
                 "name": "Reverter a migração"
+            },
+            "system_refresh": {
+                "name": "Atualizar dados"
             }
         }
     }

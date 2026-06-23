@@ -108,6 +108,9 @@
             },
             "migration_rollback": {
                 "name": "Откатить миграцию"
+            },
+            "system_refresh": {
+                "name": "Обновить данные"
             }
         }
     }

@@ -108,6 +108,9 @@
             },
             "migration_rollback": {
                 "name": "Vrátiť migráciu"
+            },
+            "system_refresh": {
+                "name": "Obnoviť údaje"
             }
         }
     }
