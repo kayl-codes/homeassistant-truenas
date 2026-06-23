@@ -108,6 +108,9 @@
             },
             "migration_rollback": {
                 "name": "Roll back migration"
+            },
+            "system_refresh": {
+                "name": "Refresh data"
             }
         }
     }

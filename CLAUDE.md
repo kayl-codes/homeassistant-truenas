@@ -57,9 +57,38 @@ User-facing actions (start/stop/restart VMs, containers and apps, service contro
 
 [config_flow.py](custom_components/truenas/config_flow.py) collects host (bare hostname/IP, no scheme/path — enforced by `TrueNASAPI`), API key, SSL verification, and a `data_unit` option (`GB` vs `GiB`). The GB/GiB preference auto-migrates existing `DATA_SIZE` sensor units on setup (see `async_setup_entry` in [\_\_init\_\_.py](custom_components/truenas/__init__.py)). It also hosts an **options flow** (`async_get_options_flow`, *Settings → TrueNAS → Configure*, applied via reload): poll interval, the data unit, behaviour toggles (skip disabled cronjobs / hide RX/TX of down NICs) and the **monitored-groups** multi-select — disabling a group skips its API query and removes its entities + now-empty device.
 
+## Development Workflow
+
+After each feature implementation:
+
+1. **Code quality** (local):
+   ```bash
+   ruff check . && ruff format --check . && bandit -r custom_components/truenas_ce/
+   ```
+
+2. **Commit + Push**:
+   ```bash
+   git add custom_components/truenas_ce/ && git commit -m "..."
+   git push origin feat/system-refresh-service
+   ```
+
+3. **Auto-sync to HA** (post-push):
+   ```bash
+   sync-to-ha
+   ```
+   This robocopy-syncs code to HA instance and calls HA API to restart the integration.
+   HA will restart (~30-60 sec). New entities appear in Settings → Devices & Services.
+
+4. **Verify new entities** (automatic via Claude MCP):
+   After `sync-to-ha` completes, ask Claude Code:
+   > "verify the new truenas entities — check the dev states and HA logs"
+   
+   Claude will use MCP to query HA state and logs, confirming entities exist and no errors occurred.
+   See [[truenas-sync-to-ha-workflow]] for full setup instructions.
+
 ## Conventions
 
 - Code is heavily defensive about malformed/empty API responses: `query` returns `None` on error and `parse_api` is invoked with `isinstance` guards. Match this style — never assume an API response shape; check types and fall back to defaults.
-- Sensitive fields are redacted in diagnostics/debug logs via `TO_REDACT` ([const.py](custom_components/truenas/const.py)); add new sensitive keys there.
-- UI strings live in [strings.json](custom_components/truenas/strings.json) and `translations/`; translations are managed via Lokalise (see [README.md](README.md)), so prefer editing `strings.json` / `en.json` and let Lokalise handle other locales.
-- Enable debug logging in HA via `logger: logs: custom_components.truenas: debug`.
+- Sensitive fields are redacted in diagnostics/debug logs via `TO_REDACT` ([const.py](custom_components/truenas_ce/const.py)); add new sensitive keys there.
+- UI strings live in [strings.json](custom_components/truenas_ce/strings.json) and `translations/`; translations are managed via Lokalise (see [README.md](README.md)), so prefer editing `strings.json` / `en.json` and let Lokalise handle other locales.
+- Enable debug logging in HA via `logger: logs: custom_components.truenas_ce: debug`.

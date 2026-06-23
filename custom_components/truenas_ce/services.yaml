@@ -74,6 +74,15 @@ system_shutdown:
       integration: truenas_ce
       domain: sensor
 
+system_refresh:
+  name: Refresh TrueNAS data
+  description: Force an immediate re-poll of TrueNAS so automations can act on
+    current data without waiting for the next poll (target the Uptime sensor).
+  target:
+    entity:
+      integration: truenas_ce
+      domain: sensor
+
 service_start:
   name: Service start
   description: Start a TrueNAS service (target the service binary sensor).

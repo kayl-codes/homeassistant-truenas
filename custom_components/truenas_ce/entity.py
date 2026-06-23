@@ -385,3 +385,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     async def unlock(self, **kwargs):
         """Unlock function."""
         self._raise_unsupported("unlock")
+
+    async def refresh(self):
+        """Refresh function."""
+        self._raise_unsupported("refresh")

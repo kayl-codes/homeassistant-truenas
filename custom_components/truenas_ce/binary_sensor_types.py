@@ -246,6 +246,20 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
         data_reference="id",
         data_attributes_list=DEVICE_ATTRIBUTES_DIRECTORYSERVICE,
     ),
+    TrueNASBinarySensorEntityDescription(
+        key="certificate_expired",
+        name="Expired",
+        icon_enabled="mdi:certificate-alert",
+        icon_disabled="mdi:certificate-check",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        ha_group="Certificates",
+        data_path="certificate",
+        data_is_on="expired",
+        data_name="name",
+        data_uid=None,
+        data_reference="id",
+    ),
 )
 
 

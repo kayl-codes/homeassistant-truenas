@@ -142,6 +142,21 @@ _JOB_STATUS_VALS = [
     *_JOB_PROGRESS_VALS,
 ]
 
+# Certificate expiry monitoring (certificate.query).
+_CERTIFICATE_VALS = [
+    {"name": "id", "default": 0},
+    {"name": "name", "default": "unknown"},
+    {"name": "cert_type", "default": "unknown"},
+    {"name": "common", "default": ""},
+    {
+        "name": "until",
+        "default": None,
+        "convert": "human_date_to_utc",
+    },
+    {"name": "expired", "type": "bool", "default": False},
+    {"name": "renew_days", "default": 0},
+]
+
 
 # ---------------------------
 #   _stat_name_similar
@@ -230,6 +245,16 @@ def _aggregate_topology_errors(topology: Any) -> tuple[int, int, int]:
 
 
 # ---------------------------
+#   ARC netdata graphs
+# ---------------------------
+# Maps the netdata graph name (reporting.netdata_graphs) to the ds["arc"] field.
+_ARC_GRAPHS = {
+    "demanddatahitpercentage": "data_hit_percent",
+    "demandmetadatahitpercentage": "metadata_hit_percent",
+    "l2architpercentage": "l2_hit_percent",
+}
+
+# ---------------------------
 #   UPS netdata graphs
 # ---------------------------
 # Maps the netdata graph name (reporting.netdata_graphs) to the ds["ups"] field.
@@ -244,8 +269,11 @@ _UPS_GRAPHS = {
 }
 
 
-def _ups_value(graph_data: Any) -> float | None:
-    """Return the mean value of a single-metric UPS netdata graph, if present."""
+def _netdata_mean_value(graph_data: Any) -> float | None:
+    """Extract mean value from a netdata graph response.
+
+    Defensive parsing: handles missing/malformed structure by returning None.
+    """
     if not isinstance(graph_data, list) or not graph_data:
         return None
 
@@ -254,8 +282,21 @@ def _ups_value(graph_data: Any) -> float | None:
         return None
 
     mean = item.get("aggregations", {}).get("mean", {})
+    if not isinstance(mean, dict):
+        return None
+
     values = [v for v in mean.values() if isinstance(v, (int, float))]
     return round(sum(values) / len(values), 2) if values else None
+
+
+def _arc_value(graph_data: Any) -> float | None:
+    """Return the mean value of a single-metric ARC netdata graph, if present."""
+    return _netdata_mean_value(graph_data)
+
+
+def _ups_value(graph_data: Any) -> float | None:
+    """Return the mean value of a single-metric UPS netdata graph, if present."""
+    return _netdata_mean_value(graph_data)
 
 
 def _first_ipv4(aliases: Any) -> str:
@@ -433,6 +474,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_app,
             self.get_cronjob,
             self.get_alerts,
+            self.get_certificates,
+            self.get_arc,
             self.get_smb,
             self.get_ups,
         ]
@@ -1878,6 +1921,44 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "info": sum(a.get("level") == "INFO" for a in active_alerts),
             "disk_issues": disk_issues,
         }
+
+    # ---------------------------
+    #   get_certificates
+    # ---------------------------
+    def get_certificates(self) -> None:
+        """Get TrueNAS certificates."""
+        certificates = self.api.query("certificate.query")
+        self.ds["certificate"] = parse_api(
+            data={},
+            source=certificates,
+            key="id",
+            vals=_CERTIFICATE_VALS,
+        )
+
+    # ---------------------------
+    #   get_arc
+    # ---------------------------
+    def get_arc(self) -> None:
+        """Get ZFS ARC hit ratio from netdata graphs."""
+        self.ds["arc"] = {}
+        report_epoch = int(datetime.now(UTC).replace(microsecond=0).timestamp())
+        graph_query = {
+            "start": report_epoch - 300,
+            "end": report_epoch,
+            "aggregate": True,
+        }
+
+        for graph_name, field_name in _ARC_GRAPHS.items():
+            graph_data = self.api.query(
+                _NETDATA_GRAPH,
+                params=[graph_name, graph_query],
+            )
+            if graph_data is None:
+                self.ds["arc"][field_name] = None
+                continue
+
+            value = _arc_value(graph_data)
+            self.ds["arc"][field_name] = value
 
     # ---------------------------
     #   get_smb
