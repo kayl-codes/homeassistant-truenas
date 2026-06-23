@@ -74,10 +74,17 @@ After each feature implementation:
 
 3. **Auto-sync to HA** (post-push):
    ```bash
-   # After push completes, run:
    sync-to-ha
    ```
-   This robocopy-syncs code to HA instance and restarts the integration, making features testable immediately.
+   This robocopy-syncs code to HA instance and calls HA API to restart the integration.
+   HA will restart (~30-60 sec). New entities appear in Settings → Devices & Services.
+
+4. **Verify new entities** (automatic via Claude MCP):
+   After `sync-to-ha` completes, ask Claude Code:
+   > "verify the new truenas entities — check the dev states and HA logs"
+   
+   Claude will use MCP to query HA state and logs, confirming entities exist and no errors occurred.
+   See [[truenas-sync-to-ha-workflow]] for full setup instructions.
 
 ## Conventions
 
