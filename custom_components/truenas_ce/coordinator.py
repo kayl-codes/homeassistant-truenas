@@ -245,6 +245,16 @@ def _aggregate_topology_errors(topology: Any) -> tuple[int, int, int]:
 
 
 # ---------------------------
+#   ARC netdata graphs
+# ---------------------------
+# Maps the netdata graph name (reporting.netdata_graphs) to the ds["arc"] field.
+_ARC_GRAPHS = {
+    "demanddatahitpercentage": "data_hit_percent",
+    "demandmetadatahitpercentage": "metadata_hit_percent",
+    "l2architpercentage": "l2_hit_percent",
+}
+
+# ---------------------------
 #   UPS netdata graphs
 # ---------------------------
 # Maps the netdata graph name (reporting.netdata_graphs) to the ds["ups"] field.
@@ -257,6 +267,20 @@ _UPS_GRAPHS = {
     "upsfrequency": "frequency",
     "upstemperature": "temperature",
 }
+
+
+def _arc_value(graph_data: Any) -> float | None:
+    """Return the mean value of a single-metric ARC netdata graph, if present."""
+    if not isinstance(graph_data, list) or not graph_data:
+        return None
+
+    item = graph_data[0]
+    if not isinstance(item, dict):
+        return None
+
+    mean = item.get("aggregations", {}).get("mean", {})
+    values = [v for v in mean.values() if isinstance(v, (int, float))]
+    return round(sum(values) / len(values), 2) if values else None
 
 
 def _ups_value(graph_data: Any) -> float | None:
@@ -449,6 +473,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_cronjob,
             self.get_alerts,
             self.get_certificates,
+            self.get_arc,
             self.get_smb,
             self.get_ups,
         ]
@@ -1907,6 +1932,27 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             key="id",
             vals=_CERTIFICATE_VALS,
         )
+
+    # ---------------------------
+    #   get_arc
+    # ---------------------------
+    def get_arc(self) -> None:
+        """Get ZFS ARC hit ratio from netdata graphs."""
+        self.ds["arc"] = {}
+        report_epoch = int(datetime.now(UTC).replace(microsecond=0).timestamp())
+        graph_query = {
+            "start": report_epoch - 300,
+            "end": report_epoch,
+            "aggregate": True,
+        }
+
+        for graph_name, field_name in _ARC_GRAPHS.items():
+            graph_data = self.api.query(
+                _NETDATA_GRAPH,
+                params=[graph_name, graph_query],
+            )
+            value = _arc_value(graph_data)
+            self.ds["arc"][field_name] = value if value is not None else 0
 
     # ---------------------------
     #   get_smb
