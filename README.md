@@ -10,8 +10,7 @@
 
 ![English](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/flags/us.png)
 
-![TrueNAS Community Edition](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/header-ce.png#gh-light-mode-only)
-![TrueNAS Community Edition](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/header-ce_dark.png#gh-dark-mode-only)
+![TrueNAS Community Edition](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/header-ce.png)
 
 > **Note:** This is an independent integration, originally forked from the
 > [TrueNAS integration by tomaae](https://github.com/tomaae/homeassistant-truenas)
