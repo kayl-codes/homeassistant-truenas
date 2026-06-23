@@ -55,11 +55,11 @@ def utc_from_timestamp(timestamp: float) -> datetime:
 # ---------------------------
 #   human_date_to_utc
 # ---------------------------
-def human_date_to_utc(date_str: str) -> datetime | None:
+def human_date_to_utc(date_str: Any) -> datetime | None:
     """Parse human-readable date string to UTC datetime.
 
     Expects format: "Fri Mar 26 00:59:59 2100" (TrueNAS certificate 'until' format).
-    Returns UTC datetime object or None if unparsable (unknown expiry).
+    Returns UTC datetime object or None if unparsable or not a string (unknown expiry).
     """
     if not isinstance(date_str, str):
         return None

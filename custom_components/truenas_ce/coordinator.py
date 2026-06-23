@@ -269,8 +269,11 @@ _UPS_GRAPHS = {
 }
 
 
-def _arc_value(graph_data: Any) -> float | None:
-    """Return the mean value of a single-metric ARC netdata graph, if present."""
+def _netdata_mean_value(graph_data: Any) -> float | None:
+    """Extract mean value from a netdata graph response.
+
+    Defensive parsing: handles missing/malformed structure by returning None.
+    """
     if not isinstance(graph_data, list) or not graph_data:
         return None
 
@@ -286,18 +289,14 @@ def _arc_value(graph_data: Any) -> float | None:
     return round(sum(values) / len(values), 2) if values else None
 
 
+def _arc_value(graph_data: Any) -> float | None:
+    """Return the mean value of a single-metric ARC netdata graph, if present."""
+    return _netdata_mean_value(graph_data)
+
+
 def _ups_value(graph_data: Any) -> float | None:
     """Return the mean value of a single-metric UPS netdata graph, if present."""
-    if not isinstance(graph_data, list) or not graph_data:
-        return None
-
-    item = graph_data[0]
-    if not isinstance(item, dict):
-        return None
-
-    mean = item.get("aggregations", {}).get("mean", {})
-    values = [v for v in mean.values() if isinstance(v, (int, float))]
-    return round(sum(values) / len(values), 2) if values else None
+    return _netdata_mean_value(graph_data)
 
 
 def _first_ipv4(aliases: Any) -> str:
