@@ -394,6 +394,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Restore function."""
         self._raise_unsupported("restore")
 
+    async def list(self, **kwargs):
+        """List function."""
+        self._raise_unsupported("list")
+
     async def refresh(self):
         """Refresh function."""
         self._raise_unsupported("refresh")

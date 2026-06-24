@@ -263,3 +263,11 @@ alert_restore:
     entity:
       integration: truenas_ce
       domain: sensor
+
+alert_list:
+  name: List alerts
+  description: List all TrueNAS alerts with UUID and message (target the Alerts sensor).
+  target:
+    entity:
+      integration: truenas_ce
+      domain: sensor
