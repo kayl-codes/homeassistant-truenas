@@ -8,6 +8,7 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -24,9 +25,16 @@ from .const import (
     DOMAIN,
     GROUP_DATA_PATHS,
     PLATFORMS,
+    SCHEMA_SERVICE_ALERT_DISMISS,
     SCHEMA_SERVICE_ALERT_LIST,
+    SCHEMA_SERVICE_ALERT_PROPERTIES,
+    SCHEMA_SERVICE_ALERT_RESTORE,
     SERVICE_ALERT_CONFIG_ENTRY,
+    SERVICE_ALERT_DISMISS,
     SERVICE_ALERT_LIST,
+    SERVICE_ALERT_PROPERTIES,
+    SERVICE_ALERT_RESTORE,
+    SERVICE_ALERT_UUID,
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator
@@ -257,34 +265,79 @@ def _cleanup_orphaned_entities(
 
 
 # ---------------------------
-#   Alert List Service Handler
+#   Alert Service Handlers
 # ---------------------------
-async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
-    """List all TrueNAS alerts with UUID and message for specified instance."""
+def _get_coordinator(
+    hass: HomeAssistant, entry_id: str | None
+) -> tuple[str | None, dict]:
+    """Resolve coordinator; return (entry_id, error_dict) or (entry_id, {})."""
     coords = hass.data.get(DOMAIN, {})
-    entry_id = call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
-
     if not coords:
-        return {"error": "No TrueNAS instances configured", "alerts": []}
+        return None, {"error": "No TrueNAS instances configured"}
 
     if not entry_id:
         entries = list(coords.keys())
         if len(entries) != 1:
-            return {
-                "error": (
-                    f"Multiple TrueNAS instances ({len(entries)}); "
-                    "please specify config_entry"
-                ),
-                "alerts": [],
-            }
+            return (
+                None,
+                {
+                    "error": (
+                        f"Multiple TrueNAS instances ({len(entries)}); "
+                        "please specify config_entry"
+                    )
+                },
+            )
         entry_id = entries[0]
 
-    coordinator = coords.get(entry_id)
-    if not coordinator:
-        return {"error": f"TrueNAS instance {entry_id} not found", "alerts": []}
+    if entry_id not in coords:
+        return None, {"error": f"TrueNAS instance {entry_id} not found"}
 
+    return entry_id, {}
+
+
+async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
+    """List all TrueNAS alerts with selectable properties."""
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    if error:
+        return {"alerts": [], **error}
+
+    coordinator = hass.data[DOMAIN][entry_id]
     alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
-    return {"alerts": alerts if isinstance(alerts, list) else []}
+    if not isinstance(alerts, list):
+        return {"alerts": []}
+
+    # Filter properties if specified
+    props = call.data.get(SERVICE_ALERT_PROPERTIES, "uuid,formatted")
+    if props == "*":
+        return {"alerts": alerts}
+
+    prop_list = [p.strip() for p in props.split(",")]
+    filtered = [{k: a[k] for k in prop_list if k in a} for a in alerts]
+    return {"alerts": filtered}
+
+
+async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
+    """Dismiss a TrueNAS alert by UUID."""
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    if error:
+        raise ServiceValidationError(error.get("error", "Unknown error"))
+
+    coordinator = hass.data[DOMAIN][entry_id]
+    uuid = call.data.get(SERVICE_ALERT_UUID)
+    await hass.async_add_executor_job(coordinator.api.query, "alert.dismiss", [uuid])
+    await coordinator.async_refresh()
+
+
+async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
+    """Restore a TrueNAS alert by UUID."""
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    if error:
+        raise ServiceValidationError(error.get("error", "Unknown error"))
+
+    coordinator = hass.data[DOMAIN][entry_id]
+    uuid = call.data.get(SERVICE_ALERT_UUID)
+    await hass.async_add_executor_job(coordinator.api.query, "alert.restore", [uuid])
+    await coordinator.async_refresh()
 
 
 # ---------------------------
@@ -305,8 +358,23 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
-    # Register alert_list service (domain-level, instance-specific) once.
-    if SERVICE_ALERT_LIST not in hass.services.async_services().get(DOMAIN, {}):
+    # Register alert services (domain-level, instance-specific) once.
+    services = hass.services.async_services().get(DOMAIN, {})
+    if SERVICE_ALERT_DISMISS not in services:
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ALERT_DISMISS,
+            lambda call: _handle_alert_dismiss(hass, call),
+            schema=SCHEMA_SERVICE_ALERT_DISMISS,
+        )
+    if SERVICE_ALERT_RESTORE not in services:
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ALERT_RESTORE,
+            lambda call: _handle_alert_restore(hass, call),
+            schema=SCHEMA_SERVICE_ALERT_RESTORE,
+        )
+    if SERVICE_ALERT_LIST not in services:
 
         async def _alert_list_handler(call) -> dict:
             return await _handle_alert_list(hass, call)

@@ -236,7 +236,7 @@ dataset_unlock:
 
 alert_dismiss:
   name: Dismiss alert
-  description: Dismiss a TrueNAS alert by UUID (target the Alerts sensor).
+  description: Dismiss a TrueNAS alert by UUID.
   fields:
     config_entry:
       name: TrueNAS instance
@@ -247,18 +247,14 @@ alert_dismiss:
           integration: truenas_ce
     uuid:
       name: Alert UUID
-      description: UUID of the alert to dismiss (visible in the Alerts sensor attributes).
+      description: UUID of the alert to dismiss (visible in the alert_list response).
       required: true
       selector:
         text:
-  target:
-    entity:
-      integration: truenas_ce
-      domain: sensor
 
 alert_restore:
   name: Restore alert
-  description: Restore (un-dismiss) a TrueNAS alert by UUID (target the Alerts sensor).
+  description: Restore (un-dismiss) a TrueNAS alert by UUID.
   fields:
     config_entry:
       name: TrueNAS instance
@@ -273,14 +269,10 @@ alert_restore:
       required: true
       selector:
         text:
-  target:
-    entity:
-      integration: truenas_ce
-      domain: sensor
 
 alert_list:
   name: List alerts
-  description: List all TrueNAS alerts with UUID and message.
+  description: List all TrueNAS alerts with UUIDs and formatted messages.
   fields:
     config_entry:
       name: TrueNAS instance
@@ -289,3 +281,10 @@ alert_list:
       selector:
         config_entry:
           integration: truenas_ce
+    properties:
+      name: Properties to include
+      description: Comma-separated list of properties (e.g. "uuid,formatted,level"). Use "*" for all properties.
+      required: false
+      default: "uuid,formatted"
+      selector:
+        text:
