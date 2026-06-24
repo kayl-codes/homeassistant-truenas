@@ -283,9 +283,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
     if not coordinator:
         return {"error": f"TrueNAS instance {entry_id} not found", "alerts": []}
 
-    alerts = await hass.async_add_executor_job(
-        coordinator.api.query, "alert.list"
-    )
+    alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
     return {"alerts": alerts if isinstance(alerts, list) else []}
 
 

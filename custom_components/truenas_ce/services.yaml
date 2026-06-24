@@ -289,6 +289,3 @@ alert_list:
       selector:
         config_entry:
           integration: truenas_ce
-  response:
-    optional: false
-    description: List of all alerts (active and dismissed).
