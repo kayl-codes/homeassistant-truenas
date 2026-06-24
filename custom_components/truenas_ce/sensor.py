@@ -171,15 +171,21 @@ class TrueNASUptimeSensor(TrueNASSensor):
 class TrueNASAlertSensor(TrueNASSensor):
     """Define a TrueNAS Alert sensor with dismiss/restore actions."""
 
-    async def dismiss(self, uuid: str) -> None:
+    async def dismiss(self, **kwargs: Any) -> None:
         """Dismiss a TrueNAS alert by its UUID."""
+        uuid = kwargs.get("uuid")
+        if not uuid:
+            raise ServiceValidationError("uuid parameter is required")
         await self.hass.async_add_executor_job(
             self.coordinator.api.query, "alert.dismiss", [uuid]
         )
         await self.coordinator.async_refresh()
 
-    async def restore(self, uuid: str) -> None:
+    async def restore(self, **kwargs: Any) -> None:
         """Restore (un-dismiss) a previously dismissed TrueNAS alert."""
+        uuid = kwargs.get("uuid")
+        if not uuid:
+            raise ServiceValidationError("uuid parameter is required")
         await self.hass.async_add_executor_job(
             self.coordinator.api.query, "alert.restore", [uuid]
         )
