@@ -270,8 +270,8 @@ alert_list:
   fields:
     instance:
       name: TrueNAS instance
-      description: The TrueNAS instance to list alerts from.
-      required: true
+      description: The TrueNAS instance to list alerts from. Leave empty for the only/first instance.
+      required: false
       selector:
         text:
   response:

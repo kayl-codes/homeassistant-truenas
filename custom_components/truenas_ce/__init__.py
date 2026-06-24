@@ -279,14 +279,28 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
         async def _handle_alert_list(call) -> dict:
             """List all TrueNAS alerts with UUID and message for specified instance."""
-            instance_id = call.data.get(SERVICE_ALERT_INSTANCE)
+            instance_name = call.data.get(SERVICE_ALERT_INSTANCE)
             coords = hass.data.get(DOMAIN, {})
 
-            # Find coordinator by entry_id (instance_id is the config_entry.entry_id)
-            coordinator = coords.get(instance_id)
+            if not coords:
+                return {"error": "No TrueNAS instances configured", "alerts": []}
+
+            # If instance_name not specified, use the first (or only) one
+            if not instance_name:
+                coordinator = next(iter(coords.values())) if coords else None
+            else:
+                # Try to find by entry_id first, then by name
+                coordinator = coords.get(instance_name)
+                if not coordinator:
+                    # Try to find by config_entry name
+                    for entry_id, coord in coords.items():
+                        if coord.config_entry.data.get(CONF_NAME) == instance_name:
+                            coordinator = coord
+                            break
+
             if not coordinator:
                 return {
-                    "error": f"TrueNAS instance {instance_id} not found",
+                    "error": f"TrueNAS instance '{instance_name}' not found",
                     "alerts": [],
                 }
 
