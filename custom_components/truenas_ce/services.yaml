@@ -267,6 +267,13 @@ alert_restore:
 alert_list:
   name: List alerts
   description: List all TrueNAS alerts with UUID and message.
+  fields:
+    instance:
+      name: TrueNAS instance
+      description: The TrueNAS instance to list alerts from.
+      required: true
+      selector:
+        text:
   response:
     optional: false
     description: List of all alerts (active and dismissed).

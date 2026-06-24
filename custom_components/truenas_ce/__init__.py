@@ -25,6 +25,7 @@ from .const import (
     GROUP_DATA_PATHS,
     PLATFORMS,
     SCHEMA_SERVICE_ALERT_LIST,
+    SERVICE_ALERT_INSTANCE,
     SERVICE_ALERT_LIST,
     SIGNAL_UPDATE_SENSORS,
 )
@@ -273,19 +274,34 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
-    # Register alert_list service (domain-level, returns response with all alerts).
-    async def _handle_alert_list(call) -> dict:
-        """List all TrueNAS alerts with UUID and message."""
-        alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
-        return {"alerts": alerts if isinstance(alerts, list) else []}
+    # Register alert_list service (domain-level, instance-specific) once.
+    if SERVICE_ALERT_LIST not in hass.services.async_services().get(DOMAIN, {}):
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_ALERT_LIST,
-        _handle_alert_list,
-        schema=SCHEMA_SERVICE_ALERT_LIST,
-        supports_response=True,
-    )
+        async def _handle_alert_list(call) -> dict:
+            """List all TrueNAS alerts with UUID and message for specified instance."""
+            instance_id = call.data.get(SERVICE_ALERT_INSTANCE)
+            coords = hass.data.get(DOMAIN, {})
+
+            # Find coordinator by entry_id (instance_id is the config_entry.entry_id)
+            coordinator = coords.get(instance_id)
+            if not coordinator:
+                return {
+                    "error": f"TrueNAS instance {instance_id} not found",
+                    "alerts": [],
+                }
+
+            alerts = await hass.async_add_executor_job(
+                coordinator.api.query, "alert.list"
+            )
+            return {"alerts": alerts if isinstance(alerts, list) else []}
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ALERT_LIST,
+            _handle_alert_list,
+            schema=SCHEMA_SERVICE_ALERT_LIST,
+            supports_response=True,
+        )
 
     # Re-attach the freed legacy entity_ids now that the new entities exist, then
     # report the outcome once (validation checks + guide link + rollback hint).

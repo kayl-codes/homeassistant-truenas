@@ -148,13 +148,16 @@ SERVICE_ALERT_DISMISS = "alert_dismiss"
 SERVICE_ALERT_RESTORE = "alert_restore"
 SERVICE_ALERT_LIST = "alert_list"
 SERVICE_ALERT_UUID = "uuid"
+SERVICE_ALERT_INSTANCE = "instance"
 SCHEMA_SERVICE_ALERT_DISMISS = {
     vol.Required(SERVICE_ALERT_UUID): cv.string,
 }
 SCHEMA_SERVICE_ALERT_RESTORE = {
     vol.Required(SERVICE_ALERT_UUID): cv.string,
 }
-SCHEMA_SERVICE_ALERT_LIST = cv.SCRIPT_SCHEMA
+SCHEMA_SERVICE_ALERT_LIST = {
+    vol.Required(SERVICE_ALERT_INSTANCE): cv.string,
+}
 
 CONF_CRONJOB_SKIP_DISABLED = "cronjob_skip_disabled"
 CONF_DATA_UNIT = "data_unit"
