@@ -311,7 +311,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
     coordinator = hass.data[DOMAIN][entry_id]
     alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
     if not isinstance(alerts, list):
-        return {"alerts": []}
+        return {"alerts": [], "error": "Unexpected alert.list response"}
 
     # Filter properties if specified
     props = call.data.get(SERVICE_ALERT_PROPERTIES, "uuid,formatted")
@@ -329,8 +329,11 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
     if error:
         raise ServiceValidationError(error.get("error", "Unknown error"))
 
-    coordinator = hass.data[DOMAIN][entry_id]
     uuid = call.data.get(SERVICE_ALERT_UUID)
+    if not uuid:
+        raise ServiceValidationError("Alert UUID is required for dismiss action")
+
+    coordinator = hass.data[DOMAIN][entry_id]
     await _alert_action(hass, coordinator, uuid, "dismiss")
 
 
@@ -340,8 +343,11 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
     if error:
         raise ServiceValidationError(error.get("error", "Unknown error"))
 
-    coordinator = hass.data[DOMAIN][entry_id]
     uuid = call.data.get(SERVICE_ALERT_UUID)
+    if not uuid:
+        raise ServiceValidationError("Alert UUID is required for restore action")
+
+    coordinator = hass.data[DOMAIN][entry_id]
     await _alert_action(hass, coordinator, uuid, "restore")
 
 
