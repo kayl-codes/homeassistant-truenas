@@ -386,6 +386,14 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Unlock function."""
         self._raise_unsupported("unlock")
 
+    async def dismiss(self, **kwargs):
+        """Dismiss function."""
+        self._raise_unsupported("dismiss")
+
+    async def restore(self, **kwargs):
+        """Restore function."""
+        self._raise_unsupported("restore")
+
     async def refresh(self):
         """Refresh function."""
         self._raise_unsupported("refresh")

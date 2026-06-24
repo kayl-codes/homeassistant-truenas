@@ -1920,6 +1920,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "warning": sum(a.get("level") == "WARNING" for a in active_alerts),
             "info": sum(a.get("level") == "INFO" for a in active_alerts),
             "disk_issues": disk_issues,
+            "uuids": [a.get("uuid", "") for a in active_alerts],
         }
 
     # ---------------------------

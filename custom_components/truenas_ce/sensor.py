@@ -55,6 +55,7 @@ async def async_setup_entry(
     """Set up entry for TrueNAS component."""
     dispatcher = {
         "TrueNASSensor": TrueNASSensor,
+        "TrueNASAlertSensor": TrueNASAlertSensor,
         "TrueNASUptimeSensor": TrueNASUptimeSensor,
         "TrueNASCloudsyncSensor": TrueNASCloudsyncSensor,
         "TrueNASDatasetSensor": TrueNASDatasetSensor,
@@ -161,6 +162,27 @@ class TrueNASUptimeSensor(TrueNASSensor):
         Triggers the same update cycle that otherwise runs on the poll interval,
         so automations can act on current data without waiting for the next poll.
         """
+        await self.coordinator.async_refresh()
+
+
+# ---------------------------
+#   TrueNASAlertSensor
+# ---------------------------
+class TrueNASAlertSensor(TrueNASSensor):
+    """Define a TrueNAS Alert sensor with dismiss/restore actions."""
+
+    async def dismiss(self, uuid: str) -> None:
+        """Dismiss a TrueNAS alert by its UUID."""
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.query, "alert.dismiss", [uuid]
+        )
+        await self.coordinator.async_refresh()
+
+    async def restore(self, uuid: str) -> None:
+        """Restore (un-dismiss) a previously dismissed TrueNAS alert."""
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.query, "alert.restore", [uuid]
+        )
         await self.coordinator.async_refresh()
 
 

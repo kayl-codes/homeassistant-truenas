@@ -112,6 +112,15 @@
             "system_refresh": {
                 "name": "Actualizar datos"
             }
+        },
+        "sensor": {
+            "alerts": {
+                "state_attributes": {
+                    "uuids": {
+                        "name": "Alert UUIDs"
+                    }
+                }
+            }
         }
     }
 }

@@ -144,6 +144,16 @@ SCHEMA_SERVICE_SYSTEM_SHUTDOWN = {}
 SERVICE_SYSTEM_REFRESH = "system_refresh"
 SCHEMA_SERVICE_SYSTEM_REFRESH = {}
 
+SERVICE_ALERT_DISMISS = "alert_dismiss"
+SERVICE_ALERT_RESTORE = "alert_restore"
+SERVICE_ALERT_UUID = "uuid"
+SCHEMA_SERVICE_ALERT_DISMISS = {
+    vol.Required(SERVICE_ALERT_UUID): cv.string,
+}
+SCHEMA_SERVICE_ALERT_RESTORE = {
+    vol.Required(SERVICE_ALERT_UUID): cv.string,
+}
+
 CONF_CRONJOB_SKIP_DISABLED = "cronjob_skip_disabled"
 CONF_DATA_UNIT = "data_unit"
 

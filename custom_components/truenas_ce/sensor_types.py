@@ -25,6 +25,8 @@ from homeassistant.helpers.entity import EntityCategory
 from .const import (
     ICON_GAUGE,
     LINK_STATE_DOWN,
+    SCHEMA_SERVICE_ALERT_DISMISS,
+    SCHEMA_SERVICE_ALERT_RESTORE,
     SCHEMA_SERVICE_CLOUDSYNC_ABORT,
     SCHEMA_SERVICE_CLOUDSYNC_RUN,
     SCHEMA_SERVICE_DATASET_LOCK,
@@ -36,6 +38,8 @@ from .const import (
     SCHEMA_SERVICE_SYSTEM_REBOOT,
     SCHEMA_SERVICE_SYSTEM_REFRESH,
     SCHEMA_SERVICE_SYSTEM_SHUTDOWN,
+    SERVICE_ALERT_DISMISS,
+    SERVICE_ALERT_RESTORE,
     SERVICE_CLOUDSYNC_ABORT,
     SERVICE_CLOUDSYNC_RUN,
     SERVICE_DATASET_LOCK,
@@ -187,6 +191,7 @@ DEVICE_ATTRIBUTES_ALERTS = (
     "critical",
     "warning",
     "info",
+    "uuids",
 )
 
 DEVICE_ATTRIBUTES_DIRECTORYSERVICE = (
@@ -236,6 +241,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_ALERTS,
+        func="TrueNASAlertSensor",
     ),
     TrueNASSensorEntityDescription(
         key="system_smb_connections",
@@ -865,4 +871,6 @@ SENSOR_SERVICES: tuple[SensorService, ...] = (
     SensorService(SERVICE_SYSTEM_REBOOT, SCHEMA_SERVICE_SYSTEM_REBOOT, "restart"),
     SensorService(SERVICE_SYSTEM_SHUTDOWN, SCHEMA_SERVICE_SYSTEM_SHUTDOWN, "stop"),
     SensorService(SERVICE_SYSTEM_REFRESH, SCHEMA_SERVICE_SYSTEM_REFRESH, "refresh"),
+    SensorService(SERVICE_ALERT_DISMISS, SCHEMA_SERVICE_ALERT_DISMISS, "dismiss"),
+    SensorService(SERVICE_ALERT_RESTORE, SCHEMA_SERVICE_ALERT_RESTORE, "restore"),
 )
