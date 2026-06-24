@@ -307,10 +307,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     # Register alert_list service (domain-level, instance-specific) once.
     if SERVICE_ALERT_LIST not in hass.services.async_services().get(DOMAIN, {}):
+
+        async def _alert_list_handler(call) -> dict:
+            return await _handle_alert_list(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_ALERT_LIST,
-            lambda call: _handle_alert_list(hass, call),
+            _alert_list_handler,
             schema=SCHEMA_SERVICE_ALERT_LIST,
             supports_response=True,
         )
