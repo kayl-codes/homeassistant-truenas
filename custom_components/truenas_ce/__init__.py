@@ -294,6 +294,14 @@ def _get_coordinator(
     return entry_id, {}
 
 
+async def _alert_action(
+    hass: HomeAssistant, coordinator: TrueNASCoordinator, uuid: str, action: str
+) -> None:
+    """Execute alert dismiss/restore action (shared helper)."""
+    await hass.async_add_executor_job(coordinator.api.query, f"alert.{action}", [uuid])
+    await coordinator.async_refresh()
+
+
 async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
     """List all TrueNAS alerts with selectable properties."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
@@ -323,8 +331,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
 
     coordinator = hass.data[DOMAIN][entry_id]
     uuid = call.data.get(SERVICE_ALERT_UUID)
-    await hass.async_add_executor_job(coordinator.api.query, "alert.dismiss", [uuid])
-    await coordinator.async_refresh()
+    await _alert_action(hass, coordinator, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
@@ -335,8 +342,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
 
     coordinator = hass.data[DOMAIN][entry_id]
     uuid = call.data.get(SERVICE_ALERT_UUID)
-    await hass.async_add_executor_job(coordinator.api.query, "alert.restore", [uuid])
-    await coordinator.async_refresh()
+    await _alert_action(hass, coordinator, uuid, "restore")
 
 
 # ---------------------------
@@ -360,17 +366,25 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Register alert services (domain-level, instance-specific) once.
     services = hass.services.async_services().get(DOMAIN, {})
     if SERVICE_ALERT_DISMISS not in services:
+
+        async def _alert_dismiss_handler(call) -> None:
+            await _handle_alert_dismiss(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_ALERT_DISMISS,
-            lambda call: _handle_alert_dismiss(hass, call),
+            _alert_dismiss_handler,
             schema=SCHEMA_SERVICE_ALERT_DISMISS,
         )
     if SERVICE_ALERT_RESTORE not in services:
+
+        async def _alert_restore_handler(call) -> None:
+            await _handle_alert_restore(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_ALERT_RESTORE,
-            lambda call: _handle_alert_restore(hass, call),
+            _alert_restore_handler,
             schema=SCHEMA_SERVICE_ALERT_RESTORE,
         )
     if SERVICE_ALERT_LIST not in services:
