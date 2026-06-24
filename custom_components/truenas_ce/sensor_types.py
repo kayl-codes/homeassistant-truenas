@@ -187,6 +187,7 @@ DEVICE_ATTRIBUTES_ALERTS = (
     "critical",
     "warning",
     "info",
+    "uuids",
 )
 
 DEVICE_ATTRIBUTES_DIRECTORYSERVICE = (
@@ -236,6 +237,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_ALERTS,
+        func="TrueNASAlertSensor",
     ),
     TrueNASSensorEntityDescription(
         key="system_smb_connections",

@@ -27,7 +27,7 @@ from .const import (
 )
 from .coordinator import TrueNASCoordinator
 from .entity import TrueNASEntity, async_add_entities
-from .helper import scaled_data_unit
+from .helper import alert_action, scaled_data_unit
 from .sensor_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
@@ -55,6 +55,7 @@ async def async_setup_entry(
     """Set up entry for TrueNAS component."""
     dispatcher = {
         "TrueNASSensor": TrueNASSensor,
+        "TrueNASAlertSensor": TrueNASAlertSensor,
         "TrueNASUptimeSensor": TrueNASUptimeSensor,
         "TrueNASCloudsyncSensor": TrueNASCloudsyncSensor,
         "TrueNASDatasetSensor": TrueNASDatasetSensor,
@@ -162,6 +163,27 @@ class TrueNASUptimeSensor(TrueNASSensor):
         so automations can act on current data without waiting for the next poll.
         """
         await self.coordinator.async_refresh()
+
+
+# ---------------------------
+#   TrueNASAlertSensor
+# ---------------------------
+class TrueNASAlertSensor(TrueNASSensor):
+    """Define a TrueNAS Alert sensor with dismiss/restore actions."""
+
+    async def dismiss(self, **kwargs: Any) -> None:
+        """Dismiss a TrueNAS alert by its UUID."""
+        uuid = kwargs.get("uuid")
+        if not uuid:
+            raise ServiceValidationError("Missing required parameter: uuid")
+        await alert_action(self.hass, self.coordinator, uuid, "dismiss")
+
+    async def restore(self, **kwargs: Any) -> None:
+        """Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID."""
+        uuid = kwargs.get("uuid")
+        if not uuid:
+            raise ServiceValidationError("Missing required parameter: uuid")
+        await alert_action(self.hass, self.coordinator, uuid, "restore")
 
 
 # ---------------------------

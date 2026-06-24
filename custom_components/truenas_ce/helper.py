@@ -1,6 +1,15 @@
 """Helper functions."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from homeassistant.const import UnitOfInformation
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from .coordinator import TrueNASCoordinator
 
 # Data-size display tiers as (threshold_in_bytes, unit, precision). The first
 # tier whose threshold the value reaches is used; a precision of ``None`` keeps
@@ -59,3 +68,14 @@ def format_attribute(attr: str) -> str:
     attr = attr.replace("Vmware ", "VMware ")
     attr = attr.replace("Ip4 ", "IP4 ")
     return attr.replace("Ip6 ", "IP6 ")
+
+
+# ---------------------------
+#   alert_action
+# ---------------------------
+async def alert_action(
+    hass: HomeAssistant, coordinator: TrueNASCoordinator, uuid: str, action: str
+) -> None:
+    """Execute alert dismiss/restore action (shared helper)."""
+    await hass.async_add_executor_job(coordinator.api.query, f"alert.{action}", [uuid])
+    await coordinator.async_refresh()
