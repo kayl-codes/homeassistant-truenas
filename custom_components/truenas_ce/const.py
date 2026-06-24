@@ -150,6 +150,7 @@ SERVICE_ALERT_LIST = "alert_list"
 SERVICE_ALERT_UUID = "uuid"
 SERVICE_ALERT_CONFIG_ENTRY = "config_entry"
 SERVICE_ALERT_PROPERTIES = "properties"
+DEFAULT_ALERT_PROPERTIES = "uuid,formatted"
 SCHEMA_SERVICE_ALERT_DISMISS = vol.Schema(
     {
         vol.Optional(SERVICE_ALERT_CONFIG_ENTRY): cv.string,
@@ -165,7 +166,9 @@ SCHEMA_SERVICE_ALERT_RESTORE = vol.Schema(
 SCHEMA_SERVICE_ALERT_LIST = vol.Schema(
     {
         vol.Optional(SERVICE_ALERT_CONFIG_ENTRY): cv.string,
-        vol.Optional(SERVICE_ALERT_PROPERTIES, default="uuid,formatted"): cv.string,
+        vol.Optional(
+            SERVICE_ALERT_PROPERTIES, default=DEFAULT_ALERT_PROPERTIES
+        ): cv.string,
     }
 )
 

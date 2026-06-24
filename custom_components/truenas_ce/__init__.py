@@ -19,6 +19,7 @@ from .const import (
     CONF_BEHAVIORS,
     CONF_DATA_UNIT,
     CONF_MONITORED_GROUPS,
+    DEFAULT_ALERT_PROPERTIES,
     DEFAULT_BEHAVIORS,
     DEFAULT_DATA_UNIT,
     DEFAULT_MONITORED_GROUPS,
@@ -38,7 +39,7 @@ from .const import (
 )
 from .coordinator import TrueNASCoordinator
 from .entity import _is_uid_excluded, format_unique_id
-from .helper import scaled_data_unit
+from .helper import alert_action, scaled_data_unit
 from .migration import (
     async_adopt_legacy_entities,
     async_notify_migration_result,
@@ -294,14 +295,6 @@ def _get_coordinator(
     return entry_id, {}
 
 
-async def _alert_action(
-    hass: HomeAssistant, coordinator: TrueNASCoordinator, uuid: str, action: str
-) -> None:
-    """Execute alert dismiss/restore action (shared helper)."""
-    await hass.async_add_executor_job(coordinator.api.query, f"alert.{action}", [uuid])
-    await coordinator.async_refresh()
-
-
 async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
     """List all TrueNAS alerts with selectable properties."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
@@ -314,7 +307,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
         return {"alerts": [], "error": "Unexpected alert.list response"}
 
     # Filter properties if specified
-    props = call.data.get(SERVICE_ALERT_PROPERTIES, "uuid,formatted")
+    props = call.data.get(SERVICE_ALERT_PROPERTIES, DEFAULT_ALERT_PROPERTIES)
     if props == "*":
         return {"alerts": alerts}
 
@@ -334,7 +327,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for dismiss action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await _alert_action(hass, coordinator, uuid, "dismiss")
+    await alert_action(hass, coordinator, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
@@ -348,7 +341,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for restore action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await _alert_action(hass, coordinator, uuid, "restore")
+    await alert_action(hass, coordinator, uuid, "restore")
 
 
 # ---------------------------
@@ -370,8 +363,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
     # Register alert services (domain-level, instance-specific) once.
-    services = hass.services.async_services().get(DOMAIN, {})
-    if SERVICE_ALERT_DISMISS not in services:
+    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_DISMISS):
 
         async def _alert_dismiss_handler(call) -> None:
             await _handle_alert_dismiss(hass, call)
@@ -382,7 +374,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             _alert_dismiss_handler,
             schema=SCHEMA_SERVICE_ALERT_DISMISS,
         )
-    if SERVICE_ALERT_RESTORE not in services:
+    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_RESTORE):
 
         async def _alert_restore_handler(call) -> None:
             await _handle_alert_restore(hass, call)
@@ -393,7 +385,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             _alert_restore_handler,
             schema=SCHEMA_SERVICE_ALERT_RESTORE,
         )
-    if SERVICE_ALERT_LIST not in services:
+    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_LIST):
 
         async def _alert_list_handler(call) -> dict:
             return await _handle_alert_list(hass, call)

@@ -27,7 +27,7 @@ from .const import (
 )
 from .coordinator import TrueNASCoordinator
 from .entity import TrueNASEntity, async_add_entities
-from .helper import scaled_data_unit
+from .helper import alert_action, scaled_data_unit
 from .sensor_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
@@ -176,20 +176,14 @@ class TrueNASAlertSensor(TrueNASSensor):
         uuid = kwargs.get("uuid")
         if not uuid:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query, "alert.dismiss", [uuid]
-        )
-        await self.coordinator.async_refresh()
+        await alert_action(self.hass, self.coordinator, uuid, "dismiss")
 
     async def restore(self, **kwargs: Any) -> None:
         """Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID."""
         uuid = kwargs.get("uuid")
         if not uuid:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query, "alert.restore", [uuid]
-        )
-        await self.coordinator.async_refresh()
+        await alert_action(self.hass, self.coordinator, uuid, "restore")
 
 
 # ---------------------------
