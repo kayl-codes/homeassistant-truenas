@@ -185,10 +185,6 @@ class TrueNASAlertSensor(TrueNASSensor):
         )
         await self.coordinator.async_refresh()
 
-    async def list(self) -> None:
-        """List all TrueNAS alerts (including dismissed) with UUID and message."""
-        await self.hass.async_add_executor_job(self.coordinator.api.query, "alert.list")
-
 
 # ---------------------------
 #   TrueNASDatasetSensor
