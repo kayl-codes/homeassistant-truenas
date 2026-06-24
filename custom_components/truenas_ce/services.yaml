@@ -238,6 +238,13 @@ alert_dismiss:
   name: Dismiss alert
   description: Dismiss a TrueNAS alert by UUID (target the Alerts sensor).
   fields:
+    config_entry:
+      name: TrueNAS instance
+      description: TrueNAS instance (optional, defaults to the only/first instance).
+      required: false
+      selector:
+        config_entry:
+          integration: truenas_ce
     uuid:
       name: Alert UUID
       description: UUID of the alert to dismiss (visible in the Alerts sensor attributes).
@@ -253,6 +260,13 @@ alert_restore:
   name: Restore alert
   description: Restore (un-dismiss) a TrueNAS alert by UUID (target the Alerts sensor).
   fields:
+    config_entry:
+      name: TrueNAS instance
+      description: TrueNAS instance (optional, defaults to the only/first instance).
+      required: false
+      selector:
+        config_entry:
+          integration: truenas_ce
     uuid:
       name: Alert UUID
       description: UUID of the previously dismissed alert to restore.
@@ -268,12 +282,13 @@ alert_list:
   name: List alerts
   description: List all TrueNAS alerts with UUID and message.
   fields:
-    instance:
+    config_entry:
       name: TrueNAS instance
-      description: The TrueNAS instance to list alerts from. Leave empty for the only/first instance.
+      description: TrueNAS instance (optional, defaults to the only/first instance).
       required: false
       selector:
-        text:
+        config_entry:
+          integration: truenas_ce
   response:
     optional: false
     description: List of all alerts (active and dismissed).

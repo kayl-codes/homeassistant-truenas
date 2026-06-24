@@ -25,7 +25,7 @@ from .const import (
     GROUP_DATA_PATHS,
     PLATFORMS,
     SCHEMA_SERVICE_ALERT_LIST,
-    SERVICE_ALERT_INSTANCE,
+    SERVICE_ALERT_CONFIG_ENTRY,
     SERVICE_ALERT_LIST,
     SIGNAL_UPDATE_SENSORS,
 )
@@ -257,6 +257,39 @@ def _cleanup_orphaned_entities(
 
 
 # ---------------------------
+#   Alert List Service Handler
+# ---------------------------
+async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
+    """List all TrueNAS alerts with UUID and message for specified instance."""
+    coords = hass.data.get(DOMAIN, {})
+    entry_id = call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
+
+    if not coords:
+        return {"error": "No TrueNAS instances configured", "alerts": []}
+
+    if not entry_id:
+        entries = list(coords.keys())
+        if len(entries) != 1:
+            return {
+                "error": (
+                    f"Multiple TrueNAS instances ({len(entries)}); "
+                    "please specify config_entry"
+                ),
+                "alerts": [],
+            }
+        entry_id = entries[0]
+
+    coordinator = coords.get(entry_id)
+    if not coordinator:
+        return {"error": f"TrueNAS instance {entry_id} not found", "alerts": []}
+
+    alerts = await hass.async_add_executor_job(
+        coordinator.api.query, "alert.list"
+    )
+    return {"alerts": alerts if isinstance(alerts, list) else []}
+
+
+# ---------------------------
 #   async_setup_entry
 # ---------------------------
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -276,43 +309,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     # Register alert_list service (domain-level, instance-specific) once.
     if SERVICE_ALERT_LIST not in hass.services.async_services().get(DOMAIN, {}):
-
-        async def _handle_alert_list(call) -> dict:
-            """List all TrueNAS alerts with UUID and message for specified instance."""
-            instance_name = call.data.get(SERVICE_ALERT_INSTANCE)
-            coords = hass.data.get(DOMAIN, {})
-
-            if not coords:
-                return {"error": "No TrueNAS instances configured", "alerts": []}
-
-            # If instance_name not specified, use the first (or only) one
-            if not instance_name:
-                coordinator = next(iter(coords.values())) if coords else None
-            else:
-                # Try to find by entry_id first, then by name
-                coordinator = coords.get(instance_name)
-                if not coordinator:
-                    # Try to find by config_entry name
-                    for entry_id, coord in coords.items():
-                        if coord.config_entry.data.get(CONF_NAME) == instance_name:
-                            coordinator = coord
-                            break
-
-            if not coordinator:
-                return {
-                    "error": f"TrueNAS instance '{instance_name}' not found",
-                    "alerts": [],
-                }
-
-            alerts = await hass.async_add_executor_job(
-                coordinator.api.query, "alert.list"
-            )
-            return {"alerts": alerts if isinstance(alerts, list) else []}
-
         hass.services.async_register(
             DOMAIN,
             SERVICE_ALERT_LIST,
-            _handle_alert_list,
+            lambda call: _handle_alert_list(hass, call),
             schema=SCHEMA_SERVICE_ALERT_LIST,
             supports_response=True,
         )

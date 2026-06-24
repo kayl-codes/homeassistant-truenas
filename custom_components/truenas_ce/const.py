@@ -148,15 +148,17 @@ SERVICE_ALERT_DISMISS = "alert_dismiss"
 SERVICE_ALERT_RESTORE = "alert_restore"
 SERVICE_ALERT_LIST = "alert_list"
 SERVICE_ALERT_UUID = "uuid"
-SERVICE_ALERT_INSTANCE = "instance"
-SCHEMA_SERVICE_ALERT_DISMISS = {
+SERVICE_ALERT_CONFIG_ENTRY = "config_entry"
+SCHEMA_SERVICE_ALERT_DISMISS = vol.Schema({
+    vol.Optional(SERVICE_ALERT_CONFIG_ENTRY): cv.string,
     vol.Required(SERVICE_ALERT_UUID): cv.string,
-}
-SCHEMA_SERVICE_ALERT_RESTORE = {
+})
+SCHEMA_SERVICE_ALERT_RESTORE = vol.Schema({
+    vol.Optional(SERVICE_ALERT_CONFIG_ENTRY): cv.string,
     vol.Required(SERVICE_ALERT_UUID): cv.string,
-}
+})
 SCHEMA_SERVICE_ALERT_LIST = vol.Schema({
-    vol.Optional(SERVICE_ALERT_INSTANCE): cv.string,
+    vol.Optional(SERVICE_ALERT_CONFIG_ENTRY): cv.string,
 })
 
 CONF_CRONJOB_SKIP_DISABLED = "cronjob_skip_disabled"
