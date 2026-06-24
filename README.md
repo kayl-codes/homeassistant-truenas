@@ -195,6 +195,30 @@ Available through:
 
 Useful when you run an action (e.g., dataset lock/unlock, service restart) and need to capture the updated state immediately in an automation.
 
+## Alerts
+Dismiss and restore TrueNAS alerts, or list all active alerts with customizable properties.
+
+All alert actions are **domain-level services** (no target entity needed) and include an optional `config_entry` selector when multiple TrueNAS instances are configured.
+
+**Available actions:**
+- **`alert_list`** — List all active TrueNAS alerts with selectable properties (response shown in *Developer Tools → Actions* response panel)
+  - Optional `config_entry` — Select which TrueNAS instance (defaults to the only/first instance if not specified)
+  - Optional `properties` — Comma-separated list of properties to include (e.g., `uuid,formatted,level`), or `*` for all properties. Default: `uuid,formatted`
+- **`alert_dismiss`** — Dismiss a TrueNAS alert by UUID
+  - Optional `config_entry` — Select which TrueNAS instance
+  - Required `uuid` — UUID of the alert (visible in `alert_list` response or as state attributes)
+- **`alert_restore`** — Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID
+  - Optional `config_entry` — Select which TrueNAS instance
+  - Required `uuid` — UUID of the alert
+
+Example:
+```yaml
+# List all active alerts with all properties
+action: truenas_ce.alert_list
+data:
+  properties: "*"
+```
+
 ## Diagnostics
 Monitor overall system health and active alerts directly from the device page. The integration provides a dedicated diagnostic sensor that automatically detects any disk or pool issues.
 
@@ -257,7 +281,7 @@ target:
 
 
 Minimum requirements:
-* TrueNAS 25.04
+* TrueNAS 25.04 or later (tested with 25.10.4)
 * Home Assistant 2024.8.0
 
 ## Using TrueNAS development branch
