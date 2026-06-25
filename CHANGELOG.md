@@ -12,6 +12,41 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNAS 25.04**.
 
+## [2.2.0] — Alert actions & disk temperature history fix
+
+### Added
+- **Alert dismiss / restore (#8):** new domain-level actions `alert_dismiss`, `alert_restore`
+  and `alert_list`. Dismiss an active alert by UUID, restore a dismissed one, or retrieve a
+  structured list of all active alerts (with selectable properties) directly from Developer
+  Tools → Actions. All three actions accept an optional `config_entry` selector when multiple
+  TrueNAS instances are configured.
+
+### Fixed
+- **Disk temperature history no longer frozen (#16):** when the netdata temperature source was
+  unavailable, the fallback query was only triggered for disks that already had `null` in the
+  previous poll, not for all disks. Fixed so the disk-temperatures API is queried whenever
+  netdata returns nothing. Additionally, disk temperature sensors now use `force_update=True`
+  so each poll result is written to the HA recorder even when the value is unchanged — history
+  graphs no longer show gaps or a frozen last-known value.
+- **Removed deprecated `pytz` dependency (SonarCloud S6890):** `apiparser.py` now uses the
+  stdlib `datetime.UTC` constant (Python 3.11+, our target is 3.13) instead of
+  `from pytz import utc`. No user-visible change; `pytz` was never listed as a runtime
+  requirement.
+
+## [2.1.0] — Certificate expiry, ARC hit ratio & system refresh
+
+### Added
+- **Certificate expiry monitoring (#6):** each TrueNAS certificate is exposed as a sensor
+  showing the expiry datetime, a companion sensor with the days remaining, and a binary
+  sensor that turns `on` when the certificate has expired. All three carry the certificate
+  name, subject, issuer and valid-from date as attributes.
+- **ARC hit ratio (#7):** a new `arc_hit_ratio` sensor (unit `%`) shows the ZFS ARC cache
+  effectiveness, complementing the existing ARC size sensor.
+- **System Refresh action (#10):** a new `system_refresh` domain-level action triggers an
+  immediate out-of-schedule coordinator update — useful in automations or when you need
+  fresh data right after a TrueNAS change. A dedicated **System Refresh** button also
+  appears on the system device page.
+
 ---
 
 ## [2.0.0] — Independent project: rename to `truenas_ce`, dataset lock/unlock
@@ -271,6 +306,8 @@ Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNA
 - Handle JSON-RPC parsing errors to prevent crashes on unexpected API formats.
 - Modern type hints and `.get()` fallbacks to avoid `KeyError` crashes.
 
+[2.2.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.2.0
+[2.1.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.1.0
 [2.0.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/2.0.0
 [1.9.1]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/1.9.1
 [1.9.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/1.9.0

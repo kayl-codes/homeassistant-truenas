@@ -44,7 +44,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Control and Monitor Cloudsync
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
  * **Monitor Certificate Expiry** (expiration time, days remaining, expired status)
- * Monitor Active Alerts and Diagnostics
+ * **Monitor, dismiss and restore Active Alerts** (list all alerts, dismiss by UUID, restore dismissed)
  * Create a Dataset Snapshot
  * Lock / unlock encrypted Datasets
  * **Refresh coordinator data on demand** (System Refresh action)
