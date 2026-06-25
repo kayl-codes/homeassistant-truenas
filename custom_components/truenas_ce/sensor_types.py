@@ -453,6 +453,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference="identifier",
         data_attributes_list=DEVICE_ATTRIBUTES_DISK,
+        func="TrueNASDiskSensor",
     ),
     TrueNASSensorEntityDescription(
         key="pool_free",

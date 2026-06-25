@@ -1547,12 +1547,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if netdata_temps:
             self._apply_netdata_disk_temps(netdata_temps)
 
-        if missing_disks := [
+        # When netdata is unavailable (returns None) refresh all disks via the
+        # API so a temperature set at boot doesn't stay frozen indefinitely.
+        fallback_disks = [
             uid
             for uid, vals in self.ds["disk"].items()
-            if vals.get("temperature") is None
-        ]:
-            self._fallback_disk_temperatures(missing_disks, bool(netdata_temps))
+            if vals.get("temperature") is None or netdata_temps is None
+        ]
+        if fallback_disks:
+            self._fallback_disk_temperatures(fallback_disks, bool(netdata_temps))
 
     def _apply_netdata_disk_temps(self, netdata_temps: dict[str, float]) -> None:
         """Map netdata temperatures to disk entities."""

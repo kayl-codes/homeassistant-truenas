@@ -59,6 +59,7 @@ async def async_setup_entry(
         "TrueNASUptimeSensor": TrueNASUptimeSensor,
         "TrueNASCloudsyncSensor": TrueNASCloudsyncSensor,
         "TrueNASDatasetSensor": TrueNASDatasetSensor,
+        "TrueNASDiskSensor": TrueNASDiskSensor,
         "TrueNASRsyncSensor": TrueNASRsyncSensor,
         "TrueNASReplicationSensor": TrueNASReplicationSensor,
         "TrueNASSnapshotTaskSensor": TrueNASSnapshotTaskSensor,
@@ -124,6 +125,19 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
             return self.entity_description.native_unit_of_measurement
 
         return None
+
+
+# ---------------------------
+#   TrueNASDiskSensor
+# ---------------------------
+class TrueNASDiskSensor(TrueNASSensor):
+    """Disk temperature sensor.
+
+    force_update ensures HA records every poll value even when the temperature
+    is stable, so the history graph never appears frozen.
+    """
+
+    _attr_force_update = True
 
 
 # ---------------------------
