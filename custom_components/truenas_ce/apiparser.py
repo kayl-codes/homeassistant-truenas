@@ -1,11 +1,9 @@
 """API parser for JSON APIs."""
 
 from collections.abc import Hashable
-from datetime import datetime
+from datetime import UTC, datetime
 from logging import getLogger
 from typing import Any, TypedDict
-
-from pytz import utc
 
 _LOGGER = getLogger(__name__)
 
@@ -49,7 +47,7 @@ class ApiValueSpec(TypedDict, total=False):
 # ---------------------------
 def utc_from_timestamp(timestamp: float) -> datetime:
     """Return a UTC time from a timestamp."""
-    return datetime.fromtimestamp(timestamp, tz=utc)
+    return datetime.fromtimestamp(timestamp, tz=UTC)
 
 
 # ---------------------------
@@ -64,7 +62,7 @@ def human_date_to_utc(date_str: Any) -> datetime | None:
     if not isinstance(date_str, str):
         return None
     try:
-        return datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y").replace(tzinfo=utc)
+        return datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y").replace(tzinfo=UTC)
     except (ValueError, AttributeError):
         _LOGGER.debug("Failed to parse certificate date: %s", date_str)
         return None
