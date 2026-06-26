@@ -361,6 +361,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "replication": {},
             "rsynctask": {},
             "snapshottask": {},
+            "scrub": {},
             "app": {},
             "cronjob": {},
             "ups": {},
@@ -471,6 +472,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_replication,
             self.get_rsync,
             self.get_snapshottask,
+            self.get_scrub,
             self.get_app,
             self.get_cronjob,
             self.get_alerts,
@@ -2154,6 +2156,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "default": 0,
                     "convert": "utc_from_timestamp",
                 },
+            ],
+        )
+
+    # ---------------------------
+    #   get_scrub
+    # ---------------------------
+    def get_scrub(self) -> None:
+        """Get pool scrub tasks from TrueNAS."""
+        self.ds["scrub"] = parse_api(
+            data=self.ds["scrub"],
+            source=self.api.query("pool.scrub.query"),
+            key="id",
+            vals=[
+                {"name": "id", "default": None},
+                {"name": "pool_name", "default": ""},
+                {"name": "enabled", "type": "bool", "default": False},
             ],
         )
 

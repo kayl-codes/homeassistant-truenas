@@ -18,12 +18,14 @@ from .button_types import (  # noqa: F401
     SENSOR_TYPES,
 )
 from .const import (
+    API_POOL_SCRUB_SCRUB,
     BUTTON_MIGRATION_ROLLBACK,
     BUTTON_STATISTICS_CLEANUP,
     BUTTON_SYSTEM_REFRESH,
     DOMAIN,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
+    SCRUB_ACTION_START,
 )
 from .coordinator import TrueNASCoordinator
 from .entity import (
@@ -47,6 +49,7 @@ async def async_setup_entry(
     """Set up TrueNAS buttons."""
     dispatcher = {
         "TrueNASButton": TrueNASButton,
+        "TrueNASPoolScrubButton": TrueNASPoolScrubButton,
     }
     await async_add_entities(hass, config_entry, dispatcher)
 
@@ -87,6 +90,49 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
         # Trigger the run and show RUNNING immediately (re-synced on next poll).
         await self.coordinator.async_run_task(
             method, object_id, self.entity_description.data_path
+        )
+
+
+# ---------------------------
+#   TrueNASPoolScrubButton
+# ---------------------------
+class TrueNASPoolScrubButton(TrueNASButton):
+    """Scrub button: starts a pool scrub via pool.scrub.scrub."""
+
+    async def async_press(self) -> None:
+        pool_name = self._data.get("pool_name")
+        task_id = self._data.get("id")
+        if not pool_name or task_id is None:
+            _LOGGER.debug(
+                "TrueNAS scrub button %s missing pool_name or task id; skipping",
+                self.entity_id,
+            )
+            return
+        if not self._data.get("enabled"):
+            _LOGGER.debug(
+                "TrueNAS scrub button %s: scrub task is disabled; skipping",
+                self.entity_id,
+            )
+            return
+        result = await self.hass.async_add_executor_job(
+            self.coordinator.api.query,
+            API_POOL_SCRUB_SCRUB,
+            [pool_name, SCRUB_ACTION_START],
+        )
+        if result is None:
+            _LOGGER.error(
+                "TrueNAS scrub button %s: pool.scrub.scrub failed for pool %r",
+                self.entity_id,
+                pool_name,
+            )
+            return
+        self.coordinator.set_optimistic_running(
+            self.entity_description.data_path, task_id
+        )
+        _LOGGER.debug(
+            "TrueNAS scrub button %s: started scrub for pool %r",
+            self.entity_id,
+            pool_name,
         )
 
 

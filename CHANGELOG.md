@@ -12,6 +12,21 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNAS 25.04**.
 
+## [2.3.0] — Pool scrub button fix & disk-type icons
+
+### Added
+- **Disk-type icons:** disk temperature sensors now show a type-specific icon based on
+  the storage medium reported by TrueNAS (`disk.query` → `type`): a platter icon
+  (`mdi:harddisk`) for HDDs, a chip icon (`mdi:chip`) for SSDs and SEDs, and a PCIe
+  card icon (`mdi:expansion-card-variant`) for NVMe drives.
+
+### Fixed
+- **Pool scrub button now reliably starts a scrub (#9):** the previous implementation
+  called `pool.scrub.run`, which silently skips a scrub when the last run is within
+  the task's configured threshold (default 35 days). Replaced with `pool.scrub.scrub`
+  (`action=START`), which bypasses the threshold check entirely and starts the scrub
+  immediately.
+
 ## [2.2.0] — Alert actions & disk temperature history fix
 
 ### Added

@@ -82,6 +82,17 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
         data_uid=None,
         data_reference="id",
     ),
+    TrueNASButtonEntityDescription(
+        key="scrub_run",
+        name="Run scrub",
+        icon="mdi:broom",
+        ha_group="Pools",
+        data_path="scrub",
+        data_name="pool_name",
+        data_uid=None,
+        data_reference="id",
+        func="TrueNASPoolScrubButton",
+    ),
 )
 
 

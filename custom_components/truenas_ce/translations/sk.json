@@ -111,6 +111,9 @@
             },
             "system_refresh": {
                 "name": "Obnoviť údaje"
+            },
+            "scrub_run": {
+                "name": "Spustiť scrub"
             }
         },
         "sensor": {
