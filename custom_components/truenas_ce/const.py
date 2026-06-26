@@ -135,6 +135,7 @@ API_RSYNCTASK_RUN = "rsynctask.run"
 API_REPLICATION_RUN = "replication.run"
 API_SNAPSHOTTASK_RUN = "pool.snapshottask.run"
 API_POOL_SCRUB_SCRUB = "pool.scrub.scrub"
+SCRUB_ACTION_START = "START"
 
 SERVICE_SYSTEM_REBOOT = "system_reboot"
 SCHEMA_SERVICE_SYSTEM_REBOOT = {}

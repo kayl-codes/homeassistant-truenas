@@ -25,6 +25,7 @@ from .const import (
     DOMAIN,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
+    SCRUB_ACTION_START,
 )
 from .coordinator import TrueNASCoordinator
 from .entity import (
@@ -101,7 +102,7 @@ class TrueNASPoolScrubButton(TrueNASButton):
     async def async_press(self) -> None:
         pool_name = self._data.get("pool_name")
         task_id = self._data.get("id")
-        if not pool_name or not task_id:
+        if not pool_name or task_id is None:
             _LOGGER.debug(
                 "TrueNAS scrub button %s missing pool_name or task id; skipping",
                 self.entity_id,
@@ -114,7 +115,9 @@ class TrueNASPoolScrubButton(TrueNASButton):
             )
             return
         result = await self.hass.async_add_executor_job(
-            self.coordinator.api.query, API_POOL_SCRUB_SCRUB, [pool_name, "START"]
+            self.coordinator.api.query,
+            API_POOL_SCRUB_SCRUB,
+            [pool_name, SCRUB_ACTION_START],
         )
         if result is None:
             _LOGGER.error(

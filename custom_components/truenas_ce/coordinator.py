@@ -2169,7 +2169,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             source=self.api.query("pool.scrub.query"),
             key="id",
             vals=[
-                {"name": "id", "default": 0},
+                {"name": "id", "default": None},
                 {"name": "pool_name", "default": ""},
                 {"name": "enabled", "type": "bool", "default": False},
             ],
