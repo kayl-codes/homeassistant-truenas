@@ -102,13 +102,13 @@ class TrueNASPoolScrubButton(TrueNASButton):
         pool_name = self._data.get("pool_name")
         task_id = self._data.get("id")
         if not pool_name or task_id is None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "TrueNAS scrub button %s missing pool_name or task id; skipping",
                 self.entity_id,
             )
             return
         if not self._data.get("enabled"):
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "TrueNAS scrub button %s: scrub task is disabled; skipping",
                 self.entity_id,
             )

@@ -9,7 +9,6 @@ from homeassistant.components.button import ButtonEntityDescription
 
 from .const import (
     API_CLOUDSYNC_SYNC,
-    API_POOL_SCRUB_SCRUB,
     API_REPLICATION_RUN,
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
@@ -87,7 +86,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
         key="scrub_run",
         name="Run scrub",
         icon="mdi:broom",
-        api_method=API_POOL_SCRUB_SCRUB,
         ha_group="Pools",
         data_path="scrub",
         data_name="pool_name",
