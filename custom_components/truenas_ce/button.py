@@ -126,6 +126,11 @@ class TrueNASPoolScrubButton(TrueNASButton):
         self.coordinator.set_optimistic_running(
             self.entity_description.data_path, task_id
         )
+        _LOGGER.info(
+            "TrueNAS scrub button %s: started scrub for pool %r",
+            self.entity_id,
+            pool_name,
+        )
 
 
 # ---------------------------
