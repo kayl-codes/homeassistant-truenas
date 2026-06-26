@@ -134,7 +134,6 @@ _DISK_TYPE_ICONS = {
     "HDD": "mdi:harddisk",
     "SSD": "mdi:chip",
     "SED": "mdi:chip",
-    "NVME": "mdi:expansion-card-variant",
 }
 
 
