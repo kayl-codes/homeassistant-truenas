@@ -107,9 +107,22 @@ class TrueNASPoolScrubButton(TrueNASButton):
                 self.entity_id,
             )
             return
-        await self.hass.async_add_executor_job(
+        if not self._data.get("enabled"):
+            _LOGGER.warning(
+                "TrueNAS scrub button %s: scrub task is disabled; skipping",
+                self.entity_id,
+            )
+            return
+        result = await self.hass.async_add_executor_job(
             self.coordinator.api.query, API_POOL_SCRUB_SCRUB, [pool_name, "START"]
         )
+        if result is None:
+            _LOGGER.error(
+                "TrueNAS scrub button %s: pool.scrub.scrub failed for pool %r",
+                self.entity_id,
+                pool_name,
+            )
+            return
         self.coordinator.set_optimistic_running(
             self.entity_description.data_path, task_id
         )
