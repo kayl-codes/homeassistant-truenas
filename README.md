@@ -60,6 +60,12 @@ Monitor status for each TrueNAS pool.
 ![Pools Health](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_healthy.png)
 ![Pools Free Space](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_free.png)
 
+Each pool also exposes **scrub controls** (start, pause, resume, stop) as buttons
+and **scrub diagnostics** (state, progress, start/end timestamps, errors) as sensors.
+
+![Pool Controls](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_controls.png)
+![Pool Diagnostics](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_diag.png)
+
 ## Datasets
 Monitor usage and attributes for each TrueNAS dataset.
 
@@ -70,6 +76,8 @@ Monitor usage and attributes for each TrueNAS dataset.
 
 ## Disks
 Monitor temperature and attributes for each TrueNAS disk.
+Disk icons reflect the storage medium at a glance: a platter icon for **HDDs**,
+a chip icon for **SSDs / SEDs** and a PCIe card icon for **NVMe** drives.
 
 ![Disks](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/disk.png)
 

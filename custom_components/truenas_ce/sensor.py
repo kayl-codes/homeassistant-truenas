@@ -130,6 +130,14 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
 # ---------------------------
 #   TrueNASDiskSensor
 # ---------------------------
+_DISK_TYPE_ICONS = {
+    "HDD": "mdi:harddisk",
+    "SSD": "mdi:chip",
+    "SED": "mdi:chip",
+    "NVME": "mdi:expansion-card-variant",
+}
+
+
 class TrueNASDiskSensor(TrueNASSensor):
     """Disk temperature sensor.
 
@@ -138,6 +146,18 @@ class TrueNASDiskSensor(TrueNASSensor):
     """
 
     _attr_force_update = True
+
+    @property
+    def icon(self) -> str:
+        """Return an icon based on the disk type (HDD / SSD / NVMe).
+
+        TrueNAS reports NVMe drives as type=SSD, so devname prefix takes
+        priority over the type field.
+        """
+        if (self._data.get("devname") or "").lower().startswith("nvme"):
+            return "mdi:expansion-card-variant"
+        disk_type = (self._data.get("type") or "").upper()
+        return _DISK_TYPE_ICONS.get(disk_type, "mdi:harddisk")
 
 
 # ---------------------------

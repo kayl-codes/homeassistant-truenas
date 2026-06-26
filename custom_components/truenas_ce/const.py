@@ -134,6 +134,7 @@ API_CLOUDSYNC_SYNC = "cloudsync.sync"
 API_RSYNCTASK_RUN = "rsynctask.run"
 API_REPLICATION_RUN = "replication.run"
 API_SNAPSHOTTASK_RUN = "pool.snapshottask.run"
+API_POOL_SCRUB_SCRUB = "pool.scrub.scrub"
 
 SERVICE_SYSTEM_REBOOT = "system_reboot"
 SCHEMA_SERVICE_SYSTEM_REBOOT = {}

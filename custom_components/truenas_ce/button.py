@@ -18,6 +18,7 @@ from .button_types import (  # noqa: F401
     SENSOR_TYPES,
 )
 from .const import (
+    API_POOL_SCRUB_SCRUB,
     BUTTON_MIGRATION_ROLLBACK,
     BUTTON_STATISTICS_CLEANUP,
     BUTTON_SYSTEM_REFRESH,
@@ -47,6 +48,7 @@ async def async_setup_entry(
     """Set up TrueNAS buttons."""
     dispatcher = {
         "TrueNASButton": TrueNASButton,
+        "TrueNASPoolScrubButton": TrueNASPoolScrubButton,
     }
     await async_add_entities(hass, config_entry, dispatcher)
 
@@ -87,6 +89,29 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
         # Trigger the run and show RUNNING immediately (re-synced on next poll).
         await self.coordinator.async_run_task(
             method, object_id, self.entity_description.data_path
+        )
+
+
+# ---------------------------
+#   TrueNASPoolScrubButton
+# ---------------------------
+class TrueNASPoolScrubButton(TrueNASButton):
+    """Scrub button: starts a pool scrub via pool.scrub.scrub (no threshold guard)."""
+
+    async def async_press(self) -> None:
+        pool_name = self._data.get("pool_name")
+        task_id = self._data.get("id")
+        if not pool_name:
+            _LOGGER.warning(
+                "TrueNAS scrub button %s missing pool_name; skipping",
+                self.entity_id,
+            )
+            return
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.query, API_POOL_SCRUB_SCRUB, [pool_name, "START"]
+        )
+        self.coordinator.set_optimistic_running(
+            self.entity_description.data_path, task_id
         )
 
 

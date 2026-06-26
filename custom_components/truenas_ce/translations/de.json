@@ -111,6 +111,9 @@
             },
             "system_refresh": {
                 "name": "Daten aktualisieren"
+            },
+            "scrub_run": {
+                "name": "Scrub ausführen"
             }
         },
         "sensor": {
