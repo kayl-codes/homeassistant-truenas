@@ -101,7 +101,7 @@ class TrueNASPoolScrubButton(TrueNASButton):
     async def async_press(self) -> None:
         pool_name = self._data.get("pool_name")
         task_id = self._data.get("id")
-        if not pool_name or task_id is None:
+        if not pool_name or pool_name == "unknown" or not task_id:
             _LOGGER.debug(
                 "TrueNAS scrub button %s missing pool_name or task id; skipping",
                 self.entity_id,
