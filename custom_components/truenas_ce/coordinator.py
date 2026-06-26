@@ -2170,7 +2170,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             key="id",
             vals=[
                 {"name": "id", "default": 0},
-                {"name": "pool_name", "default": "unknown"},
+                {"name": "pool_name", "default": ""},
                 {"name": "enabled", "type": "bool", "default": False},
             ],
         )
