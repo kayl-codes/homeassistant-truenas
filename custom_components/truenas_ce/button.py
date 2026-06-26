@@ -97,7 +97,7 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
 #   TrueNASPoolScrubButton
 # ---------------------------
 class TrueNASPoolScrubButton(TrueNASButton):
-    """Scrub button: starts a pool scrub via pool.scrub.scrub (no threshold guard)."""
+    """Scrub button: starts a pool scrub via pool.scrub.scrub."""
 
     async def async_press(self) -> None:
         pool_name = self._data.get("pool_name")
