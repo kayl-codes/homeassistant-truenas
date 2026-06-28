@@ -126,7 +126,7 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
         name, _, pp = line.partition("#")
         name = name.strip()
         if not name:
-            continue
+            raise ValueError(("passphrase_empty_name", line))
         if not pp:
             raise ValueError(("passphrase_empty_value", line))
         result[name] = pp
@@ -476,6 +476,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         new_passphrases: dict[str, str],
         entry_id: str,
         errors: dict[str, str],
+        description_placeholders: dict[str, str],
     ) -> None:
         """Set errors if any passphrase key is not a known dataset name."""
         coordinator = self.hass.data.get(DOMAIN, {}).get(entry_id)
@@ -490,6 +491,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             return
         unknown = [k for k in new_passphrases if k not in known]
         if unknown:
+            description_placeholders["datasets"] = ", ".join(sorted(unknown))
             errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
 
     def _apply_passphrase_input(
@@ -513,7 +515,9 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders["line"] = bad_line
             return
         if new_passphrases:
-            self._validate_passphrase_names(new_passphrases, entry_id, errors)
+            self._validate_passphrase_names(
+                new_passphrases, entry_id, errors, description_placeholders
+            )
         if not errors:
             existing = dict(truenas_config.get(CONF_DATASET_PASSPHRASES) or {})
             existing.update(new_passphrases)
@@ -547,17 +551,18 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
             truenas_config.update(user_input)
 
-            # Only test the connection when transport-relevant settings changed.
-            # Non-connection settings must not trigger a new connection attempt
-            # because TrueNAS may refuse it while the coordinator already holds
-            # active connections, causing a spurious handshake_timeout error.
-            _CONNECTION_KEYS = {CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL}
-            connection_changed = any(
-                truenas_config.get(k) != reconfigure_entry.data.get(k)
-                for k in _CONNECTION_KEYS
-            )
-            if connection_changed:
-                await self._validate_connection(truenas_config, errors)
+            if not errors:
+                # Only test the connection when transport-relevant settings changed.
+                # Non-connection settings must not trigger a new connection attempt
+                # because TrueNAS may refuse it while the coordinator already holds
+                # active connections, causing a spurious handshake_timeout error.
+                _CONNECTION_KEYS = {CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL}
+                connection_changed = any(
+                    truenas_config.get(k) != reconfigure_entry.data.get(k)
+                    for k in _CONNECTION_KEYS
+                )
+                if connection_changed:
+                    await self._validate_connection(truenas_config, errors)
 
             if not errors:
                 return self.async_update_reload_and_abort(
