@@ -363,6 +363,8 @@ async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("dataset_path is required")
 
     config_entry = hass.config_entries.async_get_entry(entry_id)
+    if config_entry is None:
+        raise ServiceValidationError(f"Config entry '{entry_id}' not found")
     existing = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
     if not isinstance(existing, dict) or dataset_path not in existing:
         raise ServiceValidationError(
@@ -382,6 +384,8 @@ async def _handle_passphrase_list(hass: HomeAssistant, call) -> dict:
         return {"datasets": [], **error}
 
     config_entry = hass.config_entries.async_get_entry(entry_id)
+    if config_entry is None:
+        return {"datasets": [], "error": f"Config entry '{entry_id}' not found"}
     stored = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
     datasets = sorted(stored.keys()) if isinstance(stored, dict) else []
     return {"datasets": datasets}

@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import TrueNASAPI
 from .apiparser import parse_api
@@ -1940,7 +1941,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             key="id",
             vals=_CERTIFICATE_VALS,
         )
-        now = datetime.now(UTC)
+        now = dt_util.utcnow()
         for cert in self.ds["certificate"].values():
             if not isinstance(cert, dict):
                 continue

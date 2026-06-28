@@ -121,8 +121,7 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
         if not line:
             continue
         if "#" not in line:
-            _LOGGER.debug("Skipping malformed passphrase line (missing '#'): %r", line)
-            continue
+            raise ValueError(line)
         name, _, pp = line.partition("#")
         name = name.strip()
         if name:
@@ -501,7 +500,11 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if not isinstance(new_text, str) or not new_text.strip():
             user_input.pop(CONF_DATASET_PASSPHRASES, None)
             return
-        new_passphrases = _text_to_passphrases(new_text)
+        try:
+            new_passphrases = _text_to_passphrases(new_text)
+        except ValueError:
+            errors[CONF_DATASET_PASSPHRASES] = "passphrase_malformed_line"
+            return
         if new_passphrases:
             self._validate_passphrase_names(new_passphrases, entry_id, errors)
         if not errors:
