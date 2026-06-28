@@ -150,7 +150,7 @@ class TrueNASCertExpirySensor(TrueNASSensor):
         return days
 
     @property
-    def native_unit_of_measurement(self) -> str:
+    def native_unit_of_measurement(self) -> UnitOfTime:
         """Switch unit between days and years based on the raw value."""
         days = self._data.get(self.entity_description.data_attribute)
         if days is not None and days >= 365:
