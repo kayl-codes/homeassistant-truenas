@@ -386,6 +386,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Unlock function."""
         self._raise_unsupported("unlock")
 
+    async def passphrase_set(self, **kwargs):
+        """Store passphrase function."""
+        self._raise_unsupported("passphrase_set")
+
     async def refresh(self):
         """Refresh function."""
         self._raise_unsupported("refresh")

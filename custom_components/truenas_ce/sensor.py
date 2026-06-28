@@ -23,6 +23,7 @@ from .const import (
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
     CONF_DATA_UNIT,
+    CONF_DATASET_PASSPHRASES,
     DEFAULT_DATA_UNIT,
 )
 from .coordinator import TrueNASCoordinator
@@ -369,17 +370,35 @@ class TrueNASDatasetSensor(TrueNASSensor):
         await self._run_dataset_job("pool.dataset.lock", payload, "lock")
         await self.coordinator.async_refresh()
 
-    async def unlock(
-        self, passphrase: str, recursive: bool = False, force: bool = False
-    ) -> None:
-        """Unlock a dataset using the provided passphrase.
+    def _stored_passphrase(self) -> str | None:
+        """Return the stored passphrase for this dataset, or None."""
+        dataset_name = self._data.get("name")
+        if not dataset_name:
+            return None
+        stored = self.coordinator.config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+        return stored.get(dataset_name) if isinstance(stored, dict) else None
 
-        Args:
-            passphrase: The dataset passphrase.
-            recursive: Unlock datasets recursively.
-            force: Force the unlock operation.
+    async def unlock(
+        self,
+        passphrase: str | None = None,
+        recursive: bool = False,
+        force: bool = False,
+    ) -> None:
+        """Unlock a dataset.
+
+        Uses ``passphrase`` if supplied, otherwise falls back to the passphrase
+        stored in the config entry via ``passphrase_set``.
         """
         self._raise_if_not_encrypted("unlock")
+
+        effective_passphrase = passphrase or self._stored_passphrase()
+        if not effective_passphrase:
+            dataset_name = self._data.get("name", "<unknown>")
+            raise ServiceValidationError(
+                f"No passphrase provided or stored for dataset {dataset_name}. "
+                "Call passphrase_set first or supply the passphrase in the action call."
+            )
+
         # See lock(): async_refresh forces fresh data before the idempotency check.
         await self.coordinator.async_refresh()
         if not self._data.get("locked", True):
@@ -395,7 +414,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
                 "datasets": [
                     {
                         "name": self._data.get("name"),
-                        "passphrase": passphrase,
+                        "passphrase": effective_passphrase,
                         "recursive": recursive,
                         "force": force,
                     }
@@ -405,6 +424,28 @@ class TrueNASDatasetSensor(TrueNASSensor):
         result = await self._run_dataset_job("pool.dataset.unlock", payload, "unlock")
         self._raise_on_unlock_failure(result, "unlock")
         await self.coordinator.async_refresh()
+
+    async def passphrase_set(self, passphrase: str) -> None:
+        """Store a passphrase for this dataset in the config entry."""
+        dataset_name = self._data.get("name")
+        if not dataset_name:
+            raise ServiceValidationError(
+                "Cannot store passphrase: dataset name is unknown"
+            )
+        existing = self.coordinator.config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+        updated = (
+            {**existing, dataset_name: passphrase}
+            if isinstance(existing, dict)
+            else {dataset_name: passphrase}
+        )
+        self.hass.config_entries.async_update_entry(
+            self.coordinator.config_entry,
+            data={
+                **self.coordinator.config_entry.data,
+                CONF_DATASET_PASSPHRASES: updated,
+            },
+        )
+        _LOGGER.debug("Stored passphrase for dataset %s", dataset_name)
 
 
 # ---------------------------

@@ -18,6 +18,7 @@ from .const import (
     BEHAVIOR_REMOVE_INACTIVE_NIC,
     CONF_BEHAVIORS,
     CONF_DATA_UNIT,
+    CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     DEFAULT_ALERT_PROPERTIES,
     DEFAULT_BEHAVIORS,
@@ -29,12 +30,17 @@ from .const import (
     SCHEMA_SERVICE_ALERT_DISMISS,
     SCHEMA_SERVICE_ALERT_LIST,
     SCHEMA_SERVICE_ALERT_RESTORE,
+    SCHEMA_SERVICE_PASSPHRASE_LIST,
+    SCHEMA_SERVICE_PASSPHRASE_REMOVE,
     SERVICE_ALERT_CONFIG_ENTRY,
     SERVICE_ALERT_DISMISS,
     SERVICE_ALERT_LIST,
     SERVICE_ALERT_PROPERTIES,
     SERVICE_ALERT_RESTORE,
     SERVICE_ALERT_UUID,
+    SERVICE_PASSPHRASE_DATASET_PATH,
+    SERVICE_PASSPHRASE_LIST,
+    SERVICE_PASSPHRASE_REMOVE,
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator
@@ -344,6 +350,41 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
     await alert_action(hass, coordinator, uuid, "restore")
 
 
+async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
+    """Remove a stored dataset passphrase by dataset path."""
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    if error:
+        raise ServiceValidationError(error.get("error", "Unknown error"))
+
+    dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
+    if not dataset_path:
+        raise ServiceValidationError("dataset_path is required")
+
+    config_entry = hass.config_entries.async_get_entry(entry_id)
+    existing = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+    if not isinstance(existing, dict) or dataset_path not in existing:
+        raise ServiceValidationError(
+            f"No stored passphrase found for dataset '{dataset_path}'"
+        )
+    updated = {k: v for k, v in existing.items() if k != dataset_path}
+    hass.config_entries.async_update_entry(
+        config_entry,
+        data={**config_entry.data, CONF_DATASET_PASSPHRASES: updated},
+    )
+
+
+async def _handle_passphrase_list(hass: HomeAssistant, call) -> dict:
+    """Return the dataset names that have a stored passphrase (no values)."""
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    if error:
+        return {"datasets": [], **error}
+
+    config_entry = hass.config_entries.async_get_entry(entry_id)
+    stored = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+    datasets = sorted(stored.keys()) if isinstance(stored, dict) else []
+    return {"datasets": datasets}
+
+
 # ---------------------------
 #   async_setup_entry
 # ---------------------------
@@ -395,6 +436,29 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             SERVICE_ALERT_LIST,
             _alert_list_handler,
             schema=SCHEMA_SERVICE_ALERT_LIST,
+            supports_response=True,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_REMOVE):
+
+        async def _passphrase_remove_handler(call) -> None:
+            await _handle_passphrase_remove(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_PASSPHRASE_REMOVE,
+            _passphrase_remove_handler,
+            schema=SCHEMA_SERVICE_PASSPHRASE_REMOVE,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_LIST):
+
+        async def _passphrase_list_handler(call) -> dict:
+            return await _handle_passphrase_list(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_PASSPHRASE_LIST,
+            _passphrase_list_handler,
+            schema=SCHEMA_SERVICE_PASSPHRASE_LIST,
             supports_response=True,
         )
 

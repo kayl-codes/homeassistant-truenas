@@ -34,6 +34,7 @@ from .const import (
     CONF_BEHAVIORS,
     CONF_CRONJOB_SKIP_DISABLED,
     CONF_DATA_UNIT,
+    CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
     DEFAULT_BEHAVIORS,
@@ -106,8 +107,22 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
     return vol.Schema(base_schema)
 
 
+def _text_to_passphrases(text: str) -> dict[str, str]:
+    """Parse a multi-line textarea string back into the passphrases dict."""
+    result: dict[str, str] = {}
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or "#" not in line:
+            continue
+        name, _, pp = line.partition("#")
+        name = name.strip()
+        if name and pp:
+            result[name] = pp
+    return result
+
+
 def _reconfigure_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
-    """Generate reconfigure schema (connection parameters only)."""
+    """Generate reconfigure schema (connection parameters + stored passphrases)."""
     return vol.Schema(
         {
             vol.Required(
@@ -120,6 +135,9 @@ def _reconfigure_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
                 CONF_VERIFY_SSL,
                 default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
             ): bool,
+            vol.Optional(CONF_DATASET_PASSPHRASES): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)
+            ),
         }
     )
 
@@ -458,6 +476,33 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             # Do not overwrite existing API key if the field is left blank
             if not user_input.get(CONF_API_KEY):
                 user_input.pop(CONF_API_KEY, None)
+            # Parse textarea → dict; validate names, then merge into existing.
+            if CONF_DATASET_PASSPHRASES in user_input:
+                new_text = user_input[CONF_DATASET_PASSPHRASES]
+                if new_text.strip():
+                    new_passphrases = _text_to_passphrases(new_text)
+                    if new_passphrases:
+                        coordinator = self.hass.data.get(DOMAIN, {}).get(
+                            reconfigure_entry.entry_id
+                        )
+                        if coordinator is not None:
+                            known = {
+                                v.get("name")
+                                for v in coordinator.ds.get("dataset", {}).values()
+                                if isinstance(v, dict) and v.get("name")
+                            }
+                            if known:
+                                unknown = [k for k in new_passphrases if k not in known]
+                                if unknown:
+                                    errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
+                    if not errors:
+                        existing = dict(
+                            truenas_config.get(CONF_DATASET_PASSPHRASES) or {}
+                        )
+                        existing.update(new_passphrases)
+                        user_input[CONF_DATASET_PASSPHRASES] = existing
+                else:
+                    user_input.pop(CONF_DATASET_PASSPHRASES)
 
             truenas_config.update(user_input)
 

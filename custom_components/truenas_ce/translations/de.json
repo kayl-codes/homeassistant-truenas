@@ -19,7 +19,11 @@
                     "api_key": "API-Schlüssel",
                     "verify_ssl": "SSL-Zertifikat überprüfen",
                     "cronjob_skip_disabled": "Deaktivierte Cronjobs bei manueller Ausführung überspringen",
-                    "data_unit": "Einheit der Datengröße (GB oder GiB)"
+                    "data_unit": "Einheit der Datengröße (GB oder GiB)",
+                    "dataset_passphrases": "Dataset-Passphrasen hinzufügen/aktualisieren"
+                },
+                "data_description": {
+                    "dataset_passphrases": "DatasetName#Passphrase-Paare (eine pro Zeile, z. B. tank/encrypted#MeinGeheimnis) eingeben, um Passphrasen zu speichern oder zu aktualisieren. Leer lassen, um bestehende Passphrasen unverändert zu behalten. Zum Löschen einer gespeicherten Passphrase die Aktion passphrase_remove mit dem Dataset-Pfad verwenden."
                 }
             },
             "migrate": {
@@ -46,7 +50,8 @@
             "tlsv1_not_supported": "TLSv1 wird nicht unterstützt. Reverse-Proxy?",
             "websocket_not_supported": "WebSocket wird nicht unterstützt. Reverse-Proxy?",
             "unknown_hostname": "Unbekannter Hostname, DNS prüfen.",
-            "unknown": "Unbekannter Fehler aufgetreten."
+            "unknown": "Unbekannter Fehler aufgetreten.",
+            "unknown_dataset": "Unbekannter Dataset-Pfad. Schreibweise prüfen und erneut versuchen."
         },
         "abort": {
             "reconfigure_successful": "Neukonfiguration erfolgreich."
