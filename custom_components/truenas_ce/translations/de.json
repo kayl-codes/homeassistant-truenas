@@ -52,7 +52,8 @@
             "unknown_hostname": "Unbekannter Hostname, DNS prüfen.",
             "unknown": "Unbekannter Fehler aufgetreten.",
             "unknown_dataset": "Unbekannter Dataset-Pfad. Schreibweise prüfen und erneut versuchen.",
-            "passphrase_malformed_line": "Ungültiger Passphrase-Eintrag (fehlendes '#'). Jede Zeile muss das Format haben: DatasetName#Passphrase."
+            "passphrase_malformed_line": "Ungültiger Passphrase-Eintrag (fehlendes '#') in Zeile '{line}'. Jede Zeile muss das Format haben: DatasetName#Passphrase.",
+            "passphrase_empty_value": "Leere Passphrase ist nicht erlaubt in Zeile '{line}'. Jede Zeile muss das Format haben: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Neukonfiguration erfolgreich."

@@ -110,10 +110,11 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
 def _text_to_passphrases(text: str) -> dict[str, str]:
     """Parse a multi-line textarea string back into the passphrases dict.
 
-    Each non-empty line must be of the form ``<dataset_name>#<passphrase>``.
-    The first ``#`` is the separator; additional ``#`` characters in the
-    passphrase are preserved.  Dataset names must not contain ``#``.
-    Passphrases may be empty (``<dataset_name>#``).
+    Each non-empty line must be of the form ``<dataset_name>#<passphrase>``
+    where both parts are non-empty.  The first ``#`` is the separator;
+    additional ``#`` characters in the passphrase are preserved.  Dataset
+    names must not contain ``#``.
+    Raises ``ValueError((error_key, line))`` on the first invalid line.
     """
     result: dict[str, str] = {}
     for line in text.strip().splitlines():
@@ -121,11 +122,14 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
         if not line:
             continue
         if "#" not in line:
-            raise ValueError(line)
+            raise ValueError(("passphrase_malformed_line", line))
         name, _, pp = line.partition("#")
         name = name.strip()
-        if name:
-            result[name] = pp
+        if not name:
+            continue
+        if not pp:
+            raise ValueError(("passphrase_empty_value", line))
+        result[name] = pp
     return result
 
 
@@ -494,6 +498,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         truenas_config: dict[str, Any],
         entry_id: str,
         errors: dict[str, str],
+        description_placeholders: dict[str, str],
     ) -> None:
         """Parse/validate the passphrase textarea; mutate user_input in place."""
         new_text = user_input.get(CONF_DATASET_PASSPHRASES, "")
@@ -502,8 +507,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             return
         try:
             new_passphrases = _text_to_passphrases(new_text)
-        except ValueError:
-            errors[CONF_DATASET_PASSPHRASES] = "passphrase_malformed_line"
+        except ValueError as exc:
+            error_key, bad_line = exc.args[0]
+            errors[CONF_DATASET_PASSPHRASES] = error_key
+            description_placeholders["line"] = bad_line
             return
         if new_passphrases:
             self._validate_passphrase_names(new_passphrases, entry_id, errors)
@@ -521,7 +528,8 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         truenas_config = self.truenas_config
         reconfigure_entry = self._get_reconfigure_entry()
-        errors = {}
+        errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
 
         if user_input is not None:
             if CONF_HOST in user_input:
@@ -530,7 +538,11 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 user_input.pop(CONF_API_KEY, None)
             if CONF_DATASET_PASSPHRASES in user_input:
                 self._apply_passphrase_input(
-                    user_input, truenas_config, reconfigure_entry.entry_id, errors
+                    user_input,
+                    truenas_config,
+                    reconfigure_entry.entry_id,
+                    errors,
+                    description_placeholders,
                 )
 
             truenas_config.update(user_input)
@@ -558,6 +570,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=_reconfigure_schema(truenas_config),
             errors=errors,
+            description_placeholders=description_placeholders or None,
         )
 
 

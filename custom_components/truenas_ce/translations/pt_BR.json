@@ -52,7 +52,8 @@
             "unknown_hostname": "Nome de host desconhecido, verifique o DNS.",
             "unknown": "Ocorreu um erro desconhecido.",
             "unknown_dataset": "Unknown dataset path. Verify the spelling and try again.",
-            "passphrase_malformed_line": "Malformed passphrase entry (missing '#'). Each line must be in the format: DatasetName#Passphrase."
+            "passphrase_malformed_line": "Malformed passphrase entry (missing '#') on line '{line}'. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_value": "Empty passphrase is not allowed on line '{line}'. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Reconfiguração bem-sucedida."
