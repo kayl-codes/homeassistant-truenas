@@ -523,6 +523,17 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             existing.update(new_passphrases)
             user_input[CONF_DATASET_PASSPHRASES] = existing
 
+    async def _check_connection_if_changed(
+        self,
+        truenas_config: dict[str, Any],
+        entry_data: dict[str, Any],
+        errors: dict[str, str],
+    ) -> None:
+        """Run connection test only when transport-relevant settings changed."""
+        _CONNECTION_KEYS = (CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL)
+        if any(truenas_config.get(k) != entry_data.get(k) for k in _CONNECTION_KEYS):
+            await self._validate_connection(truenas_config, errors)
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -552,17 +563,9 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             truenas_config.update(user_input)
 
             if not errors:
-                # Only test the connection when transport-relevant settings changed.
-                # Non-connection settings must not trigger a new connection attempt
-                # because TrueNAS may refuse it while the coordinator already holds
-                # active connections, causing a spurious handshake_timeout error.
-                _CONNECTION_KEYS = {CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL}
-                connection_changed = any(
-                    truenas_config.get(k) != reconfigure_entry.data.get(k)
-                    for k in _CONNECTION_KEYS
+                await self._check_connection_if_changed(
+                    truenas_config, reconfigure_entry.data, errors
                 )
-                if connection_changed:
-                    await self._validate_connection(truenas_config, errors)
 
             if not errors:
                 return self.async_update_reload_and_abort(
