@@ -92,6 +92,7 @@ TO_REDACT = {
     "key",
     "certificate",
     "privatekey",
+    "dataset_passphrases",
 }
 
 # Config-entry data key for the per-dataset stored passphrases dict.
@@ -128,6 +129,9 @@ SCHEMA_SERVICE_DATASET_UNLOCK = {
     vol.Required(SERVICE_DATASET_UNLOCK_FORCE, default=False): cv.boolean,
 }
 
+# Shared field name used in service call.data to select a specific config entry.
+SERVICE_CONFIG_ENTRY = "config_entry"
+
 # B105/S2068 false positive: these are service *name* strings, not hardcoded secrets.
 SERVICE_PASSPHRASE_SET = "passphrase_set"  # nosec B105 # NOSONAR
 SERVICE_PASSPHRASE_REMOVE = "passphrase_remove"  # nosec B105 # NOSONAR
@@ -137,14 +141,14 @@ SCHEMA_SERVICE_PASSPHRASE_SET = {
 }
 SCHEMA_SERVICE_PASSPHRASE_REMOVE = vol.Schema(
     {
-        vol.Optional("config_entry"): cv.string,
+        vol.Optional(SERVICE_CONFIG_ENTRY): cv.string,
         vol.Required(SERVICE_PASSPHRASE_DATASET_PATH): cv.string,
     }
 )
 SERVICE_PASSPHRASE_LIST = "passphrase_list"  # nosec B105 # NOSONAR
 SCHEMA_SERVICE_PASSPHRASE_LIST = vol.Schema(
     {
-        vol.Optional("config_entry"): cv.string,
+        vol.Optional(SERVICE_CONFIG_ENTRY): cv.string,
     }
 )
 

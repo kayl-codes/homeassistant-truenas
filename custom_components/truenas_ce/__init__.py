@@ -38,6 +38,7 @@ from .const import (
     SERVICE_ALERT_PROPERTIES,
     SERVICE_ALERT_RESTORE,
     SERVICE_ALERT_UUID,
+    SERVICE_CONFIG_ENTRY,
     SERVICE_PASSPHRASE_DATASET_PATH,
     SERVICE_PASSPHRASE_LIST,
     SERVICE_PASSPHRASE_REMOVE,
@@ -353,7 +354,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
     """Remove a stored dataset passphrase by dataset path."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
     if error:
         raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
@@ -376,7 +377,7 @@ async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
 
 async def _handle_passphrase_list(hass: HomeAssistant, call) -> dict:
     """Return the dataset names that have a stored passphrase (no values)."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
+    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
     if error:
         return {"datasets": [], **error}
 

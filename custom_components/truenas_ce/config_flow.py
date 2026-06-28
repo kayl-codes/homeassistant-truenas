@@ -118,7 +118,10 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for line in text.strip().splitlines():
         line = line.strip()
-        if not line or "#" not in line:
+        if not line:
+            continue
+        if "#" not in line:
+            _LOGGER.debug("Skipping malformed passphrase line (missing '#'): %r", line)
             continue
         name, _, pp = line.partition("#")
         name = name.strip()
