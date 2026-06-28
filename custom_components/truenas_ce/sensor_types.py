@@ -819,7 +819,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         key="certificate_expiry",
         name="Time until expiry",
         icon="mdi:certificate",
-        native_unit_of_measurement=UnitOfTime.DAYS,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
