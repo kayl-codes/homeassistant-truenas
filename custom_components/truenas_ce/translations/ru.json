@@ -51,7 +51,8 @@
             "websocket_not_supported": "WebSocket не поддерживается. Обратный прокси?",
             "unknown_hostname": "Неизвестное имя хоста, проверьте DNS.",
             "unknown": "Произошла неизвестная ошибка.",
-            "unknown_dataset": "Unknown dataset path. Verify the spelling and try again."
+            "unknown_dataset": "Unknown dataset path. Verify the spelling and try again.",
+            "passphrase_malformed_line": "Malformed passphrase entry (missing '#'). Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Перенастройка выполнена успешно."

@@ -51,7 +51,8 @@
             "websocket_not_supported": "WebSocket wird nicht unterstützt. Reverse-Proxy?",
             "unknown_hostname": "Unbekannter Hostname, DNS prüfen.",
             "unknown": "Unbekannter Fehler aufgetreten.",
-            "unknown_dataset": "Unbekannter Dataset-Pfad. Schreibweise prüfen und erneut versuchen."
+            "unknown_dataset": "Unbekannter Dataset-Pfad. Schreibweise prüfen und erneut versuchen.",
+            "passphrase_malformed_line": "Ungültiger Passphrase-Eintrag (fehlendes '#'). Jede Zeile muss das Format haben: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Neukonfiguration erfolgreich."
