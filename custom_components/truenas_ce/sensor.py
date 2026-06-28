@@ -35,6 +35,7 @@ from .sensor_types import (  # noqa: F401
 )
 
 _LOGGER = getLogger(__name__)
+_UNKNOWN_DATASET = "<unknown>"
 
 # Middleware job polling for dataset lock/unlock operations.
 JOB_POLL_INTERVAL = 1
@@ -257,7 +258,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
 
     def _action_error(self, action: str, reason: str) -> str:
         """Build a uniform error message for a dataset action."""
-        dataset_name = self._data.get("name", "<unknown>")
+        dataset_name = self._data.get("name", _UNKNOWN_DATASET)
         return (
             f"Failed to {action} dataset {dataset_name} "
             f"on {self.coordinator.host}: {reason}"
@@ -364,7 +365,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
         be locked/unlocked, so a non-encrypted target is a user error.
         """
         if not self._data.get("encrypted"):
-            name = self._data.get("name", "<unknown>")
+            name = self._data.get("name", _UNKNOWN_DATASET)
             raise ServiceValidationError(
                 f"Dataset {name} is not encrypted and cannot be {action}ed"
             )
@@ -424,7 +425,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             passphrase if passphrase is not None else self._stored_passphrase()
         )
         if not effective_passphrase:
-            dataset_name = self._data.get("name", "<unknown>")
+            dataset_name = self._data.get("name", _UNKNOWN_DATASET)
             raise ServiceValidationError(
                 f"No passphrase provided or stored for dataset {dataset_name}. "
                 "Call passphrase_set first or supply the passphrase in the action call."

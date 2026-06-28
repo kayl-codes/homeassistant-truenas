@@ -56,6 +56,7 @@ from .switch_types import SENSOR_TYPES as SWITCH_SENSOR_TYPES
 from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
 
 _LOGGER = getLogger(__name__)
+_UNKNOWN_ERROR = "Unknown error"
 
 # All entity descriptions across platforms, used to compute the set of unique_ids
 # that legitimately exist for the current TrueNAS objects (orphan cleanup).
@@ -326,7 +327,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
     """Dismiss a TrueNAS alert by UUID."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
-        raise ServiceValidationError(error.get("error", "Unknown error"))
+        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
@@ -340,7 +341,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
     """Restore a TrueNAS alert by UUID."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
-        raise ServiceValidationError(error.get("error", "Unknown error"))
+        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
@@ -354,7 +355,7 @@ async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
     """Remove a stored dataset passphrase by dataset path."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
-        raise ServiceValidationError(error.get("error", "Unknown error"))
+        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
     if not dataset_path:

@@ -465,6 +465,47 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """Skip the takeover and configure TrueNAS CE from scratch."""
         return await self.async_step_user()
 
+    def _validate_passphrase_names(
+        self,
+        new_passphrases: dict[str, str],
+        entry_id: str,
+        errors: dict[str, str],
+    ) -> None:
+        """Set errors if any passphrase key is not a known dataset name."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        if coordinator is None:
+            return
+        known = {
+            v.get("name")
+            for v in coordinator.ds.get("dataset", {}).values()
+            if isinstance(v, dict) and v.get("name")
+        }
+        if not known:
+            return
+        unknown = [k for k in new_passphrases if k not in known]
+        if unknown:
+            errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
+
+    def _apply_passphrase_input(
+        self,
+        user_input: dict[str, Any],
+        truenas_config: dict[str, Any],
+        entry_id: str,
+        errors: dict[str, str],
+    ) -> None:
+        """Parse/validate the passphrase textarea; mutate user_input in place."""
+        new_text = user_input.get(CONF_DATASET_PASSPHRASES, "")
+        if not isinstance(new_text, str) or not new_text.strip():
+            user_input.pop(CONF_DATASET_PASSPHRASES, None)
+            return
+        new_passphrases = _text_to_passphrases(new_text)
+        if new_passphrases:
+            self._validate_passphrase_names(new_passphrases, entry_id, errors)
+        if not errors:
+            existing = dict(truenas_config.get(CONF_DATASET_PASSPHRASES) or {})
+            existing.update(new_passphrases)
+            user_input[CONF_DATASET_PASSPHRASES] = existing
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -479,55 +520,27 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if CONF_HOST in user_input:
                 user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            # Do not overwrite existing API key if the field is left blank
             if not user_input.get(CONF_API_KEY):
                 user_input.pop(CONF_API_KEY, None)
-            # Parse textarea → dict; validate names, then merge into existing.
             if CONF_DATASET_PASSPHRASES in user_input:
-                new_text = user_input[CONF_DATASET_PASSPHRASES]
-                if new_text.strip():
-                    new_passphrases = _text_to_passphrases(new_text)
-                    if new_passphrases:
-                        coordinator = self.hass.data.get(DOMAIN, {}).get(
-                            reconfigure_entry.entry_id
-                        )
-                        if coordinator is not None:
-                            known = {
-                                v.get("name")
-                                for v in coordinator.ds.get("dataset", {}).values()
-                                if isinstance(v, dict) and v.get("name")
-                            }
-                            if known:
-                                unknown = [k for k in new_passphrases if k not in known]
-                                if unknown:
-                                    errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
-                    if not errors:
-                        existing = dict(
-                            truenas_config.get(CONF_DATASET_PASSPHRASES) or {}
-                        )
-                        existing.update(new_passphrases)
-                        user_input[CONF_DATASET_PASSPHRASES] = existing
-                else:
-                    user_input.pop(CONF_DATASET_PASSPHRASES)
+                self._apply_passphrase_input(
+                    user_input, truenas_config, reconfigure_entry.entry_id, errors
+                )
 
             truenas_config.update(user_input)
 
-            # Only test the connection when settings that actually affect
-            # the WebSocket transport have changed. Non-connection settings
-            # (e.g. data_unit, cronjob_skip_disabled) must not trigger a new
-            # connection attempt because TrueNAS may refuse it while the
-            # coordinator already holds active connections, causing a spurious
-            # handshake_timeout error.
+            # Only test the connection when transport-relevant settings changed.
+            # Non-connection settings must not trigger a new connection attempt
+            # because TrueNAS may refuse it while the coordinator already holds
+            # active connections, causing a spurious handshake_timeout error.
             _CONNECTION_KEYS = {CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL}
             connection_changed = any(
                 truenas_config.get(k) != reconfigure_entry.data.get(k)
                 for k in _CONNECTION_KEYS
             )
-
             if connection_changed:
                 await self._validate_connection(truenas_config, errors)
 
-            # Save instance
             if not errors:
                 return self.async_update_reload_and_abort(
                     reconfigure_entry,

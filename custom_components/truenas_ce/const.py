@@ -131,7 +131,7 @@ SCHEMA_SERVICE_DATASET_UNLOCK = {
 # B105/S2068 false positive: these are service *name* strings, not hardcoded secrets.
 SERVICE_PASSPHRASE_SET = "passphrase_set"  # nosec B105 # NOSONAR
 SERVICE_PASSPHRASE_REMOVE = "passphrase_remove"  # nosec B105 # NOSONAR
-SERVICE_PASSPHRASE_DATASET_PATH = "dataset_path"
+SERVICE_PASSPHRASE_DATASET_PATH = "dataset_path"  # NOSONAR
 SCHEMA_SERVICE_PASSPHRASE_SET = {
     vol.Required(SERVICE_DATASET_UNLOCK_PASSPHRASE): cv.string,
 }
