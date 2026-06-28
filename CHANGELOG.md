@@ -12,13 +12,23 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNAS 25.04**.
 
-## [2.3.0] — Pool scrub button fix & disk-type icons
+## [2.3.0] — Scrub controls, disk icons & dataset passphrase store
 
 ### Added
 - **Disk-type icons:** disk temperature sensors now show a type-specific icon based on
   the storage medium reported by TrueNAS (`disk.query` → `type`): a platter icon
   (`mdi:harddisk`) for HDDs, a chip icon (`mdi:chip`) for SSDs and SEDs, and a PCIe
   card icon (`mdi:expansion-card-variant`) for NVMe drives.
+- **Stored dataset passphrases (#11):** passphrases for encrypted datasets can now be
+  stored securely in the HA config entry. Enter `DatasetName#Passphrase` pairs (one per
+  line) under *Settings → Devices & Services → TrueNAS → Configure* → **Add/update
+  dataset passphrases**. Stored passphrases are used automatically by `dataset_unlock`
+  — no need to type the passphrase each time. Stored passphrases survive HA restarts
+  and can be removed individually via the new `passphrase_remove` action.
+- **Certificate expiry in years:** the "time until expiry" sensor now displays the
+  value in **years** (unit `a`) when 365 or more days remain, making long-lived
+  self-signed certificates readable at a glance. The unit switches back to days
+  automatically as the expiry date approaches.
 
 ### Fixed
 - **Pool scrub button now reliably starts a scrub (#9):** the previous implementation

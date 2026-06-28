@@ -79,6 +79,7 @@ ALLOWED_DATA_UNITS = ["GB", "GiB"]
 
 TO_REDACT = {
     "password",
+    "passphrase",
     "encryption_password",
     "encryption_salt",
     "host",
@@ -91,7 +92,11 @@ TO_REDACT = {
     "key",
     "certificate",
     "privatekey",
+    "dataset_passphrases",
 }
+
+# Config-entry data key for the per-dataset stored passphrases dict.
+CONF_DATASET_PASSPHRASES = "dataset_passphrases"  # nosec B105 # NOSONAR
 
 SERVICE_CLOUDSYNC_RUN = "cloudsync_run"
 SCHEMA_SERVICE_CLOUDSYNC_RUN = {}
@@ -119,10 +124,33 @@ SCHEMA_SERVICE_DATASET_LOCK = {
     vol.Required(SERVICE_DATASET_LOCK_FORCE_UMOUNT, default=False): cv.boolean,
 }
 SCHEMA_SERVICE_DATASET_UNLOCK = {
-    vol.Required(SERVICE_DATASET_UNLOCK_PASSPHRASE): cv.string,
+    vol.Optional(SERVICE_DATASET_UNLOCK_PASSPHRASE): cv.string,
     vol.Required(SERVICE_DATASET_UNLOCK_RECURSIVE, default=False): cv.boolean,
     vol.Required(SERVICE_DATASET_UNLOCK_FORCE, default=False): cv.boolean,
 }
+
+# Shared field name used in service call.data to select a specific config entry.
+SERVICE_CONFIG_ENTRY = "config_entry"
+
+# B105/S2068 false positive: these are service *name* strings, not hardcoded secrets.
+SERVICE_PASSPHRASE_SET = "passphrase_set"  # nosec B105 # NOSONAR
+SERVICE_PASSPHRASE_REMOVE = "passphrase_remove"  # nosec B105 # NOSONAR
+SERVICE_PASSPHRASE_DATASET_PATH = "dataset_path"  # nosec B105 # NOSONAR
+SCHEMA_SERVICE_PASSPHRASE_SET = {
+    vol.Required(SERVICE_DATASET_UNLOCK_PASSPHRASE): cv.string,
+}
+SCHEMA_SERVICE_PASSPHRASE_REMOVE = vol.Schema(
+    {
+        vol.Optional(SERVICE_CONFIG_ENTRY): cv.string,
+        vol.Required(SERVICE_PASSPHRASE_DATASET_PATH): cv.string,
+    }
+)
+SERVICE_PASSPHRASE_LIST = "passphrase_list"  # nosec B105 # NOSONAR
+SCHEMA_SERVICE_PASSPHRASE_LIST = vol.Schema(
+    {
+        vol.Optional(SERVICE_CONFIG_ENTRY): cv.string,
+    }
+)
 
 SERVICE_SNAPSHOTTASK_RUN = "snapshottask_run"
 SCHEMA_SERVICE_SNAPSHOTTASK_RUN = {}

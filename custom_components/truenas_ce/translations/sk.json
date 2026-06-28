@@ -19,7 +19,11 @@
                     "api_key": "API kľúč",
                     "verify_ssl": "Overte certifikát SSL",
                     "cronjob_skip_disabled": "Pri manuálnom spustení preskočiť zakázané cron úlohy",
-                    "data_unit": "Jednotka veľkosti údajov (GB alebo GiB)"
+                    "data_unit": "Jednotka veľkosti údajov (GB alebo GiB)",
+                    "dataset_passphrases": "Add/update dataset passphrases"
+                },
+                "data_description": {
+                    "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
             "migrate": {
@@ -46,7 +50,11 @@
             "tlsv1_not_supported": "TLSv1 nie je podporované. Reverzný proxy?",
             "websocket_not_supported": "WebSocket nie je podporovaný. Reverzný proxy?",
             "unknown_hostname": "Neznámy názov hostiteľa, skontrolujte DNS.",
-            "unknown": "Vyskytla sa neznáma chyba."
+            "unknown": "Vyskytla sa neznáma chyba.",
+            "unknown_dataset": "Unknown dataset path(s): {datasets}. Verify the spelling and try again.",
+            "passphrase_malformed_line": "Malformed passphrase entry (missing '#') on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_value": "Empty passphrase is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Rekonfigurácia úspešná."

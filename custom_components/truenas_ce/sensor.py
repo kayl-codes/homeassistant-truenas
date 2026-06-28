@@ -10,7 +10,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfInformation
+from homeassistant.const import UnitOfInformation, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -23,6 +23,7 @@ from .const import (
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
     CONF_DATA_UNIT,
+    CONF_DATASET_PASSPHRASES,
     DEFAULT_DATA_UNIT,
 )
 from .coordinator import TrueNASCoordinator
@@ -34,6 +35,7 @@ from .sensor_types import (  # noqa: F401
 )
 
 _LOGGER = getLogger(__name__)
+_UNKNOWN_DATASET = "<unknown>"
 
 # Middleware job polling for dataset lock/unlock operations.
 JOB_POLL_INTERVAL = 1
@@ -59,6 +61,7 @@ async def async_setup_entry(
         "TrueNASUptimeSensor": TrueNASUptimeSensor,
         "TrueNASCloudsyncSensor": TrueNASCloudsyncSensor,
         "TrueNASDatasetSensor": TrueNASDatasetSensor,
+        "TrueNASCertExpirySensor": TrueNASCertExpirySensor,
         "TrueNASDiskSensor": TrueNASDiskSensor,
         "TrueNASRsyncSensor": TrueNASRsyncSensor,
         "TrueNASReplicationSensor": TrueNASReplicationSensor,
@@ -125,6 +128,34 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
             return self.entity_description.native_unit_of_measurement
 
         return None
+
+
+# ---------------------------
+#   TrueNASCertExpirySensor
+# ---------------------------
+_DAYS_PER_YEAR = 365.25
+
+
+class TrueNASCertExpirySensor(TrueNASSensor):
+    """Certificate expiry sensor with adaptive unit (years ≥ 365 d, else days)."""
+
+    @property
+    def native_value(self) -> StateType:
+        """Return days or fractional years depending on magnitude."""
+        days = self._data.get(self.entity_description.data_attribute)
+        if days is None:
+            return None
+        if days >= 365:
+            return round(days / _DAYS_PER_YEAR, 1)
+        return days
+
+    @property
+    def native_unit_of_measurement(self) -> UnitOfTime:
+        """Switch unit between days and years based on the raw value."""
+        days = self._data.get(self.entity_description.data_attribute)
+        if days is not None and days >= 365:
+            return UnitOfTime.YEARS
+        return UnitOfTime.DAYS
 
 
 # ---------------------------
@@ -227,7 +258,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
 
     def _action_error(self, action: str, reason: str) -> str:
         """Build a uniform error message for a dataset action."""
-        dataset_name = self._data.get("name", "<unknown>")
+        dataset_name = self._data.get("name", _UNKNOWN_DATASET)
         return (
             f"Failed to {action} dataset {dataset_name} "
             f"on {self.coordinator.host}: {reason}"
@@ -334,7 +365,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
         be locked/unlocked, so a non-encrypted target is a user error.
         """
         if not self._data.get("encrypted"):
-            name = self._data.get("name", "<unknown>")
+            name = self._data.get("name", _UNKNOWN_DATASET)
             raise ServiceValidationError(
                 f"Dataset {name} is not encrypted and cannot be {action}ed"
             )
@@ -369,17 +400,37 @@ class TrueNASDatasetSensor(TrueNASSensor):
         await self._run_dataset_job("pool.dataset.lock", payload, "lock")
         await self.coordinator.async_refresh()
 
-    async def unlock(
-        self, passphrase: str, recursive: bool = False, force: bool = False
-    ) -> None:
-        """Unlock a dataset using the provided passphrase.
+    def _stored_passphrase(self) -> str | None:
+        """Return the stored passphrase for this dataset, or None."""
+        dataset_name = self._data.get("name")
+        if not dataset_name:
+            return None
+        stored = self.coordinator.config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+        return stored.get(dataset_name) if isinstance(stored, dict) else None
 
-        Args:
-            passphrase: The dataset passphrase.
-            recursive: Unlock datasets recursively.
-            force: Force the unlock operation.
+    async def unlock(
+        self,
+        passphrase: str | None = None,
+        recursive: bool = False,
+        force: bool = False,
+    ) -> None:
+        """Unlock a dataset.
+
+        Uses ``passphrase`` if supplied, otherwise falls back to the passphrase
+        stored in the config entry via ``passphrase_set``.
         """
         self._raise_if_not_encrypted("unlock")
+
+        effective_passphrase = (
+            passphrase if passphrase is not None else self._stored_passphrase()
+        )
+        if not effective_passphrase:
+            dataset_name = self._data.get("name", _UNKNOWN_DATASET)
+            raise ServiceValidationError(
+                f"No passphrase provided or stored for dataset {dataset_name}. "
+                "Call passphrase_set first or supply the passphrase in the action call."
+            )
+
         # See lock(): async_refresh forces fresh data before the idempotency check.
         await self.coordinator.async_refresh()
         if not self._data.get("locked", True):
@@ -395,7 +446,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
                 "datasets": [
                     {
                         "name": self._data.get("name"),
-                        "passphrase": passphrase,
+                        "passphrase": effective_passphrase,
                         "recursive": recursive,
                         "force": force,
                     }
@@ -405,6 +456,28 @@ class TrueNASDatasetSensor(TrueNASSensor):
         result = await self._run_dataset_job("pool.dataset.unlock", payload, "unlock")
         self._raise_on_unlock_failure(result, "unlock")
         await self.coordinator.async_refresh()
+
+    async def passphrase_set(self, passphrase: str) -> None:
+        """Store a passphrase for this dataset in the config entry."""
+        dataset_name = self._data.get("name")
+        if not dataset_name:
+            raise ServiceValidationError(
+                "Cannot store passphrase: dataset name is unknown"
+            )
+        existing = self.coordinator.config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+        updated = (
+            {**existing, dataset_name: passphrase}
+            if isinstance(existing, dict)
+            else {dataset_name: passphrase}
+        )
+        self.hass.config_entries.async_update_entry(
+            self.coordinator.config_entry,
+            data={
+                **self.coordinator.config_entry.data,
+                CONF_DATASET_PASSPHRASES: updated,
+            },
+        )
+        _LOGGER.debug("Stored passphrase for dataset %s", dataset_name)
 
 
 # ---------------------------

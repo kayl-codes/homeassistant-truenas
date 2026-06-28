@@ -34,6 +34,7 @@ from .const import (
     CONF_BEHAVIORS,
     CONF_CRONJOB_SKIP_DISABLED,
     CONF_DATA_UNIT,
+    CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
     DEFAULT_BEHAVIORS,
@@ -106,8 +107,34 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
     return vol.Schema(base_schema)
 
 
+def _text_to_passphrases(text: str) -> dict[str, str]:
+    """Parse a multi-line textarea string back into the passphrases dict.
+
+    Each non-empty line must be of the form ``<dataset_name>#<passphrase>``
+    where both parts are non-empty.  The first ``#`` is the separator;
+    additional ``#`` characters in the passphrase are preserved.  Dataset
+    names must not contain ``#``.
+    Raises ``ValueError((error_key, line))`` on the first invalid line.
+    """
+    result: dict[str, str] = {}
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "#" not in line:
+            raise ValueError(("passphrase_malformed_line", line))
+        name, _, pp = line.partition("#")
+        name = name.strip()
+        if not name:
+            raise ValueError(("passphrase_empty_name", line))
+        if not pp:
+            raise ValueError(("passphrase_empty_value", line))
+        result[name] = pp
+    return result
+
+
 def _reconfigure_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
-    """Generate reconfigure schema (connection parameters only)."""
+    """Generate reconfigure schema (connection parameters + stored passphrases)."""
     return vol.Schema(
         {
             vol.Required(
@@ -120,6 +147,9 @@ def _reconfigure_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
                 CONF_VERIFY_SSL,
                 default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
             ): bool,
+            vol.Optional(CONF_DATASET_PASSPHRASES): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)
+            ),
         }
     )
 
@@ -441,6 +471,69 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """Skip the takeover and configure TrueNAS CE from scratch."""
         return await self.async_step_user()
 
+    def _validate_passphrase_names(
+        self,
+        new_passphrases: dict[str, str],
+        entry_id: str,
+        errors: dict[str, str],
+        description_placeholders: dict[str, str],
+    ) -> None:
+        """Set errors if any passphrase key is not a known dataset name."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        if coordinator is None:
+            return
+        known = {
+            v.get("name")
+            for v in coordinator.ds.get("dataset", {}).values()
+            if isinstance(v, dict) and v.get("name")
+        }
+        if not known:
+            return
+        unknown = [k for k in new_passphrases if k not in known]
+        if unknown:
+            description_placeholders["datasets"] = ", ".join(sorted(unknown))
+            errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
+
+    def _apply_passphrase_input(
+        self,
+        user_input: dict[str, Any],
+        truenas_config: dict[str, Any],
+        entry_id: str,
+        errors: dict[str, str],
+        description_placeholders: dict[str, str],
+    ) -> None:
+        """Parse/validate the passphrase textarea; mutate user_input in place."""
+        new_text = user_input.get(CONF_DATASET_PASSPHRASES, "")
+        if not isinstance(new_text, str) or not new_text.strip():
+            user_input.pop(CONF_DATASET_PASSPHRASES, None)
+            return
+        try:
+            new_passphrases = _text_to_passphrases(new_text)
+        except ValueError as exc:
+            error_key, bad_line = exc.args[0]
+            errors[CONF_DATASET_PASSPHRASES] = error_key
+            description_placeholders["line"] = bad_line
+            return
+        if new_passphrases:
+            self._validate_passphrase_names(
+                new_passphrases, entry_id, errors, description_placeholders
+            )
+        if not errors:
+            existing = dict(truenas_config.get(CONF_DATASET_PASSPHRASES) or {})
+            existing.update(new_passphrases)
+            user_input[CONF_DATASET_PASSPHRASES] = existing
+
+    async def _check_connection_if_changed(
+        self,
+        truenas_config: dict[str, Any],
+        entry_data: dict[str, Any],
+        errors: dict[str, str],
+    ) -> None:
+        """Run connection test only when transport-relevant settings changed."""
+        _CONNECTION_KEYS = (CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL)
+        if any(truenas_config.get(k) != entry_data.get(k) for k in _CONNECTION_KEYS):
+            await self._validate_connection(truenas_config, errors)
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -450,33 +543,30 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         truenas_config = self.truenas_config
         reconfigure_entry = self._get_reconfigure_entry()
-        errors = {}
+        errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
 
         if user_input is not None:
             if CONF_HOST in user_input:
                 user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            # Do not overwrite existing API key if the field is left blank
             if not user_input.get(CONF_API_KEY):
                 user_input.pop(CONF_API_KEY, None)
+            if CONF_DATASET_PASSPHRASES in user_input:
+                self._apply_passphrase_input(
+                    user_input,
+                    truenas_config,
+                    reconfigure_entry.entry_id,
+                    errors,
+                    description_placeholders,
+                )
 
             truenas_config.update(user_input)
 
-            # Only test the connection when settings that actually affect
-            # the WebSocket transport have changed. Non-connection settings
-            # (e.g. data_unit, cronjob_skip_disabled) must not trigger a new
-            # connection attempt because TrueNAS may refuse it while the
-            # coordinator already holds active connections, causing a spurious
-            # handshake_timeout error.
-            _CONNECTION_KEYS = {CONF_HOST, CONF_API_KEY, CONF_VERIFY_SSL}
-            connection_changed = any(
-                truenas_config.get(k) != reconfigure_entry.data.get(k)
-                for k in _CONNECTION_KEYS
-            )
+            if not errors:
+                await self._check_connection_if_changed(
+                    truenas_config, reconfigure_entry.data, errors
+                )
 
-            if connection_changed:
-                await self._validate_connection(truenas_config, errors)
-
-            # Save instance
             if not errors:
                 return self.async_update_reload_and_abort(
                     reconfigure_entry,
@@ -488,6 +578,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=_reconfigure_schema(truenas_config),
             errors=errors,
+            description_placeholders=description_placeholders or None,
         )
 
 

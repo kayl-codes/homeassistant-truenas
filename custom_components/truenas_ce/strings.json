@@ -19,7 +19,11 @@
                     "api_key": "API key",
                     "verify_ssl": "Verify SSL certificate",
                     "cronjob_skip_disabled": "Skip disabled cronjobs on manual run",
-                    "data_unit": "Data size unit (GB or GiB)"
+                    "data_unit": "Data size unit (GB or GiB)",
+                    "dataset_passphrases": "Add/update dataset passphrases"
+                },
+                "data_description": {
+                    "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
             "migrate": {
@@ -46,7 +50,11 @@
             "api_not_found": "Connection failed, API not found.",
             "cannot_connect": "Failed to connect to host (TCP port {port} closed or timeout).",
             "malformed_result": "API response is malformed.",
-            "unknown": "Unknown error occurred."
+            "unknown": "Unknown error occurred.",
+            "unknown_dataset": "Unknown dataset path(s): {datasets}. Verify the spelling and try again.",
+            "passphrase_malformed_line": "Malformed passphrase entry (missing '#') on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_value": "Empty passphrase is not allowed. Offending line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Reconfigure successful."

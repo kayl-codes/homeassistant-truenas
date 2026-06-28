@@ -19,7 +19,11 @@
                     "api_key": "Clave API",
                     "verify_ssl": "Verificar certificado SSL",
                     "cronjob_skip_disabled": "Omitir cronjobs deshabilitados en la ejecución manual",
-                    "data_unit": "Unidad de tamaño de datos (GB o GiB)"
+                    "data_unit": "Unidad de tamaño de datos (GB o GiB)",
+                    "dataset_passphrases": "Add/update dataset passphrases"
+                },
+                "data_description": {
+                    "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
             "migrate": {
@@ -46,7 +50,11 @@
             "tlsv1_not_supported": "TLSv1 no es compatible. ¿Proxy inverso?",
             "websocket_not_supported": "WebSocket no es compatible. ¿Proxy inverso?",
             "unknown_hostname": "Nombre de host desconocido, compruebe el DNS.",
-            "unknown": "Se produjo un error desconocido."
+            "unknown": "Se produjo un error desconocido.",
+            "unknown_dataset": "Unknown dataset path(s): {datasets}. Verify the spelling and try again.",
+            "passphrase_malformed_line": "Malformed passphrase entry (missing '#') on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_value": "Empty passphrase is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
+            "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
             "reconfigure_successful": "Reconfiguración exitosa."

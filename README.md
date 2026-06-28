@@ -46,7 +46,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * **Monitor Certificate Expiry** (expiration time, days remaining, expired status)
  * **Monitor, dismiss and restore Active Alerts** (list all alerts, dismiss by UUID, restore dismissed)
  * Create a Dataset Snapshot
- * Lock / unlock encrypted Datasets
+ * Lock / unlock encrypted Datasets and store passphrases for automated unlock
  * **Refresh coordinator data on demand** (System Refresh action)
  * Update Sensor
  * Reboot and Shutdown TrueNAS system
@@ -167,6 +167,27 @@ a `custom-` prefix.
 ![Snapshot UI](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/snapshot_ui.png)
 ![Snapshot YAML](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/snapshot_yaml.png)
 
+## Stored Dataset Passphrases
+Passphrases for encrypted datasets can be stored securely inside the HA config entry so
+that `dataset_unlock` works without prompting for a passphrase every time.
+
+**How to store a passphrase:**
+Go to *Settings → Devices & Services → TrueNAS → Configure* and enter one or more
+`DatasetName#Passphrase` pairs in the **Add/update dataset passphrases** field (one per
+line). Example:
+
+```
+tank/encrypted#MySecret
+tank/backup#AnotherSecret
+```
+
+- Stored passphrases survive HA restarts and integration reloads.
+- The dataset name must match the full path as reported by TrueNAS (e.g. `tank/encrypted`).
+- To remove a stored passphrase, call the `passphrase_remove` domain action with the
+  dataset path — no need to re-open the config flow.
+- Passphrases are stored in the HA `.storage` entry for this integration (encrypted at rest
+  by HA's config-entry storage).
+
 ## Services
 Control and monitor status and attributes for each TrueNAS service.
 Service control is available through actions.
@@ -190,7 +211,7 @@ so systems without AD/LDAP get no entity.
 ## Certificates
 Monitor **TrueNAS certificate expiry** and status. Each certificate is exposed as:
 - **Expiration time sensor** — Timestamp when the certificate expires
-- **Days until expiry sensor** — Number of days remaining (useful for automation warnings)
+- **Time until expiry sensor** — Days remaining until the certificate expires (switches to **years** automatically when 365+ days remain, so long-lived self-signed certificates are readable at a glance)
 - **Expired status binary sensor** — Problem-class indicator when a certificate is already expired or no longer valid
 
 Use these sensors in automations to send notifications before certificates expire, or to trigger renewal workflows.
@@ -256,7 +277,8 @@ TrueNAS object they act on). Each action has a name and description in
 | `snapshottask_run` | Snapshot task sensor | Run a periodic snapshot task now |
 | `dataset_snapshot` | Dataset sensor | Create an immediate `custom-<timestamp>` snapshot of a dataset |
 | `dataset_lock` | Dataset sensor | Lock an encrypted dataset |
-| `dataset_unlock` | Dataset sensor | Unlock an encrypted dataset with a passphrase |
+| `dataset_unlock` | Dataset sensor | Unlock an encrypted dataset (uses stored passphrase if available, otherwise requires a `passphrase` field) |
+| `passphrase_remove` | *(domain-level)* | Remove a stored passphrase by its dataset path (no target entity needed) |
 | `system_reboot` · `system_shutdown` | Uptime sensor | Reboot / shut down the TrueNAS system |
 | `system_refresh` | Uptime sensor | Force an immediate re-poll so automations can act on current data without waiting for the next poll |
 

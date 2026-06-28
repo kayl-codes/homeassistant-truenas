@@ -195,7 +195,7 @@ dataset_lock:
     force_umount:
       name: Force umount
       description: Force unmounting of the dataset before locking.
-      required: true
+      required: false
       default: false
       selector:
         boolean:
@@ -206,26 +206,32 @@ dataset_lock:
 
 dataset_unlock:
   name: Unlock dataset
-  description: Unlock an encrypted dataset (target the dataset sensor). Requires the dataset passphrase.
+  description: >-
+    Unlock an encrypted dataset (target the dataset sensor). If passphrase is
+    omitted, the passphrase stored via passphrase_set (or the ReConfigure flow)
+    is used. Raises an error when neither is available.
   fields:
     passphrase:
       name: Passphrase
-      description: Passphrase for this dataset if using passphrase-based encryption.
-      required: true
+      description: >-
+        Passphrase for this dataset. Leave empty to fall back to the stored
+        passphrase. Note: when supplied here, the value appears once in debug
+        logs and automation traces.
+      required: false
       selector:
         text:
           type: password
     recursive:
       name: Recursive
       description: Apply the key or passphrase to all encrypted children.
-      required: true
+      required: false
       default: false
       selector:
         boolean:
     force:
       name: Force
       description: Force unlock even if the mount path already exists and is not empty.
-      required: true
+      required: false
       default: false
       selector:
         boolean:
@@ -233,6 +239,64 @@ dataset_unlock:
     entity:
       integration: truenas_ce
       domain: sensor
+
+passphrase_set:
+  name: Store dataset passphrase
+  description: >-
+    Persist a passphrase for the targeted dataset in the config entry so that
+    dataset_unlock can be called without supplying the passphrase each time.
+    The passphrase is stored in plain text alongside the API key in HA's config
+    storage. Note: the passphrase value appears once in debug logs when this
+    action is called.
+  fields:
+    passphrase:
+      name: Passphrase
+      description: The passphrase to store for this dataset.
+      required: true
+      selector:
+        text:
+          type: password
+  target:
+    entity:
+      integration: truenas_ce
+      domain: sensor
+
+passphrase_remove:
+  name: Remove stored dataset passphrase
+  description: >-
+    Delete a stored dataset passphrase by its full dataset path. Works for both
+    active datasets and orphaned entries left by a typo. After calling this,
+    dataset_unlock will again require the passphrase field for that dataset.
+  fields:
+    dataset_path:
+      name: Dataset path
+      description: >-
+        Full dataset path as stored, e.g. tank/encrypted or Backup/PP-Test.
+        Must match the key used when the passphrase was stored.
+      required: true
+      selector:
+        text: {}
+    config_entry:
+      name: TrueNAS instance
+      description: TrueNAS instance (optional, defaults to the only/first instance).
+      required: false
+      selector:
+        config_entry:
+          integration: truenas_ce
+
+passphrase_list:
+  name: List stored dataset passphrases
+  description: >-
+    Return the dataset names for which a passphrase is stored. The passphrases
+    themselves are never included in the response.
+  fields:
+    config_entry:
+      name: TrueNAS instance
+      description: TrueNAS instance (optional, defaults to the only/first instance).
+      required: false
+      selector:
+        config_entry:
+          integration: truenas_ce
 
 alert_dismiss:
   name: Dismiss alert
