@@ -817,7 +817,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="certificate_expiry",
-        name="Days until expiry",
+        name="Time until expiry",
         icon="mdi:certificate",
         native_unit_of_measurement=UnitOfTime.DAYS,
         device_class=None,
@@ -825,10 +825,11 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="Certificates",
         data_path="certificate",
-        data_attribute="renew_days",
+        data_attribute="days_until_expiry",
         data_name="name",
         data_uid=None,
         data_reference="id",
+        func="TrueNASCertExpirySensor",
     ),
     TrueNASSensorEntityDescription(
         key="certificate_expiration_time",

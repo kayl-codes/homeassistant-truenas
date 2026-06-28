@@ -1940,6 +1940,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             key="id",
             vals=_CERTIFICATE_VALS,
         )
+        now = datetime.now(UTC)
+        for cert in self.ds["certificate"].values():
+            if not isinstance(cert, dict):
+                continue
+            until = cert.get("until")
+            cert["days_until_expiry"] = (
+                max(0, (until - now).days) if isinstance(until, datetime) else None
+            )
 
     # ---------------------------
     #   get_arc
