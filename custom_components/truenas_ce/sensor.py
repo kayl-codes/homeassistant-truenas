@@ -420,7 +420,9 @@ class TrueNASDatasetSensor(TrueNASSensor):
         """
         self._raise_if_not_encrypted("unlock")
 
-        effective_passphrase = passphrase or self._stored_passphrase()
+        effective_passphrase = (
+            passphrase if passphrase is not None else self._stored_passphrase()
+        )
         if not effective_passphrase:
             dataset_name = self._data.get("name", "<unknown>")
             raise ServiceValidationError(

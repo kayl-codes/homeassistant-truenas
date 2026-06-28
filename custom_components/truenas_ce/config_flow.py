@@ -108,7 +108,13 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
 
 
 def _text_to_passphrases(text: str) -> dict[str, str]:
-    """Parse a multi-line textarea string back into the passphrases dict."""
+    """Parse a multi-line textarea string back into the passphrases dict.
+
+    Each non-empty line must be of the form ``<dataset_name>#<passphrase>``.
+    The first ``#`` is the separator; additional ``#`` characters in the
+    passphrase are preserved.  Dataset names must not contain ``#``.
+    Passphrases may be empty (``<dataset_name>#``).
+    """
     result: dict[str, str] = {}
     for line in text.strip().splitlines():
         line = line.strip()
@@ -116,7 +122,7 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
             continue
         name, _, pp = line.partition("#")
         name = name.strip()
-        if name and pp:
+        if name:
             result[name] = pp
     return result
 

@@ -95,7 +95,7 @@ TO_REDACT = {
 }
 
 # Config-entry data key for the per-dataset stored passphrases dict.
-CONF_DATASET_PASSPHRASES = "dataset_passphrases"
+CONF_DATASET_PASSPHRASES = "dataset_passphrases"  # nosec B105 # NOSONAR
 
 SERVICE_CLOUDSYNC_RUN = "cloudsync_run"
 SCHEMA_SERVICE_CLOUDSYNC_RUN = {}
@@ -128,9 +128,9 @@ SCHEMA_SERVICE_DATASET_UNLOCK = {
     vol.Required(SERVICE_DATASET_UNLOCK_FORCE, default=False): cv.boolean,
 }
 
-# B105 false positive: these are service *name* strings, not hardcoded secrets.
-SERVICE_PASSPHRASE_SET = "passphrase_set"  # nosec B105
-SERVICE_PASSPHRASE_REMOVE = "passphrase_remove"  # nosec B105
+# B105/S2068 false positive: these are service *name* strings, not hardcoded secrets.
+SERVICE_PASSPHRASE_SET = "passphrase_set"  # nosec B105 # NOSONAR
+SERVICE_PASSPHRASE_REMOVE = "passphrase_remove"  # nosec B105 # NOSONAR
 SERVICE_PASSPHRASE_DATASET_PATH = "dataset_path"
 SCHEMA_SERVICE_PASSPHRASE_SET = {
     vol.Required(SERVICE_DATASET_UNLOCK_PASSPHRASE): cv.string,
@@ -141,7 +141,7 @@ SCHEMA_SERVICE_PASSPHRASE_REMOVE = vol.Schema(
         vol.Required(SERVICE_PASSPHRASE_DATASET_PATH): cv.string,
     }
 )
-SERVICE_PASSPHRASE_LIST = "passphrase_list"  # nosec B105
+SERVICE_PASSPHRASE_LIST = "passphrase_list"  # nosec B105 # NOSONAR
 SCHEMA_SERVICE_PASSPHRASE_LIST = vol.Schema(
     {
         vol.Optional("config_entry"): cv.string,
