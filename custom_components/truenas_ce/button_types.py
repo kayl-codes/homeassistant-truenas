@@ -9,6 +9,7 @@ from homeassistant.components.button import ButtonEntityDescription
 
 from .const import (
     API_CLOUDSYNC_SYNC,
+    API_CRONJOB_RUN,
     API_REPLICATION_RUN,
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
@@ -79,6 +80,17 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
         ha_group="Cloudsync",
         data_path="cloudsync",
         data_name="description",
+        data_uid=None,
+        data_reference="id",
+    ),
+    TrueNASButtonEntityDescription(
+        key="cronjob_run",
+        name="Run",
+        icon=ICON_RUN,
+        api_method=API_CRONJOB_RUN,
+        ha_group="Cron jobs",
+        data_path="cronjob",
+        data_name="display_name",
         data_uid=None,
         data_reference="id",
     ),

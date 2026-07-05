@@ -31,6 +31,7 @@ async def async_setup_entry(
     dispatcher = {
         "TrueNASServiceSwitch": TrueNASServiceSwitch,
         "TrueNASCloudsyncSwitch": TrueNASCloudsyncSwitch,
+        "TrueNASCronjobSwitch": TrueNASCronjobSwitch,
     }
     await setup_entities(hass, config_entry, dispatcher)
 
@@ -90,6 +91,36 @@ class TrueNASCloudsyncSwitch(TrueNASEntity, SwitchEntity):
         await self.hass.async_add_executor_job(
             self.coordinator.api.query,
             "cloudsync.update",
+            [self._data["id"], {"enabled": False}],
+        )
+        await self.coordinator.async_request_refresh()
+
+
+# ---------------------------
+#   TrueNASCronjobSwitch
+# ---------------------------
+class TrueNASCronjobSwitch(TrueNASEntity, SwitchEntity):
+    """Define a TrueNAS Cronjob Switch."""
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if device is on."""
+        return self._data.get(self.entity_description.data_is_on, False)
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn the entity on."""
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.query,
+            "cronjob.update",
+            [self._data["id"], {"enabled": True}],
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn the entity off."""
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.query,
+            "cronjob.update",
             [self._data["id"], {"enabled": False}],
         )
         await self.coordinator.async_request_refresh()

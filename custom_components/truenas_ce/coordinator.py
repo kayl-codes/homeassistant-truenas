@@ -43,6 +43,7 @@ from .const import (
     MIGRATION_RECORDS,
     MONITOR_GROUP_CLOUDSYNC,
     MONITOR_GROUP_CONTAINERS,
+    MONITOR_GROUP_CRONJOBS,
     MONITOR_GROUP_DATASETS,
     MONITOR_GROUP_DIRECTORY_SERVICES,
     MONITOR_GROUP_REPLICATION,
@@ -2262,6 +2263,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     def get_cronjob(self) -> None:
         """Get cronjobs from TrueNAS."""
+        if not self._is_group_monitored(MONITOR_GROUP_CRONJOBS):
+            self.ds["cronjob"] = {}
+            return
         self.ds["cronjob"] = parse_api(
             data=self.ds["cronjob"],
             source=self.api.query("cronjob.query"),

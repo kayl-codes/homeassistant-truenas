@@ -49,6 +49,18 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
         data_reference="id",
         func="TrueNASCloudsyncSwitch",
     ),
+    TrueNASSwitchEntityDescription(
+        key="cronjob_switch",
+        name="Enabled",
+        icon="mdi:calendar-check",
+        ha_group="Cron jobs",
+        data_path="cronjob",
+        data_is_on="enabled",
+        data_name="display_name",
+        data_uid=None,
+        data_reference="id",
+        func="TrueNASCronjobSwitch",
+    ),
 )
 
 SENSOR_SERVICES: tuple = ()
