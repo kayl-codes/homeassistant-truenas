@@ -158,6 +158,15 @@ Periodic snapshot tasks can be started on demand through the `snapshottask_run` 
 > `FINISHED`); the task's `datetime` / last snapshot is the reliable run evidence —
 > TrueNAS itself shows no live "running" feedback for these tasks either.
 
+## Cron Jobs
+Monitor and control each TrueNAS cron job. Each job is exposed as a dedicated device with two entities:
+- **Enabled switch** — enable or disable the job on TrueNAS directly from HA
+- **Run button** — trigger the job immediately on demand, independent of its schedule
+
+> **Cron Jobs** is a monitored group (enabled by default). You can disable it under
+> *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
+> On an existing install, add **Cron Jobs** once after upgrading.
+
 ## Dataset Snapshot
 Create an **on-demand** ZFS snapshot of a dataset through the `dataset_snapshot` action
 (target a dataset sensor) — taken immediately, independent of any periodic snapshot task.

@@ -62,6 +62,7 @@ from .const import (
     LEGACY_DOMAIN,
     MONITOR_GROUP_CLOUDSYNC,
     MONITOR_GROUP_CONTAINERS,
+    MONITOR_GROUP_CRONJOBS,
     MONITOR_GROUP_DATASETS,
     MONITOR_GROUP_DIRECTORY_SERVICES,
     MONITOR_GROUP_REPLICATION,
@@ -181,6 +182,7 @@ def _options_schema(options: Mapping[str, Any]) -> vol.Schema:
         selector.SelectOptionDict(
             value=MONITOR_GROUP_SNAPSHOTS, label="Snapshot Tasks"
         ),
+        selector.SelectOptionDict(value=MONITOR_GROUP_CRONJOBS, label="Cron Jobs"),
         selector.SelectOptionDict(value=MONITOR_GROUP_DATASETS, label="Datasets"),
         selector.SelectOptionDict(
             value=MONITOR_GROUP_DIRECTORY_SERVICES, label="Directory Services"

@@ -159,6 +159,7 @@ SCHEMA_SERVICE_SNAPSHOTTASK_RUN = {}
 # (button_types.py) and the *_run sensor actions (sensor.py) so the method name
 # is defined once.
 API_CLOUDSYNC_SYNC = "cloudsync.sync"
+API_CRONJOB_RUN = "cronjob.run"
 API_RSYNCTASK_RUN = "rsynctask.run"
 API_REPLICATION_RUN = "replication.run"
 API_SNAPSHOTTASK_RUN = "pool.snapshottask.run"
@@ -251,6 +252,7 @@ MONITOR_GROUP_CLOUDSYNC = "cloudsync"
 MONITOR_GROUP_REPLICATION = "replication"
 MONITOR_GROUP_RSYNC = "rsync"
 MONITOR_GROUP_SNAPSHOTS = "snapshots"
+MONITOR_GROUP_CRONJOBS = "cronjobs"
 MONITOR_GROUP_DATASETS = "datasets"
 MONITOR_GROUP_DIRECTORY_SERVICES = "directory_services"
 DEFAULT_MONITORED_GROUPS = [
@@ -261,6 +263,7 @@ DEFAULT_MONITORED_GROUPS = [
     MONITOR_GROUP_REPLICATION,
     MONITOR_GROUP_RSYNC,
     MONITOR_GROUP_SNAPSHOTS,
+    MONITOR_GROUP_CRONJOBS,
     MONITOR_GROUP_DATASETS,
     MONITOR_GROUP_DIRECTORY_SERVICES,
 ]
@@ -275,6 +278,7 @@ GROUP_DATA_PATHS: dict[str, set[str]] = {
     MONITOR_GROUP_REPLICATION: {"replication"},
     MONITOR_GROUP_RSYNC: {"rsynctask"},
     MONITOR_GROUP_SNAPSHOTS: {"snapshottask"},
+    MONITOR_GROUP_CRONJOBS: {"cronjob"},
     MONITOR_GROUP_DATASETS: {"dataset"},
     MONITOR_GROUP_DIRECTORY_SERVICES: {"directoryservices"},
 }

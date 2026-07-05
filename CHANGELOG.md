@@ -12,6 +12,21 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNAS 25.04**.
 
+## [2.4.0] — Cron job controls & HA 2026.7 compatibility
+
+### Added
+- **Cron job switch & run button (#22):** each TrueNAS cron job is now exposed as a dedicated
+  device under **TrueNAS Cron jobs**. Two entities per job: an **Enabled** switch (enable/disable
+  the job via `cronjob.update`) and a **Run** button that triggers the job immediately on demand
+  (`cronjob.run`). The group can be toggled under *Settings → TrueNAS → Configure → Monitored
+  groups → Cron Jobs*. On an existing install, add **Cron Jobs** once after upgrading.
+
+### Fixed
+- **HA 2026.7 deprecation — `UnitOfRatio.PERCENTAGE`:** percentage-based sensors (CPU usage,
+  memory usage, pool fragmentation, UPS charge/load, scrub progress, ARC hit rate) now declare
+  `native_unit_of_measurement=UnitOfRatio.PERCENTAGE` instead of the deprecated `PERCENTAGE`
+  string constant, as required by Home Assistant 2026.7+.
+
 ## [2.3.0] — Scrub controls, disk icons & dataset passphrase store
 
 ### Added
