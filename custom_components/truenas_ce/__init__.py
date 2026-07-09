@@ -486,19 +486,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         coordinator.async_add_listener(_handle_coordinator_refresh)
     )
 
-    # Reload the entry when the user saves new options so the coordinator
-    # picks up the changed poll interval / group toggles immediately.
-    config_entry.async_on_unload(
-        config_entry.add_update_listener(_async_options_updated)
-    )
     return True
-
-
-async def _async_options_updated(
-    hass: HomeAssistant, config_entry: ConfigEntry
-) -> None:
-    """Reload the integration when options change."""
-    await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 # ---------------------------

@@ -10,7 +10,21 @@ The full, curated notes for each version live on the
 Items reference the related issue/PR as `(#NN)` where applicable.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
-Minimum requirements throughout this fork: **Home Assistant 2024.8.0**, **TrueNAS 25.04**.
+Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
+
+## [2.4.1] — Deprecated update-listener fix
+
+### Fixed
+- **HA 2026.12 deprecation — config entry update listener (#24):** the options flow now
+  reloads the config entry via `OptionsFlowWithReload` instead of a manual
+  `add_update_listener` callback, removing the `custom integration 'truenas' has an update
+  listener and should use it for scheduling a reload` warning logged on every options save
+  (would have stopped working in Home Assistant 2026.12.0). No functional change — saving
+  options or reconfiguring the integration still reloads it exactly as before.
+
+### Changed
+- **Minimum Home Assistant version raised to 2025.8.0** (from 2024.8.0): required by the
+  `OptionsFlowWithReload` API used in the fix above.
 
 ## [2.4.0] — Cron job controls & HA 2026.7 compatibility
 

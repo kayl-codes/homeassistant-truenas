@@ -15,7 +15,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.const import (
     CONF_API_KEY,
@@ -316,7 +316,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowWithReload:
         """Return the options flow handler."""
         return TrueNASOptionsFlow()
 
@@ -587,7 +587,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 # ---------------------------
 #   TrueNASOptionsFlow
 # ---------------------------
-class TrueNASOptionsFlow(OptionsFlow):
+class TrueNASOptionsFlow(OptionsFlowWithReload):
     """Handle TrueNAS integration options."""
 
     async def async_step_init(

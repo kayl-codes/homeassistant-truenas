@@ -321,7 +321,7 @@ target:
 
 Minimum requirements:
 * TrueNAS 25.04 or later (tested with 25.10.4)
-* Home Assistant 2024.8.0
+* Home Assistant 2025.8.0
 
 ## Using TrueNAS development branch
 If you are using development branch for TrueNAS, some features may stop working.
