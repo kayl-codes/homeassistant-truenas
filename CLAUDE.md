@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a Home Assistant **custom integration** (HACS-distributed) that monitors and controls a TrueNAS device. All integration code lives under [custom_components/truenas/](custom_components/truenas/). It targets TrueNAS 25.04+ and Home Assistant 2024.8.0+, and communicates with TrueNAS exclusively over its JSON-RPC **WebSocket** API (`local_polling`, 60s interval).
+This is a Home Assistant **custom integration** (HACS-distributed) that monitors and controls a TrueNAS device. All integration code lives under [custom_components/truenas/](custom_components/truenas/). It targets TrueNAS 25.04+ and Home Assistant 2025.8.0+, and communicates with TrueNAS exclusively over its JSON-RPC **WebSocket** API (`local_polling`, 60s interval).
 
 ## Commands
 
