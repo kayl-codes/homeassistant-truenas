@@ -21,6 +21,7 @@ bandit -r custom_components/truenas   # security scan (part of CI)
 - CI also runs Home Assistant **hassfest** validation and HACS validation on push/PR.
 - Runtime deps come from [manifest.json](custom_components/truenas/manifest.json) (`websockets>=15.0.1`); dev deps are in the [Pipfile](Pipfile). `.github/generate_requirements.py` regenerates `requirements*.txt` from the Pipfile during CI.
 - Bumping the release: `version` in [manifest.json](custom_components/truenas/manifest.json) is the source of truth (`.github/update_version.py` updates it during release).
+- A [.pre-commit-config.yaml](.pre-commit-config.yaml) mirrors the CI Ruff checks locally; run `pre-commit install` once after cloning to enable it.
 
 ## Architecture
 
@@ -82,7 +83,7 @@ After each feature implementation:
 4. **Verify new entities** (automatic via Claude MCP):
    After `sync-to-ha` completes, ask Claude Code:
    > "verify the new truenas entities — check the dev states and HA logs"
-   
+
    Claude will use MCP to query HA state and logs, confirming entities exist and no errors occurred.
    See [[truenas-sync-to-ha-workflow]] for full setup instructions.
 
