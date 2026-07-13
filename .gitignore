@@ -23,3 +23,7 @@ Thumbs.db
 # Local virtual environments
 .venv/
 venv/
+
+# Local secrets (e.g. examples/verify_live.py credentials, .env.sonar token)
+.env
+.env.*
