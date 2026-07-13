@@ -77,5 +77,5 @@ async def alert_action(
     hass: HomeAssistant, coordinator: TrueNASCoordinator, uuid: str, action: str
 ) -> None:
     """Execute alert dismiss/restore action (shared helper)."""
-    await hass.async_add_executor_job(coordinator.api.query, f"alert.{action}", [uuid])
+    await coordinator.api.query(f"alert.{action}", [uuid])
     await coordinator.async_refresh()

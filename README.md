@@ -351,12 +351,12 @@ NOTES:
 
 ### Remote access, reverse proxies & Cloudflare
 
-The integration talks to TrueNAS over its JSON-RPC **WebSocket** API (`wss://<host>/websocket`), which has a few consequences for how you can reach TrueNAS:
+The integration talks to TrueNAS over its modern JSON-RPC 2.0 **WebSocket** API (`wss://<host>/api/current`), which has a few consequences for how you can reach TrueNAS:
 
 * **Use the local IP (or local DNS name) — this works best and is recommended.** Home Assistant and TrueNAS usually sit on the same network, so a local address keeps the traffic entirely local: it does *not* leave to the internet and come back in through a proxy/CDN, which means lower latency, no external dependency and nothing for an auth gateway to intercept. A **VPN** (e.g. WireGuard/Tailscale) achieves the same when HA runs off-site. Of the two, a **plain IP address is the safest choice**, because it removes name resolution from the equation — intermittent DNS/hostname-lookup failures do happen and have been observed in the HA log, and an IP simply cannot hit them.
-* **A plain reverse proxy works** (TLS termination only, no authentication) as long as it forwards the WebSocket upgrade and the `/websocket` path untouched. Use a certificate valid for the hostname and keep **Verify SSL certificate** enabled.
+* **A plain reverse proxy works** (TLS termination only, no authentication) as long as it forwards the WebSocket upgrade and the `/api/current` path untouched. Use a certificate valid for the hostname and keep **Verify SSL certificate** enabled.
 * **An authentication gateway in front of TrueNAS does _not_ work** — for example **Cloudflare Access / Zero Trust**, Authelia, or HTTP basic-auth. These intercept the WebSocket handshake and redirect it to a login page (HTTP 302) or reject it (401/403) *before it ever reaches TrueNAS*, so the API key never gets a chance to authenticate. A headless integration cannot complete an interactive SSO login, so this is a hard limitation, not a bug. The integration detects this and reports it clearly instead of a generic error.
-  * If you must reach TrueNAS through such a gateway, add a **bypass / service-token policy for the `/websocket` endpoint** so that path skips the interactive login — or simply use the LAN/VPN address instead.
+  * If you must reach TrueNAS through such a gateway, add a **bypass / service-token policy for the `/api/current` endpoint** so that path skips the interactive login — or simply use the LAN/VPN address instead.
 
 ## Options
 

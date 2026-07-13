@@ -310,7 +310,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
         return {"alerts": [], **error}
 
     coordinator = hass.data[DOMAIN][entry_id]
-    alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
+    alerts = await coordinator.api.query("alert.list")
     if not isinstance(alerts, list):
         return {"alerts": [], "error": "Unexpected alert.list response"}
 
@@ -499,6 +499,6 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
         config_entry, PLATFORMS
     ):
         coordinator = hass.data[DOMAIN].pop(config_entry.entry_id)
-        await hass.async_add_executor_job(coordinator.api.close)
+        await coordinator.api.close()
 
     return unload_ok

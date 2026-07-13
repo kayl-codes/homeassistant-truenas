@@ -55,19 +55,15 @@ class _TrueNASEnableSwitch(_TrueNASSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the entity on."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            self._update_method,
-            [self._data["id"], {"enabled": True}],
+        await self.coordinator.api.query(
+            self._update_method, [self._data["id"], {"enabled": True}]
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the entity off."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            self._update_method,
-            [self._data["id"], {"enabled": False}],
+        await self.coordinator.api.query(
+            self._update_method, [self._data["id"], {"enabled": False}]
         )
         await self.coordinator.async_request_refresh()
 
@@ -80,20 +76,12 @@ class TrueNASServiceSwitch(_TrueNASSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the entity on."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.start",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.start", [self._data["service"]])
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the entity off."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.stop",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.stop", [self._data["service"]])
         await self.coordinator.async_request_refresh()
 
 

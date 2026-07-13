@@ -206,18 +206,14 @@ class TrueNASUptimeSensor(TrueNASSensor):
 
     async def restart(self) -> None:
         """Restart TrueNAS systen."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "system.reboot",
-            ["Home Assistant Integration"],
+        await self.coordinator.api.query(
+            "system.reboot", ["Home Assistant Integration"]
         )
 
     async def stop(self) -> None:
         """Shutdown TrueNAS systen."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "system.shutdown",
-            ["Home Assistant Integration"],
+        await self.coordinator.api.query(
+            "system.shutdown", ["Home Assistant Integration"]
         )
 
     async def refresh(self) -> None:
@@ -266,10 +262,8 @@ class TrueNASDatasetSensor(TrueNASSensor):
 
     async def _poll_job(self, job_id: int) -> dict | None:
         """Fetch a single middleware job by id."""
-        jobs = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "core.get_jobs",
-            [[["id", "=", job_id]]],
+        jobs = await self.coordinator.api.query(
+            "core.get_jobs", [[["id", "=", job_id]]]
         )
         if isinstance(jobs, list):
             jobs = jobs[0] if jobs else None
@@ -312,11 +306,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
 
     async def _run_dataset_job(self, method: str, payload: list, action: str) -> Any:
         """Start a dataset middleware job, wait for it, and return its result."""
-        job_id = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            method,
-            payload,
-        )
+        job_id = await self.coordinator.api.query(method, payload)
         if not isinstance(job_id, int):
             raise HomeAssistantError(self._action_error(action, "invalid job id"))
         job = await self._wait_for_job(job_id, action)
@@ -346,17 +336,9 @@ class TrueNASDatasetSensor(TrueNASSensor):
         """Create dataset snapshot."""
         ts = datetime.now().isoformat(sep="_", timespec="microseconds")
         payload = {"dataset": f"{self._data['name']}", "name": f"custom-{ts}"}
-        result = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "pool.snapshot.create",
-            payload,
-        )
+        result = await self.coordinator.api.query("pool.snapshot.create", payload)
         if result is None:
-            await self.hass.async_add_executor_job(
-                self.coordinator.api.query,
-                "zfs.snapshot.create",
-                payload,
-            )
+            await self.coordinator.api.query("zfs.snapshot.create", payload)
 
     def _raise_if_not_encrypted(self, action: str) -> None:
         """Reject lock/unlock on a dataset that is not encrypted.
@@ -551,10 +533,8 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
 
     async def start(self) -> None:
         """Run cloudsync job."""
-        jobs = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "cloudsync.query",
-            [[["id", "=", self._data["id"]]]],
+        jobs = await self.coordinator.api.query(
+            "cloudsync.query", [[["id", "=", self._data["id"]]]]
         )
         tmp_job = jobs[0] if isinstance(jobs, list) and jobs else None
 
@@ -581,10 +561,8 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
 
     async def stop(self) -> None:
         """Abort cloudsync job."""
-        jobs = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "cloudsync.query",
-            [[["id", "=", self._data["id"]]]],
+        jobs = await self.coordinator.api.query(
+            "cloudsync.query", [[["id", "=", self._data["id"]]]]
         )
         tmp_job = jobs[0] if isinstance(jobs, list) and jobs else None
 
@@ -605,8 +583,4 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "cloudsync.abort",
-            [self._data["id"]],
-        )
+        await self.coordinator.api.query("cloudsync.abort", [self._data["id"]])

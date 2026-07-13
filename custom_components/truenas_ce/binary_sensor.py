@@ -76,11 +76,7 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
 
     async def start(self, overcommit: bool = False):
         """Start a VM."""  # vm.start
-        tmp_vm = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "vm.get_instance",
-            [self._data["id"]],
-        )
+        tmp_vm = await self.coordinator.api.query("vm.get_instance", [self._data["id"]])
 
         state = (
             tmp_vm.get("status", {}).get("state") if isinstance(tmp_vm, dict) else None
@@ -95,19 +91,13 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "vm.start",
-            [self._data["id"], {"overcommit": overcommit}],
+        await self.coordinator.api.query(
+            "vm.start", [self._data["id"], {"overcommit": overcommit}]
         )
 
     async def stop(self):
         """Stop a VM."""
-        tmp_vm = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "vm.get_instance",
-            [self._data["id"]],
-        )
+        tmp_vm = await self.coordinator.api.query("vm.get_instance", [self._data["id"]])
 
         state = (
             tmp_vm.get("status", {}).get("state") if isinstance(tmp_vm, dict) else None
@@ -122,20 +112,14 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "vm.stop",
-            [self._data["id"], {"force": True, "force_after_timeout": True}],
+        await self.coordinator.api.query(
+            "vm.stop", [self._data["id"], {"force": True, "force_after_timeout": True}]
         )
 
     async def restart(self):
         """Restart a VM."""  # vm.restart
         # A restart always applies (no state guard): it stops and starts again.
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "vm.restart",
-            [self._data["id"]],
-        )
+        await self.coordinator.api.query("vm.restart", [self._data["id"]])
         await self.coordinator.async_request_refresh()
 
 
@@ -154,10 +138,8 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
         A transient query failure returns None so the caller proceeds (fail-safe).
         """
         try:
-            instances = await self.hass.async_add_executor_job(
-                self.coordinator.api.query,
-                "virt.instance.query",
-                [[["id", "=", self._data["id"]]]],
+            instances = await self.coordinator.api.query(
+                "virt.instance.query", [[["id", "=", self._data["id"]]]]
             )
         except Exception:
             _LOGGER.exception(
@@ -174,11 +156,7 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
             _LOGGER.warning("Container %s is already running", self._data.get("name"))
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "virt.instance.start",
-            [self._data["id"]],
-        )
+        await self.coordinator.api.query("virt.instance.start", [self._data["id"]])
         await self.coordinator.async_request_refresh()
 
     async def stop(self):
@@ -189,20 +167,16 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
             _LOGGER.warning("Container %s is not running", self._data.get("name"))
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "virt.instance.stop",
-            [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS],
+        await self.coordinator.api.query(
+            "virt.instance.stop", [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS]
         )
         await self.coordinator.async_request_refresh()
 
     async def restart(self):
         """Restart a container."""  # virt.instance.restart
         # A restart always applies (no state guard): it stops and starts again.
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "virt.instance.restart",
-            [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS],
+        await self.coordinator.api.query(
+            "virt.instance.restart", [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS]
         )
         await self.coordinator.async_request_refresh()
 
@@ -215,10 +189,8 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
 
     async def _get_service(self):
         """Return the latest service state from the API."""
-        services = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.query",
-            [[["id", "=", self._data["id"]]]],
+        services = await self.coordinator.api.query(
+            "service.query", [[["id", "=", self._data["id"]]]]
         )
         return services[0] if isinstance(services, list) and services else None
 
@@ -238,11 +210,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.start",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.start", [self._data["service"]])
 
         await self.coordinator.async_refresh()
 
@@ -262,11 +230,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.stop",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.stop", [self._data["service"]])
         await self.coordinator.async_refresh()
 
     async def restart(self):
@@ -285,11 +249,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.restart",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.restart", [self._data["service"]])
 
         await self.coordinator.async_refresh()
 
@@ -309,11 +269,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "service.reload",
-            [self._data["service"]],
-        )
+        await self.coordinator.api.query("service.reload", [self._data["service"]])
 
         await self.coordinator.async_refresh()
 
@@ -326,10 +282,8 @@ class TrueNASAppBinarySensor(TrueNASBinarySensor):
 
     async def start(self):
         """Start an App."""
-        tmp_app = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "app.get_instance",
-            [self._data["id"]],
+        tmp_app = await self.coordinator.api.query(
+            "app.get_instance", [self._data["id"]]
         )
 
         if tmp_app is None or "state" not in tmp_app:
@@ -342,18 +296,12 @@ class TrueNASAppBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "app.start",
-            [self._data["id"]],
-        )
+        await self.coordinator.api.query("app.start", [self._data["id"]])
 
     async def stop(self):
         """Stop an App."""
-        tmp_app = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "app.get_instance",
-            [self._data["id"]],
+        tmp_app = await self.coordinator.api.query(
+            "app.get_instance", [self._data["id"]]
         )
 
         if tmp_app is None or "state" not in tmp_app:
@@ -366,8 +314,4 @@ class TrueNASAppBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "app.stop",
-            [self._data["id"]],
-        )
+        await self.coordinator.api.query("app.stop", [self._data["id"]])

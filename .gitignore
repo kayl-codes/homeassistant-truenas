@@ -23,3 +23,6 @@ Thumbs.db
 # Local virtual environments
 .venv/
 venv/
+
+# Local secrets (SonarQube tokens etc.)
+.env.sonar

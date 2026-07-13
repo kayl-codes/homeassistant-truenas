@@ -12,6 +12,19 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
 
+## [Unreleased]
+
+### Changed
+- **Async API client — now powered by `aiotruenas`:** the integration's TrueNAS API layer was
+  rewritten from a synchronous, thread-based WebSocket client to a native `asyncio` client built
+  on the new [`aiotruenas`](https://github.com/kayl-codes/aiotruenas) library (a standalone,
+  independently maintained TrueNAS client). This also moves the integration onto TrueNAS's modern
+  JSON-RPC 2.0 **`/api/current`** endpoint, replacing the legacy `/websocket` endpoint the old
+  client spoke. Purely an internal architecture change — connection behavior, error messages,
+  sensors and actions all work exactly as before. If you run TrueNAS behind a reverse proxy with a
+  path-specific bypass rule, update it from `/websocket` to `/api/current` (see
+  [Remote access, reverse proxies & Cloudflare](README.md#remote-access-reverse-proxies--cloudflare)).
+
 ## [2.4.1] — Deprecated update-listener fix
 
 ### Fixed
