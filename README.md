@@ -51,7 +51,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Update Sensor
  * Reboot and Shutdown TrueNAS system
  * Configurable poll interval, data unit, behaviour and per-group sensor toggles (Options)
- 
+
 
 # Features
 ## Pools
@@ -340,7 +340,7 @@ If you are using development branch for TrueNAS, some features may stop working.
 2. Setup this integration for your TrueNAS device in Home Assistant via `Configuration -> Integrations -> Add -> TrueNAS`.
 You can add this integration several times for different devices.
 
-NOTES: 
+NOTES:
 - If you dont see "TrueNAS" integration, clear your browser cache.
 
 ![Add Integration](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/setup_integration.png)

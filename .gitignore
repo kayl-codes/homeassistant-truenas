@@ -24,5 +24,6 @@ Thumbs.db
 .venv/
 venv/
 
-# Local secrets (SonarQube tokens etc.)
-.env.sonar
+# Local secrets (e.g. examples/verify_live.py credentials, .env.sonar token)
+.env
+.env.*
