@@ -210,7 +210,8 @@ class TrueNASAPI:
 
         result = await self.query("system.info")
         if result is None:
-            return False, self._error or ERR_MALFORMED_RESULT
+            self._error = self._error or ERR_MALFORMED_RESULT
+            return False, self._error
 
         return True, ""
 
