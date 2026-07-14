@@ -26,6 +26,13 @@
                     "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
+            "reauth_confirm": {
+                "title": "Reautenticar TrueNAS",
+                "description": "La clave API de \"{name}\" ya no es válida. Introduzca una nueva clave API para restablecer la conexión.",
+                "data": {
+                    "api_key": "Clave API"
+                }
+            },
             "migrate": {
                 "title": "Se encontró una configuración de TrueNAS existente",
                 "description": "Se detectó una integración de TrueNAS anterior. Puede adoptar sus ajustes (anfitrión, clave API y opciones) para no tener que introducirlos de nuevo — sus entidades existentes y su historial se conservan. O configure TrueNAS CE desde cero.",
@@ -57,7 +64,8 @@
             "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
-            "reconfigure_successful": "Reconfiguración exitosa."
+            "reconfigure_successful": "Reconfiguración exitosa.",
+            "reauth_successful": "Reautenticación exitosa."
         }
     },
     "options": {

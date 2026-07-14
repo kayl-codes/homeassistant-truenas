@@ -18,6 +18,7 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_MONITORED_GROUPS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    ERR_INVALID_KEY,
     ISSUE_MIGRATION_ROLLBACK,
     ISSUE_STATISTICS_ORPHANED,
     KILOBITS_TO_KIBIBYTES_FACTOR,
@@ -461,6 +463,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.api.connect()
             except Exception as e:
                 raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
+            if not self.api.connected() and self.api.error == ERR_INVALID_KEY:
+                raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
 
         jobs = [
             self.get_systemstats,

@@ -26,6 +26,13 @@
                     "dataset_passphrases": "DatasetName#Passphrase-Paare (eine pro Zeile, z. B. tank/encrypted#MeinGeheimnis) eingeben, um Passphrasen zu speichern oder zu aktualisieren. Leer lassen, um bestehende Passphrasen unverändert zu behalten. Zum Löschen einer gespeicherten Passphrase die Aktion passphrase_remove mit dem Dataset-Pfad verwenden."
                 }
             },
+            "reauth_confirm": {
+                "title": "TrueNAS erneut authentifizieren",
+                "description": "Der API-Schlüssel für \"{name}\" ist nicht mehr gültig. Gib einen neuen API-Schlüssel ein, um die Verbindung wiederherzustellen.",
+                "data": {
+                    "api_key": "API-Schlüssel"
+                }
+            },
             "migrate": {
                 "title": "Vorhandene TrueNAS-Konfiguration gefunden",
                 "description": "Eine frühere TrueNAS-Integration wurde erkannt. Du kannst ihre Einstellungen (Host, API-Schlüssel und Optionen) übernehmen, damit du sie nicht erneut eingeben musst — deine vorhandenen Entitäten und deren Verlauf bleiben erhalten. Oder richte TrueNAS CE von Grund auf neu ein.",
@@ -57,7 +64,8 @@
             "passphrase_empty_name": "Leerer Dataset-Name ist nicht erlaubt in Zeile: {line}. Jede Zeile muss das Format haben: DatasetName#Passphrase."
         },
         "abort": {
-            "reconfigure_successful": "Neukonfiguration erfolgreich."
+            "reconfigure_successful": "Neukonfiguration erfolgreich.",
+            "reauth_successful": "Erneute Authentifizierung erfolgreich."
         }
     },
     "options": {
