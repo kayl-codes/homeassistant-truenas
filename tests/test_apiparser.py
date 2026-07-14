@@ -74,7 +74,7 @@ def test_from_entry_truncates_long_strings() -> None:
 
 def test_from_entry_rounds_floats() -> None:
     entry = {"a": 1.23456}
-    assert ap.from_entry(entry, "a", round_digits=2) == 1.23
+    assert ap.from_entry(entry, "a", round_digits=2) == pytest.approx(1.23)
 
 
 # ---------------------------
