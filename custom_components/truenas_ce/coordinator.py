@@ -18,6 +18,7 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_MONITORED_GROUPS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    ERR_INVALID_KEY,
     ISSUE_MIGRATION_ROLLBACK,
     ISSUE_STATISTICS_ORPHANED,
     KILOBITS_TO_KIBIBYTES_FACTOR,
@@ -451,16 +453,31 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.set_optimistic_running(data_path, object_id)
 
     # ---------------------------
+    #   _async_ensure_connected
+    # ---------------------------
+    async def _async_ensure_connected(self) -> None:
+        """Connect if needed, raising the appropriate coordinator error on failure."""
+        if self.api.connected():
+            return
+
+        try:
+            connected = await self.api.connect()
+        except Exception as e:
+            raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
+
+        if not connected:
+            if self.api.error == ERR_INVALID_KEY:
+                raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+            _LOGGER.error("TrueNAS connection failed (error code: %s)", self.api.error)
+            raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
+
+    # ---------------------------
     #   _async_update_data
     # ---------------------------
     async def _async_update_data(self):
         """Update TrueNAS data."""
 
-        if not self.api.connected():
-            try:
-                await self.api.connect()
-            except Exception as e:
-                raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
+        await self._async_ensure_connected()
 
         jobs = [
             self.get_systemstats,
