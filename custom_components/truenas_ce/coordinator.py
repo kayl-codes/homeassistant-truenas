@@ -468,6 +468,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not connected:
             if self.api.error == ERR_INVALID_KEY:
                 raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+            _LOGGER.error("TrueNAS connection failed (error code: %s)", self.api.error)
             raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
 
     # ---------------------------
