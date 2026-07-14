@@ -463,8 +463,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 connected = await self.api.connect()
             except Exception as e:
                 raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
-            if not connected and self.api.error == ERR_INVALID_KEY:
-                raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+            if not connected:
+                if self.api.error == ERR_INVALID_KEY:
+                    raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+                raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
 
         jobs = [
             self.get_systemstats,
