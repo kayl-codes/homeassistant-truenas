@@ -325,8 +325,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> None:
         """Test the API connection and record a mapped error on failure."""
         try:
-            api = await self.hass.async_add_executor_job(
-                TrueNASAPI,
+            api = TrueNASAPI(
                 config[CONF_HOST],
                 config[CONF_API_KEY],
                 config[CONF_VERIFY_SSL],
@@ -343,8 +342,8 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             return
 
-        conn, errorcode = await self.hass.async_add_executor_job(api.connection_test)
-        await self.hass.async_add_executor_job(api.disconnect)
+        conn, errorcode = await api.connection_test()
+        await api.disconnect()
 
         if not conn:
             ha_error = _map_error_to_ha(errorcode)

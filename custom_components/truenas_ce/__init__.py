@@ -310,7 +310,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
         return {"alerts": [], **error}
 
     coordinator = hass.data[DOMAIN][entry_id]
-    alerts = await hass.async_add_executor_job(coordinator.api.query, "alert.list")
+    alerts = await coordinator.api.query("alert.list")
     if not isinstance(alerts, list):
         return {"alerts": [], "error": "Unexpected alert.list response"}
 
@@ -335,7 +335,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for dismiss action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(hass, coordinator, uuid, "dismiss")
+    await alert_action(coordinator, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
@@ -349,7 +349,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for restore action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(hass, coordinator, uuid, "restore")
+    await alert_action(coordinator, uuid, "restore")
 
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
@@ -499,6 +499,6 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
         config_entry, PLATFORMS
     ):
         coordinator = hass.data[DOMAIN].pop(config_entry.entry_id)
-        await hass.async_add_executor_job(coordinator.api.close)
+        await coordinator.api.close()
 
     return unload_ok

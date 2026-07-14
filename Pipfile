@@ -12,3 +12,4 @@ pre-commit = ">=4.0"
 
 
 [packages]
+aiotruenas = ">=1.0.0"

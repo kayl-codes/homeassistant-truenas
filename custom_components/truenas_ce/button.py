@@ -114,10 +114,8 @@ class TrueNASPoolScrubButton(TrueNASButton):
                 self.entity_id,
             )
             return
-        result = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            API_POOL_SCRUB_SCRUB,
-            [pool_name, SCRUB_ACTION_START],
+        result = await self.coordinator.api.query(
+            API_POOL_SCRUB_SCRUB, [pool_name, SCRUB_ACTION_START]
         )
         if result is None:
             _LOGGER.error(

@@ -79,11 +79,7 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
         The version parameter is currently ignored; TrueNAS API only supports
         installing the latest available firmware via update.update.
         """
-        job_id = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "update.update",
-            {"reboot": True},
-        )
+        job_id = await self.coordinator.api.query("update.update", {"reboot": True})
         if job_id is None:
             _LOGGER.error("Failed to start TrueNAS system update")
             return
@@ -151,11 +147,7 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
             )
             return
 
-        job_id = await self.hass.async_add_executor_job(
-            self.coordinator.api.query,
-            "app.upgrade",
-            [self._data["id"]],
-        )
+        job_id = await self.coordinator.api.query("app.upgrade", [self._data["id"]])
         if job_id is None:
             _LOGGER.error("Failed to start TrueNAS app update for %s", self._data["id"])
             return
