@@ -9,6 +9,8 @@ wheel = ">=0.45"
 pygithub = ">=2.6"
 homeassistant = ">=2025.4.0"
 pre-commit = ">=4.0"
+pytest = ">=8.0"
+pytest-asyncio = ">=0.24"
 
 
 [packages]
