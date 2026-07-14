@@ -74,6 +74,12 @@ from .const import (
 
 _LOGGER = getLogger(__name__)
 
+# Shared selector for the API key field, reused by every schema (initial setup,
+# reconfigure, reauth) so all three stay visually/behaviorally in sync.
+_API_KEY_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
+
 
 def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
     """Generate base schema."""
@@ -86,9 +92,7 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
         ): str,
         vol.Required(
             CONF_API_KEY, default=truenas_config.get(CONF_API_KEY, "")
-        ): selector.TextSelector(
-            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-        ),
+        ): _API_KEY_SELECTOR,
         vol.Required(
             CONF_VERIFY_SSL,
             default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
@@ -141,9 +145,7 @@ def _reconfigure_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
             vol.Required(
                 CONF_HOST, default=truenas_config.get(CONF_HOST, DEFAULT_HOST)
             ): str,
-            vol.Optional(CONF_API_KEY): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-            ),
+            vol.Optional(CONF_API_KEY): _API_KEY_SELECTOR,
             vol.Required(
                 CONF_VERIFY_SSL,
                 default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
@@ -560,15 +562,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_API_KEY): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD
-                        )
-                    ),
-                }
-            ),
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): _API_KEY_SELECTOR}),
             errors=errors,
             description_placeholders={
                 CONF_NAME: reauth_entry.data.get(CONF_NAME, DEFAULT_DEVICE_NAME)
