@@ -335,7 +335,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for dismiss action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(hass, coordinator, uuid, "dismiss")
+    await alert_action(coordinator, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
@@ -349,7 +349,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
         raise ServiceValidationError("Alert UUID is required for restore action")
 
     coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(hass, coordinator, uuid, "restore")
+    await alert_action(coordinator, uuid, "restore")
 
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:

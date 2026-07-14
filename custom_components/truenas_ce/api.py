@@ -143,6 +143,7 @@ class TrueNASAPI:
         self._host = host
         self._scheme = scheme
         self._error = ""
+        self._closed = False
         self._client = TrueNASClient(
             host,
             api_key,
@@ -155,6 +156,13 @@ class TrueNASAPI:
     # ---------------------------
     async def connect(self) -> bool:
         """Connect and log in. Return connected boolean."""
+        if self._closed:
+            self._error = ERR_UNKNOWN
+            _LOGGER.error(
+                "TrueNAS %s: cannot connect, API was permanently closed", self._host
+            )
+            return False
+
         if self._client.connected:
             return True
 
@@ -182,6 +190,7 @@ class TrueNASAPI:
 
     async def close(self) -> None:
         """Permanently close the API."""
+        self._closed = True
         await self._client.close()
 
     # ---------------------------
@@ -224,7 +233,7 @@ class TrueNASAPI:
             data = await self._client.call(service, params)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
-            _LOGGER.error(ERROR_API_FORMAT, self._host, exc)
+            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
             return None
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)

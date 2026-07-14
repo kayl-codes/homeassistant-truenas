@@ -236,14 +236,14 @@ class TrueNASAlertSensor(TrueNASSensor):
         uuid = kwargs.get("uuid")
         if not uuid:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await alert_action(self.hass, self.coordinator, uuid, "dismiss")
+        await alert_action(self.coordinator, uuid, "dismiss")
 
     async def restore(self, **kwargs: Any) -> None:
         """Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID."""
         uuid = kwargs.get("uuid")
         if not uuid:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await alert_action(self.hass, self.coordinator, uuid, "restore")
+        await alert_action(self.coordinator, uuid, "restore")
 
 
 # ---------------------------
