@@ -67,6 +67,11 @@ def test_text_to_passphrases_parses_multiple_lines() -> None:
     }
 
 
+def test_text_to_passphrases_duplicate_datasets_last_wins() -> None:
+    text = "tank/data#first\ntank/data#second"
+    assert _text_to_passphrases(text) == {"tank/data": "second"}
+
+
 def test_text_to_passphrases_skips_blank_lines() -> None:
     text = "\n  \ntank/data#secret1\n\n"
     assert _text_to_passphrases(text) == {"tank/data": "secret1"}
