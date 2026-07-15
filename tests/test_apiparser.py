@@ -97,9 +97,22 @@ def test_from_entry_bool_missing_returns_default(ap: ModuleType) -> None:
     assert ap.from_entry_bool({}, "a", default=True) is True
 
 
+def test_from_entry_bool_none_value_uses_default(ap: ModuleType) -> None:
+    assert ap.from_entry_bool({"a": None}, "a") is False
+    assert ap.from_entry_bool({"a": None}, "a", default=True) is True
+
+
 def test_from_entry_bool_reverse(ap: ModuleType) -> None:
     assert ap.from_entry_bool({"a": True}, "a", reverse=True) is False
     assert ap.from_entry_bool({"a": "off"}, "a", reverse=True) is True
+
+
+def test_from_entry_bool_missing_key_reverse_returns_default_unchanged(
+    ap: ModuleType,
+) -> None:
+    """A missing key short-circuits to ``default``; ``reverse`` never applies to it."""
+    assert ap.from_entry_bool({}, "a", default=True, reverse=True) is True
+    assert ap.from_entry_bool({}, "a", default=False, reverse=True) is False
 
 
 # ---------------------------
@@ -128,6 +141,20 @@ def test_generate_keymap_none_when_no_key_search(ap: ModuleType) -> None:
 
 def test_generate_keymap_builds_reverse_map(ap: ModuleType) -> None:
     data = {"uid-1": {"guid": "guid-1"}, "uid-2": {}}
+    assert ap.generate_keymap(data, "guid") == {"guid-1": "uid-1"}
+
+
+def test_generate_keymap_ignores_non_dict_values(ap: ModuleType) -> None:
+    data = {"uid-1": "unexpected", "uid-2": {"guid": "guid-2"}}
+    assert ap.generate_keymap(data, "guid") == {"guid-2": "uid-2"}
+
+
+def test_generate_keymap_skips_entries_missing_key_search(ap: ModuleType) -> None:
+    data = {
+        "uid-1": {"guid": "guid-1"},
+        "uid-2": {},
+        "uid-3": {"other": "value"},
+    }
     assert ap.generate_keymap(data, "guid") == {"guid-1": "uid-1"}
 
 
@@ -237,6 +264,23 @@ def test_parse_api_skip_filter_excludes_matching(ap: ModuleType) -> None:
     assert result == {"2": {"enabled": True}}
 
 
+def test_parse_api_only_and_skip_combined_skip_wins_on_overlap(ap: ModuleType) -> None:
+    """An entry matching both ``only`` and ``skip`` is excluded: ``skip`` wins."""
+    source = [
+        {"id": "1", "type": "DISK", "enabled": False},
+        {"id": "2", "type": "DISK", "enabled": True},
+        {"id": "3", "type": "SSD", "enabled": True},
+    ]
+    result = ap.parse_api(
+        source=source,
+        key="id",
+        vals=[{"name": "type"}],
+        only=[{"key": "type", "value": "DISK"}],
+        skip=[{"name": "enabled", "value": False}],
+    )
+    assert result == {"2": {"type": "DISK"}}
+
+
 def test_parse_api_ensure_vals_adds_missing_keys(ap: ModuleType) -> None:
     result = ap.parse_api(
         source=[{"id": "1"}],
@@ -275,6 +319,12 @@ def test_parse_api_convert_timestamp_millis(ap: ModuleType) -> None:
 
 def test_parse_api_no_key_no_search_targets_root(ap: ModuleType) -> None:
     result = ap.parse_api(source=[{"total": 42}], vals=[{"name": "total"}])
+    assert result == {"total": 42}
+
+
+def test_parse_api_no_key_no_search_single_dict_targets_root(ap: ModuleType) -> None:
+    """A single-dict ``source`` behaves identically to a one-item list."""
+    result = ap.parse_api(source={"total": 42}, vals=[{"name": "total"}])
     assert result == {"total": 42}
 
 
