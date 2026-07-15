@@ -68,6 +68,16 @@ def test_from_entry_rounds_floats(ap: ModuleType) -> None:
     assert ap.from_entry(entry, "a", round_digits=2) == pytest.approx(1.23)
 
 
+def test_from_entry_max_len_none_disables_truncation(ap: ModuleType) -> None:
+    entry = {"a": "x" * 300}
+    assert ap.from_entry(entry, "a", max_len=None) == "x" * 300
+
+
+def test_from_entry_round_digits_ignored_for_non_float(ap: ModuleType) -> None:
+    entry = {"a": "not-a-number"}
+    assert ap.from_entry(entry, "a", round_digits=2) == "not-a-number"
+
+
 # ---------------------------
 #   from_entry_bool
 # ---------------------------
@@ -158,6 +168,11 @@ def test_generate_keymap_skips_entries_missing_key_search(ap: ModuleType) -> Non
     assert ap.generate_keymap(data, "guid") == {"guid-1": "uid-1"}
 
 
+def test_generate_keymap_skips_non_hashable_key_search_value(ap: ModuleType) -> None:
+    data = {"uid-1": {"guid": ["not", "hashable"]}, "uid-2": {"guid": "guid-2"}}
+    assert ap.generate_keymap(data, "guid") == {"guid-2": "uid-2"}
+
+
 # ---------------------------
 #   matches_only / can_skip
 # ---------------------------
@@ -165,6 +180,10 @@ def test_matches_only_all_match(ap: ModuleType) -> None:
     only = [{"key": "type", "value": "DISK"}]
     assert ap.matches_only({"type": "DISK"}, only) is True
     assert ap.matches_only({"type": "SSD"}, only) is False
+
+
+def test_matches_only_empty_list_returns_true(ap: ModuleType) -> None:
+    assert ap.matches_only({"type": "DISK"}, []) is True
 
 
 def test_can_skip_matches_value(ap: ModuleType) -> None:
@@ -205,6 +224,28 @@ def test_fill_defaults_none_data(ap: ModuleType) -> None:
     assert ap.fill_defaults(None, [{"name": "label", "default": "n/a"}]) == {
         "label": "n/a"
     }
+
+
+def test_fill_defaults_no_vals_returns_data_unchanged(ap: ModuleType) -> None:
+    assert ap.fill_defaults({"a": 1}, None) == {"a": 1}
+    assert ap.fill_defaults({"a": 1}, []) == {"a": 1}
+
+
+def test_fill_defaults_default_val_reference(ap: ModuleType) -> None:
+    """``default_val`` names a sibling key in the same spec to use as default."""
+    vals: list[ap.ApiValueSpec] = [
+        {"name": "label", "default_val": "fallback_field", "fallback_field": "computed"}
+    ]
+    assert ap.fill_defaults({}, vals) == {"label": "computed"}
+
+
+def test_fill_defaults_default_val_missing_falls_back_to_default(
+    ap: ModuleType,
+) -> None:
+    vals: list[ap.ApiValueSpec] = [
+        {"name": "label", "default_val": "missing_field", "default": "n/a"}
+    ]
+    assert ap.fill_defaults({}, vals) == {"label": "n/a"}
 
 
 # ---------------------------
@@ -328,6 +369,90 @@ def test_parse_api_no_key_no_search_single_dict_targets_root(ap: ModuleType) -> 
     assert result == {"total": 42}
 
 
+def test_parse_api_entry_without_matching_uid_is_skipped(ap: ModuleType) -> None:
+    """An entry lacking ``key``/``key_secondary``/``key_search`` is dropped."""
+    source = [{"id": "1", "name": "pool0"}, {"name": "orphan"}]
+    result = ap.parse_api(source=source, key="id", vals=[{"name": "name"}])
+    assert result == {"1": {"name": "pool0"}}
+
+
+def test_parse_api_key_secondary_used_when_key_missing(ap: ModuleType) -> None:
+    source = [{"other": "abc", "name": "pool0"}]
+    result = ap.parse_api(
+        source=source, key="id", key_secondary="other", vals=[{"name": "name"}]
+    )
+    assert result == {"abc": {"name": "pool0"}}
+
+
+def test_parse_api_convert_timestamp_zero_left_unconverted(ap: ModuleType) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "started": 0}],
+        key="id",
+        vals=[{"name": "started", "convert": "utc_from_timestamp"}],
+    )
+    assert result["1"]["started"] == 0
+
+
+def test_parse_api_convert_timestamp_non_int_left_unconverted(ap: ModuleType) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "started": "unknown"}],
+        key="id",
+        vals=[{"name": "started", "convert": "utc_from_timestamp"}],
+    )
+    assert result["1"]["started"] == "unknown"
+
+
+def test_parse_api_convert_human_date(ap: ModuleType) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "until": "Fri Mar 26 00:59:59 2100"}],
+        key="id",
+        vals=[{"name": "until", "convert": "human_date_to_utc"}],
+    )
+    assert result["1"]["until"] == datetime(2100, 3, 26, 0, 59, 59, tzinfo=UTC)
+
+
+def test_parse_api_convert_human_date_unparsable_becomes_none(ap: ModuleType) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "until": "not-a-date"}],
+        key="id",
+        vals=[{"name": "until", "convert": "human_date_to_utc"}],
+    )
+    assert result["1"]["until"] is None
+
+
+def test_parse_api_val_proc_runs_alongside_vals(ap: ModuleType) -> None:
+    source = [{"id": "1", "host": "truenas", "port": "443"}]
+    val_proc = [
+        [
+            {"name": "url"},
+            {"action": "combine"},
+            {"text": "https://"},
+            {"key": "host"},
+            {"text": ":"},
+            {"key": "port"},
+        ]
+    ]
+    result = ap.parse_api(
+        source=source,
+        key="id",
+        vals=[{"name": "host"}, {"name": "port"}],
+        val_proc=val_proc,
+    )
+    assert result == {
+        "1": {"host": "truenas", "port": "443", "url": "https://truenas:443"}
+    }
+
+
+# ---------------------------
+#   fill_ensure_vals
+# ---------------------------
+def test_fill_ensure_vals_creates_missing_uid(ap: ModuleType) -> None:
+    result = ap.fill_ensure_vals(
+        {}, "uid-1", [{"name": "extra", "default": "fallback"}]
+    )
+    assert result == {"uid-1": {"extra": "fallback"}}
+
+
 # ---------------------------
 #   fill_vals_proc (combine action)
 # ---------------------------
@@ -351,3 +476,14 @@ def test_fill_vals_proc_unsupported_action_raises(ap: ModuleType) -> None:
     val_proc = [[{"name": "url"}, {"action": "unsupported"}]]
     with pytest.raises(ValueError, match="Unsupported action"):
         ap.fill_vals_proc({"uid-1": {}}, "uid-1", val_proc)
+
+
+def test_fill_vals_proc_ignores_group_starting_before_name_or_action(
+    ap: ModuleType,
+) -> None:
+    """A value item before ``name``/``action`` are set aborts that whole group."""
+    val_proc = [
+        [{"text": "stray"}, {"name": "url"}, {"action": "combine"}, {"text": "x"}]
+    ]
+    result = ap.fill_vals_proc({"uid-1": {}}, "uid-1", val_proc)
+    assert result == {"uid-1": {}}
