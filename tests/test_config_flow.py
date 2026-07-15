@@ -333,6 +333,34 @@ def test_apply_passphrase_input_merges_with_existing() -> None:
     }
 
 
+def test_apply_passphrase_input_overrides_existing_dataset_passphrase() -> None:
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    truenas_config = {"dataset_passphrases": {"tank/data": "oldsecret"}}
+    user_input = {"dataset_passphrases": "tank/data#newsecret"}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._apply_passphrase_input(
+        user_input, truenas_config, "entry1", errors, placeholders
+    )
+    assert errors == {}
+    assert user_input["dataset_passphrases"] == {"tank/data": "newsecret"}
+
+
+def test_apply_passphrase_input_strips_dataset_name_but_not_passphrase() -> None:
+    """The dataset name is trimmed; the passphrase value is taken verbatim."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    user_input = {"dataset_passphrases": "  tank/data  #  secret  "}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
+    assert errors == {}
+    assert user_input["dataset_passphrases"] == {"tank/data": "  secret"}
+
+
 def test_apply_passphrase_input_unknown_dataset_propagates_validation_error() -> None:
     flow = TrueNASConfigFlow()
     coordinator = MagicMock()
