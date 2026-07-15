@@ -322,11 +322,20 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
     into a longer token, e.g. ``sensor.truenasviacfnoauth_...``). Match the domain
     as a substring of any underscore-separated token rather than as an exact token
     or fixed prefix, so every orphaned variant is caught.
+
+    Deliberately matches against ``LEGACY_DOMAIN`` ("truenas"), not ``DOMAIN``
+    ("truenas_ce"): entity ids are slugged from the device name (default
+    "TrueNAS"), never from the integration domain, and ``DOMAIN`` itself contains
+    an underscore so it can never appear whole inside an underscore-split token
+    (this silently broke orphan detection from the 2.0.0 CE rename until found
+    while adding this module's test suite). If ``LEGACY_DOMAIN``/the legacy-
+    migration code is ever removed (e.g. a future HA Core submission dropping
+    the "_ce" suffix), keep matching the literal "truenas" substring here.
     """
     if not statistic_id.startswith("sensor."):
         return False
     tokens = statistic_id[len("sensor.") :].split("_")
-    return any(DOMAIN in token for token in tokens)
+    return any(LEGACY_DOMAIN in token for token in tokens)
 
 
 # ---------------------------

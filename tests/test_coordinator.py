@@ -1,0 +1,675 @@
+"""Unit tests for the pure/self-contained helpers and mockable logic in
+coordinator.py.
+
+Like ``config_flow.py``, this module uses relative imports and must be loaded
+as a real package module. ``TrueNASCoordinator`` normally requires a running
+Home Assistant (``__init__`` builds a real ``DataUpdateCoordinator``), which
+``pytest-homeassistant-custom-component`` would be needed for -- unusable on
+this repo's Windows dev machine (see the memory note on that incompatibility).
+Instead, instance methods here are tested by constructing a bare instance via
+``TrueNASCoordinator.__new__`` and setting only the attributes each method
+under test actually touches, mirroring the Mock/AsyncMock approach already
+used for ``TrueNASConfigFlow``.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from custom_components.truenas_ce import coordinator as coordinator_module
+from custom_components.truenas_ce.const import (
+    CONF_MONITORED_GROUPS,
+    DOMAIN,
+    LEGACY_DOMAIN,
+    MIGRATION_LEGACY_ENTRY_ID,
+    MONITOR_GROUP_VMS,
+)
+from custom_components.truenas_ce.coordinator import (
+    TrueNASCoordinator,
+    _accumulate_vdev_errors,
+    _aggregate_topology_errors,
+    _arc_value,
+    _as_int,
+    _first_ipv4,
+    _is_truenas_sensor_id,
+    _median,
+    _netdata_mean_value,
+    _stat_name_similar,
+    _to_int,
+)
+
+
+def _bare_coordinator() -> TrueNASCoordinator:
+    """Build a TrueNASCoordinator without running its hass-dependent __init__."""
+    return TrueNASCoordinator.__new__(TrueNASCoordinator)
+
+
+# ---------------------------
+#   _stat_name_similar
+# ---------------------------
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        ("cpu", "cpu", False),
+        ("arc_size", "arcsize", True),
+        ("cputemp", "cpu", True),
+        ("cpu", "cputemp", True),
+        ("memroy", "memory", True),
+        ("load", "interface", False),
+    ],
+)
+def test_stat_name_similar(a: str, b: str, expected: bool) -> None:
+    assert _stat_name_similar(a, b) == expected
+
+
+# ---------------------------
+#   _median
+# ---------------------------
+def test_median_odd_count() -> None:
+    assert _median([3.0, 1.0, 2.0]) == 2.0
+
+
+def test_median_even_count() -> None:
+    assert _median([1.0, 2.0, 3.0, 4.0]) == 2.5
+
+
+def test_median_single_value() -> None:
+    assert _median([42.0]) == 42.0
+
+
+# ---------------------------
+#   _as_int / _to_int
+# ---------------------------
+def test_as_int_returns_int_unchanged() -> None:
+    assert _as_int(5) == 5
+
+
+def test_as_int_returns_zero_for_non_int() -> None:
+    assert _as_int("5") == 0
+    assert _as_int(None) == 0
+    assert _as_int(1.5) == 0
+
+
+def test_to_int_parses_numeric_string() -> None:
+    assert _to_int("48") == 48
+
+
+def test_to_int_falls_back_to_default_on_invalid() -> None:
+    assert _to_int("not-a-number", default=7) == 7
+    assert _to_int(None, default=7) == 7
+
+
+# ---------------------------
+#   _accumulate_vdev_errors / _aggregate_topology_errors
+# ---------------------------
+def test_accumulate_vdev_errors_leaf_disk() -> None:
+    totals = {"read": 0, "write": 0, "checksum": 0}
+    vdev = {"stats": {"read_errors": 1, "write_errors": 2, "checksum_errors": 3}}
+    _accumulate_vdev_errors(vdev, totals)
+    assert totals == {"read": 1, "write": 2, "checksum": 3}
+
+
+def test_accumulate_vdev_errors_recurses_into_children_only() -> None:
+    """A mirror vdev's own stats must not be double-counted on top of its disks."""
+    totals = {"read": 0, "write": 0, "checksum": 0}
+    mirror = {
+        "stats": {"read_errors": 99, "write_errors": 99, "checksum_errors": 99},
+        "children": [
+            {"stats": {"read_errors": 1, "write_errors": 0, "checksum_errors": 0}},
+            {"stats": {"read_errors": 0, "write_errors": 1, "checksum_errors": 0}},
+        ],
+    }
+    _accumulate_vdev_errors(mirror, totals)
+    assert totals == {"read": 1, "write": 1, "checksum": 0}
+
+
+def test_accumulate_vdev_errors_ignores_non_dict() -> None:
+    totals = {"read": 0, "write": 0, "checksum": 0}
+    _accumulate_vdev_errors("not-a-dict", totals)
+    assert totals == {"read": 0, "write": 0, "checksum": 0}
+
+
+def test_aggregate_topology_errors_sums_all_categories() -> None:
+    topology = {
+        "data": [
+            {"stats": {"read_errors": 1, "write_errors": 0, "checksum_errors": 0}}
+        ],
+        "cache": [
+            {"stats": {"read_errors": 0, "write_errors": 2, "checksum_errors": 0}}
+        ],
+    }
+    assert _aggregate_topology_errors(topology) == (1, 2, 0)
+
+
+def test_aggregate_topology_errors_non_dict_returns_zeros() -> None:
+    assert _aggregate_topology_errors(None) == (0, 0, 0)
+
+
+# ---------------------------
+#   _netdata_mean_value / _arc_value / _ups_value
+# ---------------------------
+def test_netdata_mean_value_computes_mean() -> None:
+    graph_data = [{"aggregations": {"mean": {"a": 1.0, "b": 3.0}}}]
+    assert _netdata_mean_value(graph_data) == 2.0
+
+
+def test_netdata_mean_value_returns_none_for_empty_list() -> None:
+    assert _netdata_mean_value([]) is None
+
+
+def test_netdata_mean_value_returns_none_for_malformed_item() -> None:
+    assert _netdata_mean_value(["not-a-dict"]) is None
+    assert _netdata_mean_value([{"aggregations": {"mean": "not-a-dict"}}]) is None
+    assert _netdata_mean_value([{"aggregations": {"mean": {}}}]) is None
+
+
+def test_arc_value_delegates_to_netdata_mean_value() -> None:
+    graph_data = [{"aggregations": {"mean": {"a": 10.0}}}]
+    assert _arc_value(graph_data) == 10.0
+
+
+# ---------------------------
+#   _first_ipv4
+# ---------------------------
+def test_first_ipv4_returns_first_inet_address() -> None:
+    aliases = [
+        {"type": "INET6", "address": "fe80::1"},
+        {"type": "INET", "address": "192.168.1.5"},
+        {"type": "INET", "address": "192.168.1.6"},
+    ]
+    assert _first_ipv4(aliases) == "192.168.1.5"
+
+
+def test_first_ipv4_returns_unknown_when_no_inet() -> None:
+    assert _first_ipv4([{"type": "INET6", "address": "fe80::1"}]) == "unknown"
+    assert _first_ipv4(None) == "unknown"
+    assert _first_ipv4([]) == "unknown"
+
+
+# ---------------------------
+#   _is_truenas_sensor_id
+# ---------------------------
+def test_is_truenas_sensor_id_matches_legacy_domain_token() -> None:
+    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}_cpu_usage") is True
+    assert _is_truenas_sensor_id(f"sensor.system_{LEGACY_DOMAIN}_uptime") is True
+    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}viacfnoauth_cpu") is True
+
+
+def test_is_truenas_sensor_id_rejects_other_domains() -> None:
+    assert _is_truenas_sensor_id("sensor.unrelated_integration_temp") is False
+
+
+def test_is_truenas_sensor_id_rejects_non_sensor_entities() -> None:
+    assert _is_truenas_sensor_id(f"binary_sensor.{LEGACY_DOMAIN}_online") is False
+
+
+def test_is_truenas_sensor_id_matches_current_domain_ids_too() -> None:
+    """Regression: DOMAIN ("truenas_ce") contains an underscore and can never
+    appear whole inside an underscore-split token, so matching against DOMAIN
+    directly silently broke orphan detection since the 2.0.0 CE rename. The
+    fix matches against LEGACY_DOMAIN ("truenas") instead, which is what real
+    entity ids (slugged from the device name, default "TrueNAS") contain
+    regardless of the current DOMAIN value.
+    """
+    assert DOMAIN == f"{LEGACY_DOMAIN}_ce"  # documents the assumption this relies on
+    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}_cpu_usage") is True
+
+
+# ---------------------------
+#   _is_group_monitored
+# ---------------------------
+def test_is_group_monitored_true_when_in_options() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_VMS]}
+    assert coord._is_group_monitored(MONITOR_GROUP_VMS) is True
+
+
+def test_is_group_monitored_false_when_absent() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    assert coord._is_group_monitored(MONITOR_GROUP_VMS) is False
+
+
+# ---------------------------
+#   set_optimistic_running
+# ---------------------------
+def test_set_optimistic_running_sets_state_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"vm": {"1": {"state": "STOPPED"}}}
+    coord.async_update_listeners = MagicMock()
+    coord.set_optimistic_running("vm", "1")
+    assert coord.ds["vm"]["1"]["state"] == "RUNNING"
+    coord.async_update_listeners.assert_called_once()
+
+
+def test_set_optimistic_running_noop_for_unknown_object_id() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"vm": {"1": {"state": "STOPPED"}}}
+    coord.async_update_listeners = MagicMock()
+    coord.set_optimistic_running("vm", "does-not-exist")
+    assert coord.ds["vm"]["1"]["state"] == "STOPPED"
+    coord.async_update_listeners.assert_not_called()
+
+
+# ---------------------------
+#   _parse_version
+# ---------------------------
+def test_parse_version_extracts_major_minor() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "TrueNAS-SCALE-25.04.1"}}
+    coord._parse_version()
+    assert coord._version_major == 25
+    assert coord._version_minor == 4
+
+
+def test_parse_version_leaves_unset_on_no_match() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "not-a-version-string"}}
+    coord._version_major = 0
+    coord._version_minor = 0
+    coord._parse_version()
+    assert coord._version_major == 0
+    assert coord._version_minor == 0
+
+
+# ---------------------------
+#   _detect_virtualization
+# ---------------------------
+def test_detect_virtualization_true_for_known_manufacturer() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"system_manufacturer": "QEMU", "system_product": ""}}
+    coord._detect_virtualization()
+    assert coord._is_virtual is True
+
+
+def test_detect_virtualization_true_for_known_product() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "system_info": {"system_manufacturer": "", "system_product": "VirtualBox"}
+    }
+    coord._detect_virtualization()
+    assert coord._is_virtual is True
+
+
+def test_detect_virtualization_false_for_physical_hardware() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "system_info": {"system_manufacturer": "Dell Inc.", "system_product": "R730"}
+    }
+    coord._detect_virtualization()
+    assert coord._is_virtual is False
+
+
+# ---------------------------
+#   _update_uptime
+# ---------------------------
+def test_update_uptime_sets_epoch_on_first_run() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": 0}}
+    coord._update_uptime()
+    assert coord.ds["system_info"]["uptimeEpoch"] > 0
+
+
+def test_update_uptime_keeps_old_epoch_within_tolerance() -> None:
+    coord = _bare_coordinator()
+    now_epoch = int(datetime.now(UTC).timestamp())
+    old_epoch = now_epoch - 3600 + 5  # within the 300s tolerance of a fresh reading
+    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": old_epoch}}
+    coord._update_uptime()
+    assert coord.ds["system_info"]["uptimeEpoch"] == old_epoch
+
+
+def test_update_uptime_skips_when_uptime_not_positive() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"uptime_seconds": 0, "uptimeEpoch": 123}}
+    coord._update_uptime()
+    assert coord.ds["system_info"]["uptimeEpoch"] == 123
+
+
+# ---------------------------
+#   _apply_pool_capacity
+# ---------------------------
+def test_apply_pool_capacity_uses_root_dataset_when_available() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"p1": {}}}
+    root_dataset = {"available": 40, "used": 60}
+    coord._apply_pool_capacity("p1", {}, root_dataset)
+    assert coord.ds["pool"]["p1"]["available"] == 40
+    assert coord.ds["pool"]["p1"]["total"] == 100
+    assert coord.ds["pool"]["p1"]["usage"] == 60
+
+
+def test_apply_pool_capacity_falls_back_to_pool_fields_without_root_dataset() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"p1": {}}}
+    vals = {"free": 30, "size": 100}
+    coord._apply_pool_capacity("p1", vals, None)
+    assert coord.ds["pool"]["p1"]["available"] == 30
+    assert coord.ds["pool"]["p1"]["total"] == 100
+    assert coord.ds["pool"]["p1"]["usage"] == 70
+
+
+def test_apply_pool_capacity_zero_total_yields_zero_usage() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"p1": {}}}
+    coord._apply_pool_capacity("p1", {"free": 0, "size": 0, "allocated": 0}, None)
+    assert coord.ds["pool"]["p1"]["usage"] == 0
+
+
+# ---------------------------
+#   _apply_pool_errors
+# ---------------------------
+def test_apply_pool_errors_aggregates_into_matching_pool() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"guid1": {}}}
+    raw_pools = [
+        {
+            "guid": "guid1",
+            "topology": {
+                "data": [
+                    {
+                        "stats": {
+                            "read_errors": 1,
+                            "write_errors": 2,
+                            "checksum_errors": 3,
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+    coord._apply_pool_errors(raw_pools)
+    pool = coord.ds["pool"]["guid1"]
+    assert (pool["read_errors"], pool["write_errors"], pool["checksum_errors"]) == (
+        1,
+        2,
+        3,
+    )
+    assert pool["errors"] == 6
+
+
+def test_apply_pool_errors_skips_unknown_guid_and_non_dict_entries() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"guid1": {}}}
+    coord._apply_pool_errors([{"guid": "unknown-guid", "topology": {}}, "not-a-dict"])
+    assert coord.ds["pool"]["guid1"] == {}
+
+
+def test_apply_pool_errors_noop_for_non_list_input() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {"guid1": {}}}
+    coord._apply_pool_errors(None)
+    assert coord.ds["pool"]["guid1"] == {}
+
+
+# ---------------------------
+#   _systemstats_process / _store_stat_value / _store_stat_defaults
+# ---------------------------
+def test_systemstats_process_stores_matching_legend_values() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    graph = {
+        "legend": ["shortterm", "midterm", "longterm"],
+        "aggregations": {"mean": {"shortterm": 1.234, "midterm": 2.0}},
+    }
+    coord._systemstats_process(("shortterm", "midterm", "longterm"), graph, "load")
+    assert coord.ds["system_info"]["load_shortterm"] == 1.23
+    assert coord.ds["system_info"]["load_midterm"] == 2.0
+    # "longterm" is in the legend but missing from the mean dict, so it falls
+    # back to 0.0 rather than being skipped.
+    assert coord.ds["system_info"]["load_longterm"] == 0.0
+
+
+def test_systemstats_process_falls_back_to_defaults_without_aggregations() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._systemstats_process("cpu", {}, "cpu")
+    assert coord.ds["system_info"]["cpu_cpu"] == 0.0
+
+
+def test_store_stat_value_arcsize_uses_dedicated_key() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._store_stat_value("arcsize", "size", 12.345)
+    assert coord.ds["system_info"]["cache_size-arc_value"] == 12.35
+
+
+def test_store_stat_value_memory_only_stores_available() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._store_stat_value("memory", "available", 100.0)
+    assert coord.ds["system_info"]["memory-free_value"] == 100
+    coord._store_stat_value("memory", "used", 50.0)
+    assert "memory-used" not in coord.ds["system_info"]
+
+
+# ---------------------------
+#   _rollback_possible / issue-id builders
+# ---------------------------
+def test_rollback_possible_false_when_domain_is_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coord = _bare_coordinator()
+    monkeypatch.setattr(coordinator_module, "DOMAIN", LEGACY_DOMAIN)
+    assert coord._rollback_possible() is False
+
+
+def test_rollback_possible_true_when_legacy_entry_exists() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.data = {MIGRATION_LEGACY_ENTRY_ID: "legacy-id-1"}
+    coord.hass = MagicMock()
+    coord.hass.config_entries.async_get_entry.return_value = MagicMock()
+    assert coord._rollback_possible() is True
+
+
+def test_rollback_possible_false_when_no_legacy_id_recorded() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.data = {}
+    coord.hass = MagicMock()
+    assert coord._rollback_possible() is False
+
+
+def test_statistics_issue_id_includes_entry_id() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.entry_id = "entry123"
+    assert coord._statistics_issue_id() == "statistics_orphaned_entry123"
+
+
+def test_migration_rollback_issue_id_includes_entry_id() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.entry_id = "entry123"
+    assert (
+        coord._migration_rollback_issue_id() == "migration_rollback_available_entry123"
+    )
+
+
+# ---------------------------
+#   get_alerts
+# ---------------------------
+async def test_get_alerts_malformed_response_resets_to_defaults() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"alerts": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value={"not": "a list"})
+    await coord.get_alerts()
+    assert coord.ds["alerts"] == {
+        "count": 0,
+        "messages": [],
+        "critical": 0,
+        "warning": 0,
+        "info": 0,
+        "disk_issues": False,
+    }
+
+
+async def test_get_alerts_filters_dismissed_and_counts_levels() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"alerts": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "dismissed": True,
+                "level": "CRITICAL",
+                "klass": "disk",
+                "formatted": "ignored",
+            },
+            {
+                "dismissed": False,
+                "level": "CRITICAL",
+                "klass": "PoolUsage",
+                "formatted": "Pool full",
+                "uuid": "u1",
+            },
+            {
+                "dismissed": False,
+                "level": "WARNING",
+                "klass": "Other",
+                "title": "SMART failure",
+                "formatted": "Smart warning",
+                "uuid": "u2",
+            },
+            {
+                "dismissed": False,
+                "level": "INFO",
+                "klass": "Other",
+                "title": "",
+                "formatted": "Just info",
+            },
+        ]
+    )
+    await coord.get_alerts()
+    alerts = coord.ds["alerts"]
+    assert alerts["count"] == 3
+    assert alerts["critical"] == 1
+    assert alerts["warning"] == 1
+    assert alerts["info"] == 1
+    assert alerts["disk_issues"] is True
+    assert alerts["messages"] == ["Pool full", "Smart warning", "Just info"]
+    assert alerts["uuids"] == ["u1", "u2"]
+
+
+async def test_get_alerts_no_disk_issues_when_unrelated() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"alerts": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "dismissed": False,
+                "level": "INFO",
+                "klass": "CertificateExpiry",
+                "title": "cert",
+                "formatted": "Cert expiring",
+            }
+        ]
+    )
+    await coord.get_alerts()
+    assert coord.ds["alerts"]["disk_issues"] is False
+
+
+# ---------------------------
+#   get_smb
+# ---------------------------
+async def test_get_smb_counts_list_response() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
+    await coord.get_smb()
+    assert coord.ds["system_info"]["smb_connections"] == 2
+
+
+async def test_get_smb_counts_dict_with_sessions() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value={"sessions": [{}, {}, {}]})
+    await coord.get_smb()
+    assert coord.ds["system_info"]["smb_connections"] == 3
+
+
+async def test_get_smb_defaults_to_zero_for_unexpected_shape() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=None)
+    await coord.get_smb()
+    assert coord.ds["system_info"]["smb_connections"] == 0
+
+
+# ---------------------------
+#   get_updatecheck
+# ---------------------------
+async def test_get_updatecheck_malformed_response_resets_idle() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "25.04.1"}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value="not-a-dict")
+    await coord.get_updatecheck()
+    info = coord.ds["system_info"]
+    assert info["update_available"] is False
+    assert info["update_state"] == "IDLE"
+    assert info["update_version"] == "25.04.1"
+
+
+async def test_get_updatecheck_empty_response_resets_status() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "25.04.1"}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value={})
+    await coord.get_updatecheck()
+    info = coord.ds["system_info"]
+    assert info["update_available"] is False
+    assert info["update_version"] == "25.04.1"
+
+
+async def test_get_updatecheck_new_version_available() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "25.04.1"}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value={
+            "status": {
+                "state": "AVAILABLE",
+                "new_version": {
+                    "version": "25.10.0",
+                    "manifest": {
+                        "date": "2026-01-01",
+                        "profile": "stable",
+                        "train": "SCALE",
+                        "filename": "update.pkg",
+                    },
+                },
+            }
+        }
+    )
+    await coord.get_updatecheck()
+    info = coord.ds["system_info"]
+    assert info["update_available"] is True
+    assert info["update_version"] == "25.10.0"
+    assert info["update_state"] == "AVAILABLE"
+    assert info["update_date"] == "2026-01-01"
+    assert info["update_train"] == "SCALE"
+
+
+async def test_get_updatecheck_no_new_version_resets_status() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "25.04.1", "update_available": True}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value={"status": {"state": "IDLE", "new_version": None}}
+    )
+    await coord.get_updatecheck()
+    info = coord.ds["system_info"]
+    assert info["update_available"] is False
+    assert info["update_version"] == "25.04.1"
