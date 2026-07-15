@@ -339,6 +339,18 @@ def test_update_uptime_keeps_old_epoch_within_tolerance() -> None:
     assert coord.ds["system_info"]["uptimeEpoch"] == old_epoch
 
 
+def test_update_uptime_replaces_stale_epoch_outside_tolerance() -> None:
+    coord = _bare_coordinator()
+    now_epoch = int(datetime.now(UTC).timestamp())
+    old_epoch = now_epoch - 3600 - 600  # 600s drift, well beyond the 300s tolerance
+    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": old_epoch}}
+    coord._update_uptime()
+    new_epoch = coord.ds["system_info"]["uptimeEpoch"]
+    assert new_epoch != old_epoch
+    # Replaced by a freshly computed epoch (now - uptime_seconds).
+    assert abs(new_epoch - (now_epoch - 3600)) <= 5
+
+
 def test_update_uptime_skips_when_uptime_not_positive() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {"uptime_seconds": 0, "uptimeEpoch": 123}}
