@@ -77,6 +77,13 @@ def test_text_to_passphrases_skips_blank_lines() -> None:
     assert _text_to_passphrases(text) == {"tank/data": "secret1"}
 
 
+@pytest.mark.parametrize("text", ["", "   \n  "])
+def test_text_to_passphrases_empty_or_whitespace_returns_empty_dict(
+    text: str,
+) -> None:
+    assert _text_to_passphrases(text) == {}
+
+
 def test_text_to_passphrases_preserves_extra_hashes_in_value() -> None:
     text = "tank/data#sec#ret"
     assert _text_to_passphrases(text) == {"tank/data": "sec#ret"}
