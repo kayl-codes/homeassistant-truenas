@@ -14,10 +14,10 @@ Linting/formatting and tooling mirror CI ([.github/workflows/ci.yml](.github/wor
 ruff check .            # lint (rules E, F, W, I, UP, ASYNC; py313, line-length 88)
 ruff format --check .   # formatting check; drop --check to auto-format
 bandit -r custom_components/truenas_ce   # security scan (part of CI)
+pytest                  # unit tests (tests/); pyproject.toml sets pythonpath=["."] so `custom_components` resolves
 ```
 
-- Python target is **3.13**.
-- `pytest` is configured in [pyproject.toml](pyproject.toml) (`asyncio_mode=auto`, `testpaths=["tests"]`), but there is currently **no `tests/` directory** and the pytest step in CI is commented out. If adding tests, create `tests/` and re-enable that CI step.
+- Ruff's `target-version` stays **py313** (Ruff 0.15.13's `py314` formatter is buggy — it collapses `except (A, B):` into invalid `except A, B:` — so don't bump it until that's fixed upstream). CI itself now runs on **Python 3.14**, because Home Assistant Core requires `>=3.14.2` from release 2026.5.x onward; `homeassistant` is only a test dependency here, but pinning CI below that threshold silently pulled in a stale, pre-3.14 release lacking newer `homeassistant.const` members.
 - CI also runs Home Assistant **hassfest** validation and HACS validation on push/PR.
 - Runtime deps come from [manifest.json](custom_components/truenas_ce/manifest.json) (`aiotruenas` — pinned to a commit SHA via a `git+https://github.com/kayl-codes/aiotruenas` URL until a tagged/PyPI release exists — plus `websockets>=15.0.1`); dev deps are in the [Pipfile](Pipfile). `.github/generate_requirements.py` regenerates `requirements*.txt` from the Pipfile during CI.
 - Bumping the release: `version` in [manifest.json](custom_components/truenas_ce/manifest.json) is the source of truth (`.github/update_version.py` updates it during release).
