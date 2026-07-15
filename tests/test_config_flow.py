@@ -47,6 +47,9 @@ from custom_components.truenas_ce.const import (
         ("nas.example.com?query=1", "nas.example.com"),
         ("nas.example.com#frag", "nas.example.com"),
         ("192.168.1.10", "192.168.1.10"),
+        ("", ""),
+        ("   ", ""),
+        ("https://nas.example.com:8443/", "nas.example.com:8443"),
     ],
 )
 def test_sanitize_host(raw: str, expected: str) -> None:
@@ -128,7 +131,7 @@ def test_guess_ip_falls_back_through_known_domains() -> None:
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
         assert config_flow._guess_ip() == "10.0.0.9"
-    assert len(calls) == 3
+    assert calls == ["truenas", "truenas.fritz.box", "truenas.local"]
 
 
 def test_guess_ip_returns_default_host_when_none_resolve() -> None:
@@ -259,6 +262,21 @@ def test_validate_passphrase_names_unknown_dataset_sets_error() -> None:
     assert placeholders["datasets"] == "tank/unknown"
 
 
+def test_validate_passphrase_names_multiple_unknown_datasets_sets_error() -> None:
+    flow = TrueNASConfigFlow()
+    coordinator = MagicMock()
+    coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
+    flow.hass = MagicMock()
+    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._validate_passphrase_names(
+        {"tank/unknown1": "x", "pool/unknown2": "y"}, "entry1", errors, placeholders
+    )
+    assert errors["dataset_passphrases"] == "unknown_dataset"
+    assert placeholders["datasets"] == "pool/unknown2, tank/unknown1"
+
+
 def test_validate_passphrase_names_all_known_sets_no_error() -> None:
     flow = TrueNASConfigFlow()
     coordinator = MagicMock()
@@ -313,6 +331,22 @@ def test_apply_passphrase_input_merges_with_existing() -> None:
         "tank/old": "oldsecret",
         "tank/new": "newsecret",
     }
+
+
+def test_apply_passphrase_input_unknown_dataset_propagates_validation_error() -> None:
+    flow = TrueNASConfigFlow()
+    coordinator = MagicMock()
+    coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
+    flow.hass = MagicMock()
+    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    user_input = {"dataset_passphrases": "tank/unknown#secret"}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
+    assert errors["dataset_passphrases"] == "unknown_dataset"
+    assert placeholders["datasets"] == "tank/unknown"
+    # On error, user_input is left untouched (not converted to a dict).
+    assert user_input["dataset_passphrases"] == "tank/unknown#secret"
 
 
 # ---------------------------
