@@ -18,11 +18,12 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.util import slugify
 
 from custom_components.truenas_ce import coordinator as coordinator_module
 from custom_components.truenas_ce.const import (
     CONF_MONITORED_GROUPS,
-    DOMAIN,
+    DEFAULT_DEVICE_NAME,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
     MONITOR_GROUP_VMS,
@@ -192,10 +193,11 @@ def test_first_ipv4_returns_unknown_when_no_inet() -> None:
 # ---------------------------
 #   _is_truenas_sensor_id
 # ---------------------------
-def test_is_truenas_sensor_id_matches_legacy_domain_token() -> None:
-    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}_cpu_usage") is True
-    assert _is_truenas_sensor_id(f"sensor.system_{LEGACY_DOMAIN}_uptime") is True
-    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}viacfnoauth_cpu") is True
+def test_is_truenas_sensor_id_matches_device_slug_token() -> None:
+    slug = slugify(DEFAULT_DEVICE_NAME)
+    assert _is_truenas_sensor_id(f"sensor.{slug}_cpu_usage") is True
+    assert _is_truenas_sensor_id(f"sensor.system_{slug}_uptime") is True
+    assert _is_truenas_sensor_id(f"sensor.{slug}viacfnoauth_cpu") is True
 
 
 def test_is_truenas_sensor_id_rejects_other_domains() -> None:
@@ -203,19 +205,24 @@ def test_is_truenas_sensor_id_rejects_other_domains() -> None:
 
 
 def test_is_truenas_sensor_id_rejects_non_sensor_entities() -> None:
-    assert _is_truenas_sensor_id(f"binary_sensor.{LEGACY_DOMAIN}_online") is False
+    slug = slugify(DEFAULT_DEVICE_NAME)
+    assert _is_truenas_sensor_id(f"binary_sensor.{slug}_online") is False
 
 
-def test_is_truenas_sensor_id_matches_current_domain_ids_too() -> None:
-    """Regression: DOMAIN ("truenas_ce") contains an underscore and can never
-    appear whole inside an underscore-split token, so matching against DOMAIN
-    directly silently broke orphan detection since the 2.0.0 CE rename. The
-    fix matches against LEGACY_DOMAIN ("truenas") instead, which is what real
-    entity ids (slugged from the device name, default "TrueNAS") contain
-    regardless of the current DOMAIN value.
+def test_is_truenas_sensor_id_unaffected_by_domain_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: matching used to depend on DOMAIN/LEGACY_DOMAIN, which broke
+    since the 2.0.0 CE rename because DOMAIN ("truenas_ce") contains an
+    underscore and can never appear whole inside an underscore-split token.
+    The fix matches ``slugify(DEFAULT_DEVICE_NAME)`` instead -- the same
+    string real entity ids are slugged from -- so behavior no longer depends
+    on DOMAIN/LEGACY_DOMAIN at all, even if both constants are ever renamed or
+    removed (e.g. a future HA Core submission dropping the "_ce" suffix).
     """
-    assert DOMAIN == f"{LEGACY_DOMAIN}_ce"  # documents the assumption this relies on
-    assert _is_truenas_sensor_id(f"sensor.{LEGACY_DOMAIN}_cpu_usage") is True
+    monkeypatch.setattr(coordinator_module, "DOMAIN", "something_else_entirely")
+    monkeypatch.setattr(coordinator_module, "LEGACY_DOMAIN", "unrelated")
+    assert _is_truenas_sensor_id("sensor.truenas_cpu_usage") is True
 
 
 # ---------------------------

@@ -23,6 +23,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
 from .api import TrueNASAPI
 from .apiparser import parse_api
@@ -32,6 +33,7 @@ from .const import (
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
     CONF_STATISTICS_CLEANUP_IGNORED,
+    DEFAULT_DEVICE_NAME,
     DEFAULT_MONITORED_GROUPS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
@@ -319,23 +321,25 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
 
     Entity ids vary across versions and instance names (``sensor.truenas_...``,
     ``sensor.system_truenas_...`` and custom names whose slug merges the domain
-    into a longer token, e.g. ``sensor.truenasviacfnoauth_...``). Match the domain
-    as a substring of any underscore-separated token rather than as an exact token
-    or fixed prefix, so every orphaned variant is caught.
+    into a longer token, e.g. ``sensor.truenasviacfnoauth_...``). Match the
+    device-name slug as a substring of any underscore-separated token rather
+    than as an exact token or fixed prefix, so every orphaned variant is caught.
 
-    Deliberately matches against ``LEGACY_DOMAIN`` ("truenas"), not ``DOMAIN``
-    ("truenas_ce"): entity ids are slugged from the device name (default
-    "TrueNAS"), never from the integration domain, and ``DOMAIN`` itself contains
-    an underscore so it can never appear whole inside an underscore-split token
+    Deliberately matches against ``slugify(DEFAULT_DEVICE_NAME)`` ("truenas"),
+    not ``DOMAIN`` ("truenas_ce"): entity ids are slugged from the device name,
+    never from the integration domain, and ``DOMAIN`` itself contains an
+    underscore so it can never appear whole inside an underscore-split token
     (this silently broke orphan detection from the 2.0.0 CE rename until found
-    while adding this module's test suite). If ``LEGACY_DOMAIN``/the legacy-
-    migration code is ever removed (e.g. a future HA Core submission dropping
-    the "_ce" suffix), keep matching the literal "truenas" substring here.
+    while adding this module's test suite). Tying the match to the device name
+    instead of ``LEGACY_DOMAIN`` means this keeps working unchanged even if the
+    legacy-migration code/domain is ever removed (e.g. a future HA Core
+    submission dropping the "_ce" suffix).
     """
     if not statistic_id.startswith("sensor."):
         return False
+    device_slug = slugify(DEFAULT_DEVICE_NAME)
     tokens = statistic_id[len("sensor.") :].split("_")
-    return any(LEGACY_DOMAIN in token for token in tokens)
+    return any(device_slug in token for token in tokens)
 
 
 # ---------------------------
