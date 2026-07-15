@@ -316,6 +316,11 @@ def _first_ipv4(aliases: Any) -> str:
     return "unknown"
 
 
+# Computed once at import time: _is_truenas_sensor_id runs for every recorder
+# statistic id during each statistics-cleanup pass.
+_DEVICE_NAME_SLUG = slugify(DEFAULT_DEVICE_NAME)
+
+
 def _is_truenas_sensor_id(statistic_id: str) -> bool:
     """Return True if a recorder statistic_id looks like a TrueNAS sensor.
 
@@ -337,9 +342,8 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
     """
     if not statistic_id.startswith("sensor."):
         return False
-    device_slug = slugify(DEFAULT_DEVICE_NAME)
     tokens = statistic_id[len("sensor.") :].split("_")
-    return any(device_slug in token for token in tokens)
+    return any(_DEVICE_NAME_SLUG in token for token in tokens)
 
 
 # ---------------------------

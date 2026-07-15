@@ -70,15 +70,23 @@ def test_stat_name_similar(a: str, b: str, expected: bool) -> None:
 #   _median
 # ---------------------------
 def test_median_odd_count() -> None:
-    assert _median([3.0, 1.0, 2.0]) == 2.0
+    assert _median([3.0, 1.0, 2.0]) == pytest.approx(2.0)
 
 
 def test_median_even_count() -> None:
-    assert _median([1.0, 2.0, 3.0, 4.0]) == 2.5
+    assert _median([1.0, 2.0, 3.0, 4.0]) == pytest.approx(2.5)
 
 
 def test_median_single_value() -> None:
-    assert _median([42.0]) == 42.0
+    assert _median([42.0]) == pytest.approx(42.0)
+
+
+def test_median_empty_list_raises_index_error() -> None:
+    """Empty input is outside _median's contract (docstring: non-empty list);
+    its only caller guards with a non-empty check. Lock in the current
+    fail-loud behaviour instead of silently returning a value."""
+    with pytest.raises(IndexError):
+        _median([])
 
 
 # ---------------------------
@@ -154,7 +162,7 @@ def test_aggregate_topology_errors_non_dict_returns_zeros() -> None:
 # ---------------------------
 def test_netdata_mean_value_computes_mean() -> None:
     graph_data = [{"aggregations": {"mean": {"a": 1.0, "b": 3.0}}}]
-    assert _netdata_mean_value(graph_data) == 2.0
+    assert _netdata_mean_value(graph_data) == pytest.approx(2.0)
 
 
 def test_netdata_mean_value_returns_none_for_empty_list() -> None:
@@ -169,7 +177,7 @@ def test_netdata_mean_value_returns_none_for_malformed_item() -> None:
 
 def test_arc_value_delegates_to_netdata_mean_value() -> None:
     graph_data = [{"aggregations": {"mean": {"a": 10.0}}}]
-    assert _arc_value(graph_data) == 10.0
+    assert _arc_value(graph_data) == pytest.approx(10.0)
 
 
 # ---------------------------
@@ -177,15 +185,15 @@ def test_arc_value_delegates_to_netdata_mean_value() -> None:
 # ---------------------------
 def test_first_ipv4_returns_first_inet_address() -> None:
     aliases = [
-        {"type": "INET6", "address": "fe80::1"},
-        {"type": "INET", "address": "192.168.1.5"},
-        {"type": "INET", "address": "192.168.1.6"},
+        {"type": "INET6", "address": "2001:db8::1"},
+        {"type": "INET", "address": "192.0.2.5"},
+        {"type": "INET", "address": "192.0.2.6"},
     ]
-    assert _first_ipv4(aliases) == "192.168.1.5"
+    assert _first_ipv4(aliases) == "192.0.2.5"
 
 
 def test_first_ipv4_returns_unknown_when_no_inet() -> None:
-    assert _first_ipv4([{"type": "INET6", "address": "fe80::1"}]) == "unknown"
+    assert _first_ipv4([{"type": "INET6", "address": "2001:db8::1"}]) == "unknown"
     assert _first_ipv4(None) == "unknown"
     assert _first_ipv4([]) == "unknown"
 
@@ -425,25 +433,25 @@ def test_systemstats_process_stores_matching_legend_values() -> None:
         "aggregations": {"mean": {"shortterm": 1.234, "midterm": 2.0}},
     }
     coord._systemstats_process(("shortterm", "midterm", "longterm"), graph, "load")
-    assert coord.ds["system_info"]["load_shortterm"] == 1.23
-    assert coord.ds["system_info"]["load_midterm"] == 2.0
+    assert coord.ds["system_info"]["load_shortterm"] == pytest.approx(1.23)
+    assert coord.ds["system_info"]["load_midterm"] == pytest.approx(2.0)
     # "longterm" is in the legend but missing from the mean dict, so it falls
     # back to 0.0 rather than being skipped.
-    assert coord.ds["system_info"]["load_longterm"] == 0.0
+    assert coord.ds["system_info"]["load_longterm"] == pytest.approx(0.0)
 
 
 def test_systemstats_process_falls_back_to_defaults_without_aggregations() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}}
     coord._systemstats_process("cpu", {}, "cpu")
-    assert coord.ds["system_info"]["cpu_cpu"] == 0.0
+    assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(0.0)
 
 
 def test_store_stat_value_arcsize_uses_dedicated_key() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}}
     coord._store_stat_value("arcsize", "size", 12.345)
-    assert coord.ds["system_info"]["cache_size-arc_value"] == 12.35
+    assert coord.ds["system_info"]["cache_size-arc_value"] == pytest.approx(12.35)
 
 
 def test_store_stat_value_memory_only_stores_available() -> None:
