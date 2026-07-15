@@ -321,6 +321,30 @@ def test_apply_passphrase_input_malformed_line_sets_error() -> None:
     assert placeholders["line"] == "no-separator-here"
 
 
+def test_apply_passphrase_input_empty_dataset_name_sets_error() -> None:
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    user_input = {"dataset_passphrases": "#value"}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
+    assert errors["dataset_passphrases"] == "passphrase_empty_name"
+    assert placeholders["line"] == "#value"
+
+
+def test_apply_passphrase_input_empty_passphrase_value_sets_error() -> None:
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    user_input = {"dataset_passphrases": "dataset#"}
+    errors: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
+    assert errors["dataset_passphrases"] == "passphrase_empty_value"
+    assert placeholders["line"] == "dataset#"
+
+
 def test_apply_passphrase_input_merges_with_existing() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
