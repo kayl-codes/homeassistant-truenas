@@ -376,6 +376,15 @@ def test_parse_api_entry_without_matching_uid_is_skipped(ap: ModuleType) -> None
     assert result == {"1": {"name": "pool0"}}
 
 
+def test_parse_api_all_entries_without_matching_uid_returns_empty(
+    ap: ModuleType,
+) -> None:
+    """When every entry lacks the key fields, an empty mapping is returned."""
+    source = [{"name": "orphan1"}, {"name": "orphan2"}]
+    result = ap.parse_api(source=source, key="id", vals=[{"name": "name"}])
+    assert result == {}
+
+
 def test_parse_api_key_secondary_used_when_key_missing(ap: ModuleType) -> None:
     source = [{"other": "abc", "name": "pool0"}]
     result = ap.parse_api(
