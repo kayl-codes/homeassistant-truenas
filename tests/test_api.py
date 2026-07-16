@@ -42,17 +42,34 @@ from custom_components.truenas_ce.const import (
 )
 
 
-def _api_with_mock_client() -> TrueNASAPI:
+@pytest.fixture
+def api() -> TrueNASAPI:
     """Build a TrueNASAPI whose underlying aiotruenas client is a mock.
 
-    ``connected`` defaults to False so tests that don't touch it (e.g. the
-    permanently-closed cases) see the same falsy state a fresh, never-logged-in
-    aiotruenas client would report.
+    The mock starts disconnected, matching the falsy state a fresh,
+    never-logged-in aiotruenas client would report. Its async methods are
+    AsyncMocks so tests only attach return values/side effects as needed.
     """
     mock_client = MagicMock()
     mock_client.connected = False
+    mock_client.connect = AsyncMock()
+    mock_client.call = AsyncMock()
+    mock_client.close = AsyncMock()
     with patch.object(api_module, "TrueNASClient", return_value=mock_client):
-        api = TrueNASAPI("truenas.local", "api-key")
+        return TrueNASAPI("truenas.local", "api-key")
+
+
+@pytest.fixture
+def connected_api(api: TrueNASAPI) -> TrueNASAPI:
+    """The mocked TrueNASAPI in an already-connected state."""
+    api._client.connected = True
+    return api
+
+
+@pytest.fixture
+async def closed_api(api: TrueNASAPI) -> TrueNASAPI:
+    """The mocked TrueNASAPI after close() -- permanently closed."""
+    await api.close()
     return api
 
 
@@ -63,12 +80,24 @@ def test_summarize_payload_lists_shape() -> None:
     assert _summarize_payload([1, 2, 3]).startswith("list[3]")
 
 
+def test_summarize_payload_empty_list_shape() -> None:
+    assert _summarize_payload([]).startswith("list[0]")
+
+
 def test_summarize_payload_dict_shape() -> None:
     assert _summarize_payload({"a": 1, "b": 2}).startswith("dict[2 keys]")
 
 
+def test_summarize_payload_empty_dict_shape() -> None:
+    assert _summarize_payload({}).startswith("dict[0 keys]")
+
+
 def test_summarize_payload_other_type_shape() -> None:
     assert _summarize_payload("hello").startswith("str ")
+
+
+def test_summarize_payload_none_shape() -> None:
+    assert _summarize_payload(None) == "NoneType None"
 
 
 def test_summarize_payload_truncates_long_text() -> None:
@@ -130,8 +159,7 @@ def test_classify_exception_falls_back_to_unknown() -> None:
 # ---------------------------
 #   TrueNASAPI.__init__
 # ---------------------------
-def test_init_defaults_to_wss() -> None:
-    api = _api_with_mock_client()
+def test_init_defaults_to_wss(api: TrueNASAPI) -> None:
     assert api.scheme == "wss"
 
 
@@ -149,32 +177,27 @@ def test_init_rejects_invalid_scheme() -> None:
 # ---------------------------
 #   connect
 # ---------------------------
-async def test_connect_fails_when_permanently_closed() -> None:
-    api = _api_with_mock_client()
-    api._closed = True
-    assert await api.connect() is False
-    assert api.error == ERR_UNKNOWN
+async def test_connect_fails_when_permanently_closed(closed_api: TrueNASAPI) -> None:
+    assert await closed_api.connect() is False
+    assert closed_api.error == ERR_UNKNOWN
+    closed_api._client.connect.assert_not_awaited()
 
 
-async def test_connect_returns_true_when_already_connected() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    assert await api.connect() is True
+async def test_connect_returns_true_when_already_connected(
+    connected_api: TrueNASAPI,
+) -> None:
+    assert await connected_api.connect() is True
+    connected_api._client.connect.assert_not_awaited()
 
 
-async def test_connect_success_clears_error() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = False
-    api._client.connect = AsyncMock()
+async def test_connect_success_clears_error(api: TrueNASAPI) -> None:
     api._error = "stale error"
     assert await api.connect() is True
     assert api.error == ""
 
 
-async def test_connect_maps_exception_and_returns_false() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = False
-    api._client.connect = AsyncMock(side_effect=TrueNASHostUnknownError("nope"))
+async def test_connect_maps_exception_and_returns_false(api: TrueNASAPI) -> None:
+    api._client.connect.side_effect = TrueNASHostUnknownError("nope")
     assert await api.connect() is False
     assert api.error == ERR_UNKNOWN_HOSTNAME
 
@@ -182,27 +205,25 @@ async def test_connect_maps_exception_and_returns_false() -> None:
 # ---------------------------
 #   disconnect / close
 # ---------------------------
-async def test_disconnect_closes_client_but_stays_reconnectable() -> None:
-    api = _api_with_mock_client()
-    api._client.close = AsyncMock()
+async def test_disconnect_closes_client_but_stays_reconnectable(
+    api: TrueNASAPI,
+) -> None:
     await api.disconnect()
     api._client.close.assert_awaited_once()
-    assert api._closed is False
+    assert await api.connect() is True
 
 
-async def test_close_marks_permanently_closed() -> None:
-    api = _api_with_mock_client()
-    api._client.close = AsyncMock()
+async def test_close_prevents_reconnecting(api: TrueNASAPI) -> None:
     await api.close()
     api._client.close.assert_awaited_once()
-    assert api._closed is True
+    assert await api.connect() is False
+    assert api.error == ERR_UNKNOWN
 
 
 # ---------------------------
 #   connected
 # ---------------------------
-def test_connected_reflects_client_state() -> None:
-    api = _api_with_mock_client()
+def test_connected_reflects_client_state(api: TrueNASAPI) -> None:
     api._client.connected = True
     assert api.connected() is True
     api._client.connected = False
@@ -212,28 +233,48 @@ def test_connected_reflects_client_state() -> None:
 # ---------------------------
 #   connection_test
 # ---------------------------
-async def test_connection_test_fails_when_connect_fails() -> None:
-    api = _api_with_mock_client()
-    api._closed = True
-    ok, error = await api.connection_test()
+async def test_connection_test_fails_when_permanently_closed(
+    closed_api: TrueNASAPI,
+) -> None:
+    ok, error = await closed_api.connection_test()
     assert ok is False
     assert error == ERR_UNKNOWN
 
 
-async def test_connection_test_fails_when_query_returns_none() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(return_value=None)
+async def test_connection_test_fails_when_connect_raises(api: TrueNASAPI) -> None:
+    api._client.connect.side_effect = TrueNASConnectionRefusedError("refused")
     ok, error = await api.connection_test()
+    assert ok is False
+    assert error == ERR_CONNECTION_REFUSED
+
+
+async def test_connection_test_fails_when_query_returns_none(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.return_value = None
+    ok, error = await connected_api.connection_test()
     assert ok is False
     assert error == ERR_MALFORMED_RESULT
 
 
-async def test_connection_test_succeeds() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(return_value={"version": "25.04"})
+async def test_connection_test_connects_before_querying(api: TrueNASAPI) -> None:
+    """From a disconnected state, connection_test connects, then queries."""
+
+    def _mark_connected() -> None:
+        api._client.connected = True
+
+    api._client.connect.side_effect = _mark_connected
+    api._client.call.return_value = {"version": "25.04"}
     ok, error = await api.connection_test()
+    assert ok is True
+    assert error == ""
+    api._client.connect.assert_awaited_once()
+    api._client.call.assert_awaited_once_with("system.info", None)
+
+
+async def test_connection_test_succeeds(connected_api: TrueNASAPI) -> None:
+    connected_api._client.call.return_value = {"version": "25.04"}
+    ok, error = await connected_api.connection_test()
     assert ok is True
     assert error == ""
 
@@ -241,59 +282,66 @@ async def test_connection_test_succeeds() -> None:
 # ---------------------------
 #   query
 # ---------------------------
-async def test_query_returns_none_when_connect_fails() -> None:
-    api = _api_with_mock_client()
-    api._closed = True
-    assert await api.query("system.info") is None
+async def test_query_returns_none_when_connect_fails(closed_api: TrueNASAPI) -> None:
+    assert await closed_api.query("system.info") is None
 
 
-async def test_query_returns_data_on_success() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(return_value={"ok": True})
-    assert await api.query("system.info") == {"ok": True}
+async def test_query_returns_data_on_success(connected_api: TrueNASAPI) -> None:
+    connected_api._client.call.return_value = {"ok": True}
+    assert await connected_api.query("system.info") == {"ok": True}
 
 
-async def test_query_call_error_uses_reason() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(
-        side_effect=TrueNASCallError("boom", reason="invalid params")
+async def test_query_call_error_uses_reason(connected_api: TrueNASAPI) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "boom", reason="invalid params"
     )
-    assert await api.query("system.info") is None
-    assert api.error == "invalid params"
+    assert await connected_api.query("system.info") is None
+    assert connected_api.error == "invalid params"
 
 
-async def test_query_call_error_falls_back_to_str_then_unknown() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(side_effect=TrueNASCallError("boom"))
-    assert await api.query("system.info") is None
-    assert api.error == "boom"
+async def test_query_call_error_falls_back_to_str_then_unknown(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError("boom")
+    assert await connected_api.query("system.info") is None
+    assert connected_api.error == "boom"
 
 
-async def test_query_other_truenas_error_classifies_during_call() -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(side_effect=TrueNASCallTimeoutError("timeout"))
-    assert await api.query("system.info") is None
-    assert api.error == ERR_TIMEOUT
+async def test_query_other_truenas_error_classifies_during_call(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallTimeoutError("timeout")
+    assert await connected_api.query("system.info") is None
+    assert connected_api.error == ERR_TIMEOUT
+
+
+async def test_query_propagates_non_truenas_exceptions(
+    connected_api: TrueNASAPI,
+) -> None:
+    """Non-TrueNASError exceptions are deliberately not swallowed by query().
+
+    The aiotruenas client only raises TrueNASError subclasses; anything else
+    indicates a bug and must surface to the caller (the coordinator wraps
+    each poll job defensively), so query() lets it propagate instead of
+    mapping it to an ERR_* code.
+    """
+    connected_api._client.call.side_effect = RuntimeError("unexpected bug")
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        await connected_api.query("system.info")
 
 
 async def test_query_logs_summarized_payload_when_debug_enabled(
+    connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    api = _api_with_mock_client()
-    api._client.connected = True
-    api._client.call = AsyncMock(return_value={"ok": True})
+    connected_api._client.call.return_value = {"ok": True}
     with caplog.at_level("DEBUG", logger=api_module.__name__):
-        assert await api.query("system.info") == {"ok": True}
+        assert await connected_api.query("system.info") == {"ok": True}
     assert "dict[1 keys]" in caplog.text
 
 
 # ---------------------------
 #   error / scheme properties
 # ---------------------------
-def test_error_property_defaults_empty() -> None:
-    api = _api_with_mock_client()
+def test_error_property_defaults_empty(api: TrueNASAPI) -> None:
     assert api.error == ""
