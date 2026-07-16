@@ -16,3 +16,9 @@ warn_unreachable = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    # aiohttp deprecation triggered inside Home Assistant core's http component
+    # (HomeAssistantApplication subclasses web.Application) — not our code;
+    # HA core filters the same warning in its own test config.
+    "ignore:Inheritance class HomeAssistantApplication from web.Application is discouraged:DeprecationWarning",
+]
