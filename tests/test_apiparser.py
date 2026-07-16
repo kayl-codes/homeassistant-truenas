@@ -393,22 +393,57 @@ def test_parse_api_key_secondary_used_when_key_missing(ap: ModuleType) -> None:
     assert result == {"abc": {"name": "pool0"}}
 
 
-def test_parse_api_convert_timestamp_zero_left_unconverted(ap: ModuleType) -> None:
+def test_parse_api_convert_timestamp_zero_normalized_to_none(ap: ModuleType) -> None:
     result = ap.parse_api(
         source=[{"id": "1", "started": 0}],
         key="id",
         vals=[{"name": "started", "convert": "utc_from_timestamp"}],
     )
-    assert result["1"]["started"] == 0
+    assert result["1"]["started"] is None
 
 
-def test_parse_api_convert_timestamp_non_int_left_unconverted(ap: ModuleType) -> None:
+def test_parse_api_convert_timestamp_non_int_normalized_to_none(
+    ap: ModuleType,
+) -> None:
     result = ap.parse_api(
         source=[{"id": "1", "started": "unknown"}],
         key="id",
         vals=[{"name": "started", "convert": "utc_from_timestamp"}],
     )
-    assert result["1"]["started"] == "unknown"
+    assert result["1"]["started"] is None
+
+
+def test_parse_api_convert_timestamp_bool_normalized_to_none(ap: ModuleType) -> None:
+    """bool is an int subclass but never a valid timestamp."""
+    result = ap.parse_api(
+        source=[{"id": "1", "started": True}],
+        key="id",
+        vals=[{"name": "started", "convert": "utc_from_timestamp"}],
+    )
+    assert result["1"]["started"] is None
+
+
+def test_parse_api_convert_timestamp_running_scrub_end_time_none(
+    ap: ModuleType,
+) -> None:
+    """Regression: while a scrub runs, TrueNAS sends scan.end_time = null.
+
+    The spec default (0) must become None so the timestamp sensor reports
+    "unknown" instead of crashing on an int state.
+    """
+    result = ap.parse_api(
+        source=[{"id": "1", "scan": {"state": "SCANNING", "end_time": None}}],
+        key="id",
+        vals=[
+            {
+                "name": "scrub_end",
+                "source": "scan/end_time/$date",
+                "default": 0,
+                "convert": "utc_from_timestamp",
+            }
+        ],
+    )
+    assert result["1"]["scrub_end"] is None
 
 
 def test_parse_api_convert_human_date(ap: ModuleType) -> None:
