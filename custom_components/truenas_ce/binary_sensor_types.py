@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntityDescription,
 )
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 
 from .const import (
     SCHEMA_SERVICE_APP_START,
@@ -37,6 +37,7 @@ from .const import (
     SERVICE_VM_START,
     SERVICE_VM_STOP,
 )
+from .entity import TrueNASEntityDescription
 
 DEVICE_ATTRIBUTES_POOL = (
     "path",
@@ -107,21 +108,15 @@ DEVICE_ATTRIBUTES_DIRECTORYSERVICE = (
 )
 
 
-@dataclass
-class TrueNASBinarySensorEntityDescription(BinarySensorEntityDescription):
+@dataclass(frozen=True, kw_only=True)
+class TrueNASBinarySensorEntityDescription(
+    BinarySensorEntityDescription, TrueNASEntityDescription
+):
     """Class describing entities."""
 
     icon_enabled: str | None = None
     icon_disabled: str | None = None
-    ha_group: str | None = None
-    ha_connection: str | None = None
-    ha_connection_value: str | None = None
-    data_path: str | None = None
     data_is_on: str = "available"
-    data_name: str | None = None
-    data_uid: str | None = None
-    data_reference: str | None = None
-    data_attributes_list: list[str] = field(default_factory=list)
     func: str = "TrueNASBinarySensor"
 
 

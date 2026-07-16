@@ -6,6 +6,12 @@ line-length = 88
 select = ["E", "F", "W", "I", "UP", "ASYNC"]
 ignore = []
 
+[tool.mypy]
+python_version = "3.14"
+files = ["custom_components/truenas_ce"]
+strict = true
+warn_unreachable = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

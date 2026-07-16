@@ -3,6 +3,7 @@
 import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import VolDictType
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -99,19 +100,19 @@ TO_REDACT = {
 CONF_DATASET_PASSPHRASES = "dataset_passphrases"  # nosec B105 # NOSONAR
 
 SERVICE_CLOUDSYNC_RUN = "cloudsync_run"
-SCHEMA_SERVICE_CLOUDSYNC_RUN = {}
+SCHEMA_SERVICE_CLOUDSYNC_RUN: VolDictType = {}
 
 SERVICE_CLOUDSYNC_ABORT = "cloudsync_abort"
-SCHEMA_SERVICE_CLOUDSYNC_ABORT = {}
+SCHEMA_SERVICE_CLOUDSYNC_ABORT: VolDictType = {}
 
 SERVICE_RSYNC_RUN = "rsync_run"
-SCHEMA_SERVICE_RSYNC_RUN = {}
+SCHEMA_SERVICE_RSYNC_RUN: VolDictType = {}
 
 SERVICE_REPLICATION_RUN = "replication_run"
-SCHEMA_SERVICE_REPLICATION_RUN = {}
+SCHEMA_SERVICE_REPLICATION_RUN: VolDictType = {}
 
 SERVICE_DATASET_SNAPSHOT = "dataset_snapshot"
-SCHEMA_SERVICE_DATASET_SNAPSHOT = {}
+SCHEMA_SERVICE_DATASET_SNAPSHOT: VolDictType = {}
 
 SERVICE_DATASET_LOCK = "dataset_lock"
 SERVICE_DATASET_UNLOCK = "dataset_unlock"
@@ -153,7 +154,7 @@ SCHEMA_SERVICE_PASSPHRASE_LIST = vol.Schema(
 )
 
 SERVICE_SNAPSHOTTASK_RUN = "snapshottask_run"
-SCHEMA_SERVICE_SNAPSHOTTASK_RUN = {}
+SCHEMA_SERVICE_SNAPSHOTTASK_RUN: VolDictType = {}
 
 # JSON-RPC methods for on-demand "run" triggers, shared by the run buttons
 # (button_types.py) and the *_run sensor actions (sensor.py) so the method name
@@ -167,13 +168,13 @@ API_POOL_SCRUB_SCRUB = "pool.scrub.scrub"
 SCRUB_ACTION_START = "START"
 
 SERVICE_SYSTEM_REBOOT = "system_reboot"
-SCHEMA_SERVICE_SYSTEM_REBOOT = {}
+SCHEMA_SERVICE_SYSTEM_REBOOT: VolDictType = {}
 
 SERVICE_SYSTEM_SHUTDOWN = "system_shutdown"
-SCHEMA_SERVICE_SYSTEM_SHUTDOWN = {}
+SCHEMA_SERVICE_SYSTEM_SHUTDOWN: VolDictType = {}
 
 SERVICE_SYSTEM_REFRESH = "system_refresh"
-SCHEMA_SERVICE_SYSTEM_REFRESH = {}
+SCHEMA_SERVICE_SYSTEM_REFRESH: VolDictType = {}
 
 SERVICE_ALERT_DISMISS = "alert_dismiss"
 SERVICE_ALERT_RESTORE = "alert_restore"
@@ -284,13 +285,13 @@ GROUP_DATA_PATHS: dict[str, set[str]] = {
 }
 
 SERVICE_SERVICE_START = "service_start"
-SCHEMA_SERVICE_SERVICE_START = {}
+SCHEMA_SERVICE_SERVICE_START: VolDictType = {}
 SERVICE_SERVICE_STOP = "service_stop"
-SCHEMA_SERVICE_SERVICE_STOP = {}
+SCHEMA_SERVICE_SERVICE_STOP: VolDictType = {}
 SERVICE_SERVICE_RESTART = "service_restart"
-SCHEMA_SERVICE_SERVICE_RESTART = {}
+SCHEMA_SERVICE_SERVICE_RESTART: VolDictType = {}
 SERVICE_SERVICE_RELOAD = "service_reload"
-SCHEMA_SERVICE_SERVICE_RELOAD = {}
+SCHEMA_SERVICE_SERVICE_RELOAD: VolDictType = {}
 
 SERVICE_VM_START = "vm_start"
 SERVICE_VM_START_OVERCOMMIT = "overcommit"
@@ -298,16 +299,16 @@ SCHEMA_SERVICE_VM_START = {
     vol.Optional(SERVICE_VM_START_OVERCOMMIT, default=False): cv.boolean
 }
 SERVICE_VM_STOP = "vm_stop"
-SCHEMA_SERVICE_VM_STOP = {}
+SCHEMA_SERVICE_VM_STOP: VolDictType = {}
 SERVICE_VM_RESTART = "vm_restart"
-SCHEMA_SERVICE_VM_RESTART = {}
+SCHEMA_SERVICE_VM_RESTART: VolDictType = {}
 
 SERVICE_CONTAINER_START = "container_start"
-SCHEMA_SERVICE_CONTAINER_START = {}
+SCHEMA_SERVICE_CONTAINER_START: VolDictType = {}
 SERVICE_CONTAINER_STOP = "container_stop"
-SCHEMA_SERVICE_CONTAINER_STOP = {}
+SCHEMA_SERVICE_CONTAINER_STOP: VolDictType = {}
 SERVICE_CONTAINER_RESTART = "container_restart"
-SCHEMA_SERVICE_CONTAINER_RESTART = {}
+SCHEMA_SERVICE_CONTAINER_RESTART: VolDictType = {}
 
 # Options passed to virt.instance.stop / virt.instance.restart: force a hard
 # stop (force=True) with no graceful-shutdown wait (timeout=-1). Kept here so the
@@ -315,9 +316,9 @@ SCHEMA_SERVICE_CONTAINER_RESTART = {}
 VIRT_INSTANCE_STOP_OPTIONS = {"force": True, "timeout": -1}
 
 SERVICE_APP_START = "app_start"
-SCHEMA_SERVICE_APP_START = {}
+SCHEMA_SERVICE_APP_START: VolDictType = {}
 SERVICE_APP_STOP = "app_stop"
-SCHEMA_SERVICE_APP_STOP = {}
+SCHEMA_SERVICE_APP_STOP: VolDictType = {}
 
 ERROR_API_FORMAT = "TrueNAS %s API error: %s"
 ICON_GAUGE = "mdi:gauge"

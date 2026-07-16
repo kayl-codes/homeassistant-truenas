@@ -16,10 +16,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import TrueNASCoordinator
 from .entity import TrueNASEntity, async_add_entities
-from .update_types import SENSOR_SERVICES, SENSOR_TYPES  # noqa: F401
+from .update_types import (  # noqa: F401
+    SENSOR_SERVICES,
+    SENSOR_TYPES,
+    TrueNASUpdateEntityDescription,
+)
 
 _LOGGER = getLogger(__name__)
 DEVICE_UPDATE = "device_update"
+
+# Updates are centralized in the coordinator; entity actions may run unlimited.
+PARALLEL_UPDATES = 0
 
 
 # ---------------------------
@@ -44,15 +51,16 @@ async def async_setup_entry(
 class TrueNASUpdate(TrueNASEntity, UpdateEntity):
     """Define an TrueNAS Update Sensor."""
 
+    entity_description: TrueNASUpdateEntityDescription
     TYPE = DEVICE_UPDATE
     _attr_device_class = UpdateDeviceClass.FIRMWARE
 
     def __init__(
         self,
         coordinator: TrueNASCoordinator,
-        entity_description,
+        entity_description: TrueNASUpdateEntityDescription,
         uid: str | None = None,
-    ):
+    ) -> None:
         """Set up device update entity."""
         super().__init__(coordinator, entity_description, uid)
 
@@ -73,7 +81,9 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
     async def options_updated(self) -> None:
         """No action needed."""
 
-    async def async_install(self, _version: str, backup: bool, **kwargs: Any) -> None:
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
         """Install the latest available update.
 
         The version parameter is currently ignored; TrueNAS API only supports
@@ -88,10 +98,15 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
         await self.coordinator.async_refresh()
 
     @property
-    def in_progress(self) -> int | bool:
-        """Update installation progress."""
+    def in_progress(self) -> bool:
+        """Return whether an update installation is running."""
+        return self._data.get("update_state") == "RUNNING"
+
+    @property
+    def update_percentage(self) -> int | None:
+        """Update installation progress percentage."""
         if self._data.get("update_state") != "RUNNING":
-            return False
+            return None
 
         return int(self._data.get("update_progress", 0))
 
@@ -102,14 +117,15 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
 class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
     """Define an TrueNAS App Update Sensor."""
 
+    entity_description: TrueNASUpdateEntityDescription
     TYPE = DEVICE_UPDATE
 
     def __init__(
         self,
         coordinator: TrueNASCoordinator,
-        entity_description,
+        entity_description: TrueNASUpdateEntityDescription,
         uid: str | None = None,
-    ):
+    ) -> None:
         """Set up device update entity."""
         super().__init__(coordinator, entity_description, uid)
 
@@ -128,16 +144,18 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         compose apps there is no catalog version (latest_version is "unknown"),
         so reflect availability explicitly when an image update is pending.
         """
-        installed = self._data.get("version")
+        installed: str | None = self._data.get("version")
         if not self._data.get("update_available"):
             return installed
 
-        latest = self._data.get("latest_version")
+        latest: str | None = self._data.get("latest_version")
         if not latest or latest in ("unknown", installed):
             return f"{installed} (image update)" if installed else "image update"
         return latest
 
-    async def async_install(self, _version: str, backup: bool, **kwargs: Any) -> None:
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
         """Install an update."""
         app_data = self.coordinator.data.get("app", {}).get(self._data["id"], {})
         if app_data.get("state") != "RUNNING":

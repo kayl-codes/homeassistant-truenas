@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from logging import getLogger
+from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -45,14 +52,14 @@ from .const import (
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator
-from .entity import _is_uid_excluded, format_unique_id
+from .entity import TrueNASEntityDescription, _is_uid_excluded, format_unique_id
 from .helper import alert_action, scaled_data_unit
 from .migration import (
     async_adopt_legacy_entities,
     async_notify_migration_result,
     finalize_legacy_adoption,
 )
-from .sensor_types import SENSOR_TYPES
+from .sensor_types import SENSOR_TYPES, TrueNASSensorEntityDescription
 from .switch_types import SENSOR_TYPES as SWITCH_SENSOR_TYPES
 from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
 
@@ -96,14 +103,20 @@ def _migrate_data_size_units(
             _migrate_description(ent_reg, coordinator, inst, description, binary)
 
 
-def _migrate_description(ent_reg, coordinator, inst, description, binary) -> None:
+def _migrate_description(
+    ent_reg: er.EntityRegistry,
+    coordinator: TrueNASCoordinator,
+    inst: str,
+    description: TrueNASSensorEntityDescription,
+    binary: bool,
+) -> None:
     """Force units for all entities produced by a single DATA_SIZE description."""
-    data = coordinator.ds.get(description.data_path)
+    data = coordinator.ds.get(description.data_path or "")
     if not isinstance(data, dict):
         return
 
     if not description.data_reference:
-        value = data.get(description.data_attribute)
+        value = data.get(description.data_attribute or "")
         _force_entity_unit(ent_reg, inst, description, None, value, binary)
         return
 
@@ -121,7 +134,14 @@ def _migrate_description(ent_reg, coordinator, inst, description, binary) -> Non
         )
 
 
-def _force_entity_unit(ent_reg, inst, description, reference, value, binary) -> None:
+def _force_entity_unit(
+    ent_reg: er.EntityRegistry,
+    inst: str,
+    description: TrueNASSensorEntityDescription,
+    reference: Any,
+    value: Any,
+    binary: bool,
+) -> None:
     """Write the magnitude-appropriate display unit of one entity to the registry."""
     entity_id = ent_reg.async_get_entity_id(
         "sensor", DOMAIN, format_unique_id(inst, description.key, reference)
@@ -151,7 +171,10 @@ def _handle_keyless(
 
 
 def _referenced_unique_ids(
-    inst: str, description, data: dict, honor_exclude: bool = True
+    inst: str,
+    description: TrueNASEntityDescription,
+    data: dict[str, Any],
+    honor_exclude: bool = True,
 ) -> set[str]:
     """Unique_ids the integration would create for one referenced description.
 
@@ -204,7 +227,7 @@ def _collect_active_unique_ids(
             _handle_keyless(base, is_disabled_group, active, live_bases)
             continue
 
-        data = coordinator.data.get(description.data_path)
+        data = coordinator.data.get(description.data_path or "")
 
         if not data and not is_disabled_group:
             # Transient empty fetch for an enabled group → protect entities.
@@ -277,7 +300,7 @@ def _cleanup_orphaned_entities(
 # ---------------------------
 def _get_coordinator(
     hass: HomeAssistant, entry_id: str | None
-) -> tuple[str | None, dict]:
+) -> tuple[str | None, dict[str, str]]:
     """Resolve coordinator; return (entry_id, error_dict) or (entry_id, {})."""
     coords = hass.data.get(DOMAIN, {})
     if not coords:
@@ -303,7 +326,7 @@ def _get_coordinator(
     return entry_id, {}
 
 
-async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
+async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """List all TrueNAS alerts with selectable properties."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
@@ -324,7 +347,7 @@ async def _handle_alert_list(hass: HomeAssistant, call) -> dict:
     return {"alerts": filtered}
 
 
-async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
+async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
     """Dismiss a TrueNAS alert by UUID."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
@@ -338,7 +361,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call) -> None:
     await alert_action(coordinator, uuid, "dismiss")
 
 
-async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
+async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
     """Restore a TrueNAS alert by UUID."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
     if error:
@@ -352,10 +375,10 @@ async def _handle_alert_restore(hass: HomeAssistant, call) -> None:
     await alert_action(coordinator, uuid, "restore")
 
 
-async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
+async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> None:
     """Remove a stored dataset passphrase by dataset path."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
-    if error:
+    if error or entry_id is None:
         raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
@@ -377,10 +400,12 @@ async def _handle_passphrase_remove(hass: HomeAssistant, call) -> None:
     )
 
 
-async def _handle_passphrase_list(hass: HomeAssistant, call) -> dict:
+async def _handle_passphrase_list(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
     """Return the dataset names that have a stored passphrase (no values)."""
     entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
-    if error:
+    if error or entry_id is None:
         return {"datasets": [], **error}
 
     config_entry = hass.config_entries.async_get_entry(entry_id)
@@ -412,7 +437,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Register alert services (domain-level, instance-specific) once.
     if not hass.services.has_service(DOMAIN, SERVICE_ALERT_DISMISS):
 
-        async def _alert_dismiss_handler(call) -> None:
+        async def _alert_dismiss_handler(call: ServiceCall) -> None:
             await _handle_alert_dismiss(hass, call)
 
         hass.services.async_register(
@@ -423,7 +448,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
     if not hass.services.has_service(DOMAIN, SERVICE_ALERT_RESTORE):
 
-        async def _alert_restore_handler(call) -> None:
+        async def _alert_restore_handler(call: ServiceCall) -> None:
             await _handle_alert_restore(hass, call)
 
         hass.services.async_register(
@@ -434,7 +459,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
     if not hass.services.has_service(DOMAIN, SERVICE_ALERT_LIST):
 
-        async def _alert_list_handler(call) -> dict:
+        async def _alert_list_handler(call: ServiceCall) -> ServiceResponse:
             return await _handle_alert_list(hass, call)
 
         hass.services.async_register(
@@ -442,11 +467,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             SERVICE_ALERT_LIST,
             _alert_list_handler,
             schema=SCHEMA_SERVICE_ALERT_LIST,
-            supports_response=True,
+            supports_response=SupportsResponse.OPTIONAL,
         )
     if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_REMOVE):
 
-        async def _passphrase_remove_handler(call) -> None:
+        async def _passphrase_remove_handler(call: ServiceCall) -> None:
             await _handle_passphrase_remove(hass, call)
 
         hass.services.async_register(
@@ -457,7 +482,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
     if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_LIST):
 
-        async def _passphrase_list_handler(call) -> dict:
+        async def _passphrase_list_handler(call: ServiceCall) -> ServiceResponse:
             return await _handle_passphrase_list(hass, call)
 
         hass.services.async_register(
@@ -465,7 +490,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             SERVICE_PASSPHRASE_LIST,
             _passphrase_list_handler,
             schema=SCHEMA_SERVICE_PASSPHRASE_LIST,
-            supports_response=True,
+            supports_response=SupportsResponse.OPTIONAL,
         )
 
     # Re-attach the freed legacy entity_ids now that the new entities exist, then

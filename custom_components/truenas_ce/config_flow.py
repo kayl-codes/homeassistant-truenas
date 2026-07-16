@@ -23,7 +23,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .api import TrueNASAPI
@@ -257,7 +257,7 @@ def _map_error_to_ha(errorcode: str) -> str:
 #   configured_instances
 # ---------------------------
 @callback
-def configured_instances(hass):
+def configured_instances(hass: HomeAssistant) -> set[str]:
     """Return a set of configured instances."""
     return {
         entry.data[CONF_NAME] for entry in hass.config_entries.async_entries(DOMAIN)
@@ -369,7 +369,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_migrate()
 
         truenas_config = self.truenas_config
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is None and not truenas_config.get(CONF_HOST):
             default_host = await self.hass.async_add_executor_job(_guess_ip)
@@ -529,7 +529,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _check_connection_if_changed(
         self,
         truenas_config: dict[str, Any],
-        entry_data: dict[str, Any],
+        entry_data: Mapping[str, Any],
         errors: dict[str, str],
     ) -> None:
         """Run connection test only when transport-relevant settings changed."""

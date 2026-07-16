@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 from logging import getLogger
+from typing import Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryDisabler
@@ -76,7 +77,7 @@ _BACKUP_VERSION = 1
 # ---------------------------
 async def async_adopt_legacy_entities(
     hass: HomeAssistant, config_entry: ConfigEntry
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Release the legacy entities' entity_ids for adoption by this entry.
 
     Returns the list of freed records for :func:`finalize_legacy_adoption` to
@@ -88,7 +89,7 @@ async def async_adopt_legacy_entities(
         return []
 
     legacy_entry = _find_legacy_entry(hass, config_entry)
-    records: list[dict] = []
+    records: list[dict[str, Any]] = []
     backup_key: str | None = None
 
     if legacy_entry is not None:
@@ -117,7 +118,9 @@ async def async_adopt_legacy_entities(
     return records
 
 
-def finalize_legacy_adoption(hass: HomeAssistant, records: list[dict]) -> None:
+def finalize_legacy_adoption(
+    hass: HomeAssistant, records: list[dict[str, Any]]
+) -> None:
     """Re-attach the freed legacy entity_ids to the new entities.
 
     Called after the platforms have been set up so the new (``truenas_ce``)
@@ -157,7 +160,7 @@ def _find_legacy_entry(
 
 def _collect_legacy_records(
     ent_reg: er.EntityRegistry, legacy_entry: ConfigEntry
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Snapshot every registry entry of the legacy config entry (read-only)."""
     return [
         {
@@ -173,7 +176,9 @@ def _collect_legacy_records(
     ]
 
 
-def _remove_legacy_entities(ent_reg: er.EntityRegistry, records: list[dict]) -> None:
+def _remove_legacy_entities(
+    ent_reg: er.EntityRegistry, records: list[dict[str, Any]]
+) -> None:
     """Free the recorded entity_ids for adoption.
 
     Removing the registry entry frees its entity_id and any user overrides but
@@ -188,7 +193,7 @@ async def _write_migration_backup(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     legacy_entry: ConfigEntry,
-    records: list[dict],
+    records: list[dict[str, Any]],
 ) -> str | None:
     """Write a human-readable safety snapshot before the registry is mutated.
 
@@ -197,7 +202,9 @@ async def _write_migration_backup(
     migration. Returns the ``.storage`` key on success, else ``None``.
     """
     timestamp = dt_util.utcnow().strftime("%Y%m%d_%H%M%S")
-    store = Store(hass, _BACKUP_VERSION, f"{_BACKUP_KEY_PREFIX}_{timestamp}")
+    store: Store[dict[str, Any]] = Store(
+        hass, _BACKUP_VERSION, f"{_BACKUP_KEY_PREFIX}_{timestamp}"
+    )
     payload = {
         "created": dt_util.utcnow().isoformat(),
         "ce_entry_id": config_entry.entry_id,
@@ -252,7 +259,7 @@ def _persist_migration_state(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     legacy_entry: ConfigEntry | None,
-    records: list[dict],
+    records: list[dict[str, Any]],
     backup_key: str | None,
 ) -> None:
     """Store the idempotency flag, reverse map and legacy snapshot on the entry."""
@@ -273,7 +280,7 @@ def _persist_migration_state(
 
 
 def _remap_and_restore(
-    ent_reg: er.EntityRegistry, pairs: list[tuple[str, str, dict]]
+    ent_reg: er.EntityRegistry, pairs: list[tuple[str, str, dict[str, Any]]]
 ) -> None:
     """Move each entity from its current id onto its target id, then restore overrides.
 
@@ -287,7 +294,7 @@ def _remap_and_restore(
     by the entity's final id matching the recorder statistics, so only the end
     state matters.
     """
-    parked: list[tuple[str, str, dict]] = []
+    parked: list[tuple[str, str, dict[str, Any]]] = []
     counter = 0
     for current_id, target_id, record in pairs:
         if current_id == target_id:
@@ -325,10 +332,10 @@ def _temp_entity_id(
 
 
 def _restore_overrides(
-    ent_reg: er.EntityRegistry, entity_id: str, record: dict
+    ent_reg: er.EntityRegistry, entity_id: str, record: dict[str, Any]
 ) -> None:
     """Re-apply the user's name/icon/area/disabled overrides to an adopted entity."""
-    updates: dict[str, object] = {}
+    updates: dict[str, Any] = {}
     if record.get(_R_NAME):
         updates["name"] = record[_R_NAME]
     if record.get(_R_ICON):
@@ -345,7 +352,7 @@ def _restore_overrides(
 #   Post-migration notification
 # ---------------------------
 def async_notify_migration_result(
-    hass: HomeAssistant, config_entry: ConfigEntry, records: list[dict]
+    hass: HomeAssistant, config_entry: ConfigEntry, records: list[dict[str, Any]]
 ) -> None:
     """Surface a one-time success notification after a legacy adoption.
 
@@ -395,7 +402,7 @@ def async_notify_migration_result(
 
 
 def _classify_reconnection(
-    ent_reg: er.EntityRegistry, records: list[dict]
+    ent_reg: er.EntityRegistry, records: list[dict[str, Any]]
 ) -> tuple[int, list[str], list[str]]:
     """Split adopted records into reconnected / pending / mismatched buckets.
 

@@ -2,26 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.update import UpdateEntityDescription
 
+from .entity import TrueNASEntityDescription
 
-@dataclass
-class TrueNASUpdateEntityDescription(UpdateEntityDescription):
+
+@dataclass(frozen=True, kw_only=True)
+class TrueNASUpdateEntityDescription(UpdateEntityDescription, TrueNASEntityDescription):
     """Class describing entities."""
 
-    ha_group: str | None = None
-    ha_connection: str | None = None
-    ha_connection_value: str | None = None
     title: str | None = None
-    data_path: str | None = None
     data_attribute: str = "available"
-    data_name: str | None = None
-    data_uid: str | None = None
-    data_reference: str | None = None
-    data_attributes_list: tuple[str, ...] = field(default_factory=tuple)
-    func: str | None = None
 
 
 SENSOR_TYPES: tuple[TrueNASUpdateEntityDescription, ...] = (
@@ -56,4 +50,4 @@ SENSOR_TYPES: tuple[TrueNASUpdateEntityDescription, ...] = (
     ),
 )
 
-SENSOR_SERVICES: tuple = ()
+SENSOR_SERVICES: tuple[Any, ...] = ()

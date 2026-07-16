@@ -32,10 +32,14 @@ from .helper import alert_action, scaled_data_unit
 from .sensor_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
+    TrueNASSensorEntityDescription,
 )
 
 _LOGGER = getLogger(__name__)
 _UNKNOWN_DATASET = "<unknown>"
+
+# Updates are centralized in the coordinator; entity actions may run unlimited.
+PARALLEL_UPDATES = 0
 
 # Middleware job polling for dataset lock/unlock operations.
 JOB_POLL_INTERVAL = 1
@@ -76,12 +80,14 @@ async def async_setup_entry(
 class TrueNASSensor(TrueNASEntity, SensorEntity):
     """Define an TrueNAS sensor."""
 
+    entity_description: TrueNASSensorEntityDescription
+
     def __init__(
         self,
         coordinator: TrueNASCoordinator,
-        entity_description,
+        entity_description: TrueNASSensorEntityDescription,
         uid: str | None = None,
-    ):
+    ) -> None:
         super().__init__(coordinator, entity_description, uid)
         self._attr_suggested_unit_of_measurement = (
             self.entity_description.suggested_unit_of_measurement
@@ -98,7 +104,7 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
                 ),
             )
             value = (
-                self._data.get(self.entity_description.data_attribute)
+                self._data.get(self.entity_description.data_attribute or "")
                 if self._data
                 else None
             )
@@ -114,7 +120,10 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
         Uses .get() so a transient API failure that empties the coordinator data
         degrades the state to unknown instead of raising a KeyError mid-update.
         """
-        return self._data.get(self.entity_description.data_attribute)
+        value: StateType | date | datetime | Decimal = self._data.get(
+            self.entity_description.data_attribute or ""
+        )
+        return value
 
     @property
     def native_unit_of_measurement(self) -> str | None:
@@ -123,7 +132,8 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
             if self.entity_description.native_unit_of_measurement.startswith("data__"):
                 uom = self.entity_description.native_unit_of_measurement[6:]
                 if uom in self._data:
-                    return self._data[uom]
+                    data_uom: str | None = self._data[uom]
+                    return data_uom
 
             return self.entity_description.native_unit_of_measurement
 
@@ -142,7 +152,9 @@ class TrueNASCertExpirySensor(TrueNASSensor):
     @property
     def native_value(self) -> StateType:
         """Return days or fractional years depending on magnitude."""
-        days = self._data.get(self.entity_description.data_attribute)
+        days: float | None = self._data.get(
+            self.entity_description.data_attribute or ""
+        )
         if days is None:
             return None
         if days >= 365:
@@ -152,7 +164,9 @@ class TrueNASCertExpirySensor(TrueNASSensor):
     @property
     def native_unit_of_measurement(self) -> UnitOfTime:
         """Switch unit between days and years based on the raw value."""
-        days = self._data.get(self.entity_description.data_attribute)
+        days: float | None = self._data.get(
+            self.entity_description.data_attribute or ""
+        )
         if days is not None and days >= 365:
             return UnitOfTime.YEARS
         return UnitOfTime.DAYS
@@ -199,7 +213,7 @@ class TrueNASUptimeSensor(TrueNASSensor):
     @property
     def native_value(self) -> StateType | date | datetime | Decimal:
         """Return the value reported by the sensor."""
-        val = self._data.get(self.entity_description.data_attribute)
+        val = self._data.get(self.entity_description.data_attribute or "")
         if isinstance(val, (int, float)) and val > 0:
             return utc_from_timestamp(val)
         return None
@@ -260,7 +274,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             f"on {self.coordinator.host}: {reason}"
         )
 
-    async def _poll_job(self, job_id: int) -> dict | None:
+    async def _poll_job(self, job_id: int) -> dict[str, Any] | None:
         """Fetch a single middleware job by id."""
         jobs = await self.coordinator.api.query(
             "core.get_jobs", [[["id", "=", job_id]]]
@@ -269,7 +283,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             jobs = jobs[0] if jobs else None
         return jobs if isinstance(jobs, dict) else None
 
-    def _job_finished(self, job: dict, action: str) -> bool:
+    def _job_finished(self, job: dict[str, Any], action: str) -> bool:
         """Return True if the job succeeded, raise on failure, False if running."""
         state = job.get("state")
         if state == "SUCCESS":
@@ -279,7 +293,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             raise HomeAssistantError(self._action_error(action, reason))
         return False
 
-    async def _wait_for_job(self, job_id: int, action: str) -> dict:
+    async def _wait_for_job(self, job_id: int, action: str) -> dict[str, Any]:
         """Poll a middleware job until it succeeds, fails or times out."""
         missing = 0
         try:
@@ -304,7 +318,9 @@ class TrueNASDatasetSensor(TrueNASSensor):
                 self._action_error(action, "timed out waiting for completion")
             ) from err
 
-    async def _run_dataset_job(self, method: str, payload: list, action: str) -> Any:
+    async def _run_dataset_job(
+        self, method: str, payload: list[Any], action: str
+    ) -> Any:
         """Start a dataset middleware job, wait for it, and return its result."""
         job_id = await self.coordinator.api.query(method, payload)
         if not isinstance(job_id, int):
