@@ -12,7 +12,7 @@ from .coordinator import TrueNASConfigEntry
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, config_entry: TrueNASConfigEntry
+    _hass: HomeAssistant, config_entry: TrueNASConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     return {

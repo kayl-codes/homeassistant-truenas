@@ -15,6 +15,7 @@ module when the package is absent, e.g. on the local Windows dev machine.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -34,6 +35,7 @@ from custom_components.truenas_ce.const import (
     CONF_POLL_INTERVAL,
     DEFAULT_CRONJOB_SKIP_DISABLED,
     DEFAULT_DATA_UNIT,
+    DEFAULT_HOST,
     DOMAIN,
     ERR_INVALID_KEY,
     LEGACY_DOMAIN,
@@ -58,7 +60,7 @@ def _user_input(**overrides: object) -> dict[str, object]:
 
 
 @pytest.fixture(autouse=True)
-def _mock_setup_entry() -> AsyncMock:
+def _mock_setup_entry() -> Iterator[AsyncMock]:
     """Prevent a real integration setup from running during flow tests."""
     with patch(
         "custom_components.truenas_ce.async_setup_entry", return_value=True
@@ -66,8 +68,23 @@ def _mock_setup_entry() -> AsyncMock:
         yield mock_setup
 
 
+@pytest.fixture(autouse=True)
+def _mock_guess_ip() -> Iterator[None]:
+    """Avoid the DNS lookup pytest-homeassistant-custom-component forbids.
+
+    ``async_step_user`` calls ``_guess_ip()`` (a real ``socket.gethostbyname``
+    lookup) to prefill a default host; the test harness patches
+    ``socket.gethostbyname`` to raise for any non-local/non-IP hostname.
+    """
+    with patch(
+        "custom_components.truenas_ce.config_flow._guess_ip",
+        return_value=DEFAULT_HOST,
+    ):
+        yield
+
+
 @pytest.fixture
-def _mock_connection_ok() -> None:
+def _mock_connection_ok() -> Iterator[None]:
     with (
         patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
         patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
