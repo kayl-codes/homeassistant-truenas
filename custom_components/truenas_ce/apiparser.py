@@ -375,12 +375,21 @@ def fill_defaults(
 #   _convert_timestamp
 # ---------------------------
 def _convert_timestamp(target: dict[str, Any], name: str) -> None:
-    """Convert an int timestamp stored at target[name] into a UTC datetime."""
+    """Convert an int timestamp stored at target[name] into a UTC datetime.
+
+    Values that cannot be a real timestamp are normalized to None so timestamp
+    sensors report "unknown" instead of crashing on a non-datetime state
+    (TrueNAS sends scan.end_time = null while a scrub is running, which the
+    value spec's default turns into 0).
+    """
     value = target.get(name)
-    if isinstance(value, int) and value > 0:
-        if value > MILLIS_TIMESTAMP_THRESHOLD:
-            value = value / 1000
-        target[name] = utc_from_timestamp(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        target[name] = None
+        return
+
+    if value > MILLIS_TIMESTAMP_THRESHOLD:
+        value = value / 1000
+    target[name] = utc_from_timestamp(value)
 
 
 # ---------------------------
