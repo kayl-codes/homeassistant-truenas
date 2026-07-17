@@ -2,24 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntityDescription
 
+from .entity import TrueNASEntityDescription
 
-@dataclass
-class TrueNASSwitchEntityDescription(SwitchEntityDescription):
+
+@dataclass(frozen=True, kw_only=True)
+class TrueNASSwitchEntityDescription(SwitchEntityDescription, TrueNASEntityDescription):
     """Class describing entities."""
 
-    ha_group: str | None = None
-    ha_connection: str | None = None
-    ha_connection_value: str | None = None
-    data_path: str | None = None
     data_is_on: str = "running"
-    data_name: str | None = None
-    data_uid: str | None = None
-    data_reference: str | None = None
-    data_attributes_list: list[str] = field(default_factory=list)
     func: str = "TrueNASServiceSwitch"
 
 
@@ -34,7 +29,7 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
         data_name="display_name",
         data_uid=None,
         data_reference="id",
-        data_attributes_list=["enable", "state"],
+        data_attributes_list=("enable", "state"),
         func="TrueNASServiceSwitch",
     ),
     TrueNASSwitchEntityDescription(
@@ -63,4 +58,4 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
     ),
 )
 
-SENSOR_SERVICES: tuple = ()
+SENSOR_SERVICES: tuple[Any, ...] = ()

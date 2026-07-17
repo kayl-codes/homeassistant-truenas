@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from homeassistant.components.sensor import (
@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    EntityCategory,
     UnitOfDataRate,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
@@ -20,7 +21,6 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     ICON_GAUGE,
@@ -50,6 +50,7 @@ from .const import (
     SERVICE_SYSTEM_REFRESH,
     SERVICE_SYSTEM_SHUTDOWN,
 )
+from .entity import TrueNASEntityDescription
 
 # Icons reused by several entity descriptions.
 ICON_MEMORY = "mdi:memory"
@@ -203,19 +204,11 @@ DEVICE_ATTRIBUTES_DIRECTORYSERVICE = (
 )
 
 
-@dataclass
-class TrueNASSensorEntityDescription(SensorEntityDescription):
+@dataclass(frozen=True, kw_only=True)
+class TrueNASSensorEntityDescription(SensorEntityDescription, TrueNASEntityDescription):
     """Class describing entities."""
 
-    ha_group: str | None = None
-    ha_connection: str | None = None
-    ha_connection_value: str | None = None
-    data_path: str | None = None
     data_attribute: str | None = None
-    data_name: str | None = None
-    data_uid: str | None = None
-    data_reference: str | None = None
-    data_attributes_list: list[str] = field(default_factory=list)
     # Optional (key, value): skip creating an entity for a referenced object
     # whose data[key] == value (e.g. don't create traffic sensors for a
     # network interface whose link is down).

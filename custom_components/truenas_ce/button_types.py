@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from homeassistant.components.button import ButtonEntityDescription
@@ -14,24 +14,17 @@ from .const import (
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
 )
+from .entity import TrueNASEntityDescription
 
 # Run buttons mirror the on-demand "*_run" actions, but as one-tap controls on the
 # task's device page. Each carries the JSON-RPC method to call with the object id.
 
 
-@dataclass
-class TrueNASButtonEntityDescription(ButtonEntityDescription):
+@dataclass(frozen=True, kw_only=True)
+class TrueNASButtonEntityDescription(ButtonEntityDescription, TrueNASEntityDescription):
     """Class describing TrueNAS button entities."""
 
     api_method: str | None = None
-    ha_group: str | None = None
-    ha_connection: str | None = None
-    ha_connection_value: str | None = None
-    data_path: str | None = None
-    data_name: str | None = None
-    data_uid: str | None = None
-    data_reference: str | None = None
-    data_attributes_list: list[str] = field(default_factory=list)
     func: str = "TrueNASButton"
 
 

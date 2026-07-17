@@ -1,6 +1,6 @@
 """API parser for JSON APIs."""
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from datetime import UTC, datetime
 from logging import getLogger
 from typing import Any, TypedDict
@@ -126,7 +126,12 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 # ---------------------------
 #   from_entry_bool
 # ---------------------------
-def from_entry_bool(entry, param, default=False, reverse=False) -> bool:
+def from_entry_bool(
+    entry: dict[str, Any] | None,
+    param: str,
+    default: bool = False,
+    reverse: bool = False,
+) -> bool:
     """Validate and return a bool value from an API dict."""
     ret = _resolve_source(entry, param)
     if ret is _MISSING:
@@ -139,20 +144,20 @@ def from_entry_bool(entry, param, default=False, reverse=False) -> bool:
 # ---------------------------
 #   _str_default / _bool_default / _spec_default
 # ---------------------------
-def _str_default(val: dict[str, Any]) -> Any:
+def _str_default(val: Mapping[str, Any]) -> Any:
     """Return the default for a string-typed value spec."""
     if "default_val" in val and val["default_val"] in val:
         return val[val["default_val"]]
     return val.get("default", "")
 
 
-def _bool_default(val: dict[str, Any]) -> bool:
+def _bool_default(val: Mapping[str, Any]) -> bool:
     """Return the default for a bool-typed value spec."""
     default = val.get("default", False)
     return not default if val.get("reverse", False) else default
 
 
-def _spec_default(val: dict[str, Any]) -> Any:
+def _spec_default(val: Mapping[str, Any]) -> Any:
     """Return the configured default value for a value spec."""
     if val.get("type", "str") == "bool":
         return _bool_default(val)
@@ -164,7 +169,7 @@ def _spec_default(val: dict[str, Any]) -> Any:
 # ---------------------------
 def parse_api(
     data: dict[str, Any] | None = None,
-    source: dict[str, Any] | list[dict[str, Any]] | None = None,
+    source: dict[str, Any] | list[Any] | str | None = None,
     key: str | None = None,
     key_secondary: str | None = None,
     key_search: str | None = None,
@@ -179,6 +184,9 @@ def parse_api(
         data = {}
     if isinstance(source, dict):
         source = [source]
+    elif isinstance(source, str):
+        # A bare string is a malformed API payload; treat it like no source.
+        source = None
 
     if not source:
         return _empty_source_result(data, key, key_search, vals)
@@ -278,12 +286,18 @@ def _apply_entry(
 # ---------------------------
 #   get_uid
 # ---------------------------
-def get_uid(entry, key, key_secondary, key_search, keymap) -> str | None:
+def get_uid(
+    entry: Any,
+    key: str | None,
+    key_secondary: str | None,
+    key_search: str | None,
+    keymap: dict[Hashable, str] | None,
+) -> str | None:
     """Get UID for data list."""
     if not isinstance(entry, dict):
         return None
 
-    uid = None
+    uid: str | None = None
     if not key_search:
         if key is not None and key in entry:
             uid = entry[key]
@@ -322,7 +336,7 @@ def matches_only(entry: dict[str, Any], only: list[dict[str, Any]]) -> bool:
 # ---------------------------
 #   can_skip
 # ---------------------------
-def can_skip(entry, skip) -> bool:
+def can_skip(entry: dict[str, Any], skip: list[dict[str, Any]]) -> bool:
     """Return True if at least one variable matches."""
     ret = False
     for val in skip:
@@ -340,7 +354,9 @@ def can_skip(entry, skip) -> bool:
 # ---------------------------
 #   fill_defaults
 # ---------------------------
-def fill_defaults(data, vals) -> dict:
+def fill_defaults(
+    data: dict[str, Any] | None, vals: list[ApiValueSpec] | None
+) -> dict[str, Any]:
     """Fill defaults if source is not present."""
     if data is None:
         data = {}
@@ -382,7 +398,7 @@ def _convert_human_date(target: dict[str, Any], name: str) -> None:
 #   _set_val
 # ---------------------------
 def _set_val(
-    target: dict[str, Any], entry: dict[str, Any], val: dict[str, Any]
+    target: dict[str, Any], entry: dict[str, Any], val: Mapping[str, Any]
 ) -> None:
     """Resolve a single value spec into target."""
     name = val["name"]
@@ -404,9 +420,14 @@ def _set_val(
 # ---------------------------
 #   fill_vals
 # ---------------------------
-def fill_vals(data, entry, uid, vals) -> dict:
+def fill_vals(
+    data: dict[str, Any],
+    entry: dict[str, Any],
+    uid: str | None,
+    vals: list[ApiValueSpec],
+) -> dict[str, Any]:
     """Fill all data."""
-    target = data[uid] if uid is not None else data
+    target: dict[str, Any] = data[uid] if uid is not None else data
     for val in vals:
         _set_val(target, entry, val)
 
@@ -416,12 +437,14 @@ def fill_vals(data, entry, uid, vals) -> dict:
 # ---------------------------
 #   fill_ensure_vals
 # ---------------------------
-def fill_ensure_vals(data, uid, ensure_vals) -> dict:
+def fill_ensure_vals(
+    data: dict[str, Any], uid: str | None, ensure_vals: list[ApiValueSpec]
+) -> dict[str, Any]:
     """Add required keys which are not available in data."""
     if uid is not None and uid not in data:
         data[uid] = {}
 
-    target = data[uid] if uid is not None else data
+    target: dict[str, Any] = data[uid] if uid is not None else data
     for val in ensure_vals:
         name = val["name"]
         if name not in target:
@@ -484,9 +507,11 @@ def _process_val_sub(
 # ---------------------------
 #   fill_vals_proc
 # ---------------------------
-def fill_vals_proc(data, uid, vals_proc) -> dict:
+def fill_vals_proc(
+    data: dict[str, Any], uid: str | None, vals_proc: list[list[dict[str, Any]]]
+) -> dict[str, Any]:
     """Add custom keys."""
-    target = data[uid] if uid is not None else data
+    target: dict[str, Any] = data[uid] if uid is not None else data
 
     for val_sub in vals_proc:
         name, value = _process_val_sub(target, val_sub)

@@ -222,7 +222,7 @@ class TrueNASAPI:
         self,
         service: str,
         params: dict[str, Any] | list[Any] | None = None,
-    ) -> list | dict | str | None:
+    ) -> Any:
         """Retrieve data from TrueNAS."""
         if not self.connected() and not await self.connect():
             return None

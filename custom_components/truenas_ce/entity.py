@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from asyncio import Lock
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -12,8 +13,9 @@ from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_platform as ep
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity
+from homeassistant.helpers.entity import Entity, EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
@@ -56,19 +58,41 @@ def format_device_identifier(inst: str, hostname: str) -> str:
 
 
 # ---------------------------
+#   TrueNASEntityDescription
+# ---------------------------
+@dataclass(frozen=True, kw_only=True)
+class TrueNASEntityDescription(EntityDescription):
+    """Fields shared by the entity descriptions of every TrueNAS platform."""
+
+    ha_group: str | None = None
+    ha_connection: str | None = None
+    ha_connection_value: str | None = None
+    data_path: str | None = None
+    data_name: str | None = None
+    data_uid: str | None = None
+    data_reference: str | None = None
+    data_attributes_list: tuple[str, ...] = ()
+    func: str = ""
+
+
+# ---------------------------
 #   Entity discovery helpers
 # ---------------------------
-def _skip_keyless_description(entity_description, data) -> bool:
+def _skip_keyless_description(
+    entity_description: TrueNASEntityDescription, data: dict[str, Any]
+) -> bool:
     """Return True if a keyless description has no value to expose."""
-    attr_name = getattr(
+    attr_name: str | None = getattr(
         entity_description,
         "data_attribute",
         getattr(entity_description, "data_is_on", None),
     )
-    return bool(attr_name) and data.get(attr_name) is None
+    if not attr_name:
+        return False
+    return data.get(attr_name) is None
 
 
-def _is_uid_excluded(entity_description, vals) -> bool:
+def _is_uid_excluded(entity_description: TrueNASEntityDescription, vals: Any) -> bool:
     """Return True if a referenced object is excluded from entity creation.
 
     Honors an optional ``data_exclude`` (key, value) on the description, e.g. to
@@ -83,12 +107,16 @@ def _is_uid_excluded(entity_description, vals) -> bool:
 
 
 def _new_referenced_entities(
-    coordinator, entity_description, data, dispatcher, seen: set[str]
-) -> list:
+    coordinator: TrueNASCoordinator,
+    entity_description: TrueNASEntityDescription,
+    data: Any,
+    dispatcher: Mapping[str, Callable[..., Any]],
+    seen: set[str],
+) -> list[TrueNASEntity]:
     """Collect new per-uid entities for one referenced (multi-object) description."""
     behaviors = coordinator.config_entry.options.get(CONF_BEHAVIORS, DEFAULT_BEHAVIORS)
     apply_exclude = BEHAVIOR_REMOVE_INACTIVE_NIC in behaviors
-    new_entities: list = []
+    new_entities: list[TrueNASEntity] = []
     for uid in data:
         # data is a mapping of uid -> values for reference descriptions;
         # fall back to treating the iterated item itself as the values.
@@ -101,17 +129,20 @@ def _new_referenced_entities(
 
 
 def _collect_new_entities(
-    coordinator, descriptions, dispatcher, seen: set[str]
-) -> list:
+    coordinator: TrueNASCoordinator,
+    descriptions: Sequence[TrueNASEntityDescription],
+    dispatcher: Mapping[str, Callable[..., Any]],
+    seen: set[str],
+) -> list[TrueNASEntity]:
     """Return entity objects whose unique_id is not in ``seen`` yet.
 
     ``seen`` is the set of unique_ids already registered for this config entry;
     only genuinely new objects (e.g. a freshly attached disk) are returned, so
     existing entities are never re-added.
     """
-    new_entities: list = []
+    new_entities: list[TrueNASEntity] = []
     for entity_description in descriptions:
-        data = coordinator.data.get(entity_description.data_path)
+        data = coordinator.data.get(entity_description.data_path or "")
         if data is None:
             continue
 
@@ -126,7 +157,9 @@ def _collect_new_entities(
     return new_entities
 
 
-def _append_if_new(obj, seen: set[str], new_entities: list) -> None:
+def _append_if_new(
+    obj: TrueNASEntity, seen: set[str], new_entities: list[TrueNASEntity]
+) -> None:
     """Append the entity to the batch when its unique_id has not been seen yet."""
     if obj.unique_id not in seen:
         seen.add(obj.unique_id)
@@ -134,8 +167,10 @@ def _append_if_new(obj, seen: set[str], new_entities: list) -> None:
 
 
 async def async_add_entities(
-    hass: HomeAssistant, config_entry: ConfigEntry, dispatcher: dict[str, Callable]
-):
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    dispatcher: Mapping[str, Callable[..., Any]],
+) -> None:
     """Set up the platform and register dynamic entity discovery.
 
     On every coordinator refresh only entities that are not already loaded on the
@@ -217,14 +252,15 @@ async def async_add_entities(
 class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     """Define entity."""
 
+    entity_description: TrueNASEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
         self,
         coordinator: TrueNASCoordinator,
-        entity_description,
+        entity_description: TrueNASEntityDescription,
         uid: str | None = None,
-    ):
+    ) -> None:
         """Initialize entity."""
         super().__init__(coordinator)
         self.entity_description = entity_description
@@ -236,8 +272,8 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
     def _refresh_data(self) -> None:
         """Refresh cached data from the coordinator for this entity."""
-        data = self.coordinator.data.get(self.entity_description.data_path, {})
-        self._data = data.get(self._uid, {}) if self._uid else data
+        data = self.coordinator.data.get(self.entity_description.data_path or "", {})
+        self._data: dict[str, Any] = data.get(self._uid, {}) if self._uid else data
         if self._uid and not self._data:
             _LOGGER.debug(
                 "Data for UID %s is missing or empty in %s",
@@ -253,22 +289,25 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     @property
     def name(self) -> str | None:
         """Return the name for this entity."""
+        # Descriptions set name to a str or None (never UNDEFINED); normalize so
+        # an entity without its own name falls back to the device name instead
+        # of showing "None".
+        desc_name = self.entity_description.name
+        if not isinstance(desc_name, str):
+            desc_name = None
+
         if not self._uid:
-            # Return the raw name (may be None) so an entity without its own
-            # name falls back to the device name instead of showing "None".
-            return self.entity_description.name
+            return desc_name
 
         data_value = None
-        if self._data is not None and getattr(
-            self.entity_description, "data_name", None
-        ):
+        if self._data is not None and self.entity_description.data_name:
             data_value = self._data.get(self.entity_description.data_name)
 
         if data_value is None:
             data_value = str(self._uid)
 
-        if self.entity_description.name:
-            return f"{data_value} {self.entity_description.name}"
+        if desc_name:
+            return f"{data_value} {desc_name}"
 
         return f"{data_value}"
 
@@ -276,7 +315,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     def unique_id(self) -> str:
         """Return a unique id for this entity."""
         if self._uid:
-            data_ref = getattr(self.entity_description, "data_reference", None)
+            data_ref = self.entity_description.data_reference
             value = self._data.get(data_ref) if self._data and data_ref else None
             reference = value if value is not None else self._uid
             return format_unique_id(self._inst, self.entity_description.key, reference)
@@ -286,16 +325,17 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return a description for device registry."""
+        ha_group = self.entity_description.ha_group or ""
         dev_connection = DOMAIN
-        dev_connection_value = f"{self._inst}_{self.entity_description.ha_group}"
-        dev_group = self.entity_description.ha_group
-        if self.entity_description.ha_group == "System":
+        dev_connection_value = f"{self._inst}_{ha_group}"
+        dev_group = ha_group
+        if ha_group == "System":
             dev_connection_value = format_device_identifier(
                 self._inst, self.coordinator.data["system_info"]["hostname"]
             )
 
-        if self.entity_description.ha_group.startswith("data__"):
-            dev_group = self.entity_description.ha_group[6:]
+        if ha_group.startswith("data__"):
+            dev_group = ha_group[6:]
             if dev_group in self._data:
                 dev_group = self._data[dev_group]
                 dev_connection_value = dev_group
@@ -310,7 +350,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                 connection_val = self._data.get(data_key, "unknown")
                 dev_connection_value = f"{self._inst}_{connection_val}"
 
-        if self.entity_description.ha_group == "System":
+        if ha_group == "System":
             http_scheme = "https" if self.coordinator.api.scheme == "wss" else "http"
             return DeviceInfo(
                 connections={(dev_connection, f"{dev_connection_value}")},
@@ -358,38 +398,43 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             f"({self.entity_id})"
         )
 
-    async def start(self):
+    async def start(self) -> None:
         """Run function."""
         self._raise_unsupported("start")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop function."""
         self._raise_unsupported("stop")
 
-    async def restart(self):
+    async def restart(self) -> None:
         """Restart function."""
         self._raise_unsupported("restart")
 
-    async def reload(self):
+    async def reload(self) -> None:
         """Reload function."""
         self._raise_unsupported("reload")
 
-    async def snapshot(self):
+    async def snapshot(self) -> None:
         """Snapshot function."""
         self._raise_unsupported("snapshot")
 
-    async def lock(self, **kwargs):
+    async def lock(self, force_umount: bool = False) -> None:
         """Lock function."""
         self._raise_unsupported("lock")
 
-    async def unlock(self, **kwargs):
+    async def unlock(
+        self,
+        passphrase: str | None = None,
+        recursive: bool = False,
+        force: bool = False,
+    ) -> None:
         """Unlock function."""
         self._raise_unsupported("unlock")
 
-    async def passphrase_set(self, **kwargs):
+    async def passphrase_set(self, passphrase: str) -> None:
         """Store passphrase function."""
         self._raise_unsupported("passphrase_set")
 
-    async def refresh(self):
+    async def refresh(self) -> None:
         """Refresh function."""
         self._raise_unsupported("refresh")

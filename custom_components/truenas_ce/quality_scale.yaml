@@ -1,0 +1,131 @@
+rules:
+  # Bronze
+  action-setup:
+    status: todo
+    comment: |
+      Domain-level alert/passphrase services are registered in
+      async_setup_entry (guarded by has_service); move them to async_setup so
+      they validate config-entry state at call time instead.
+  appropriate-polling: done
+  brands:
+    status: todo
+    comment: |
+      No home-assistant/brands entry for the truenas_ce domain yet
+      (custom_integrations/truenas_ce). Planned for the core-readiness phase.
+  common-modules: done
+  config-flow: done
+  config-flow-test-coverage:
+    status: todo
+    comment: |
+      tests/test_config_flow.py covers the pure helpers and validation logic;
+      full flow coverage (user/migrate/reauth/reconfigure/options steps) needs
+      pytest-homeassistant-custom-component, which is currently blocked on the
+      Windows dev machine (its plugin imports fcntl).
+  dependency-transparency: done
+  docs-actions: done
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions:
+    status: todo
+    comment: README lacks an explicit removal/uninstall section.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data:
+    status: todo
+    comment: |
+      The coordinator is stored in hass.data[DOMAIN][entry_id]; migrate to
+      config_entry.runtime_data with a typed ConfigEntry alias.
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry:
+    status: todo
+    comment: |
+      The config flow only rejects duplicate instance *names*
+      (configured_instances); the same host can still be added twice under a
+      different name. Match on host or a system identifier instead.
+
+  # Silver
+  action-exceptions:
+    status: todo
+    comment: |
+      Unsupported entity actions correctly raise ServiceValidationError, but a
+      failed API call inside an action (query returns None) does not raise
+      HomeAssistantError yet.
+  config-entry-unloading: done
+  docs-configuration-parameters: done
+  docs-installation-parameters: done
+  entity-unavailable: done
+  integration-owner: done
+  log-when-unavailable:
+    status: done
+    comment: Handled by DataUpdateCoordinator (logs once on failure/recovery).
+  parallel-updates: done
+  reauthentication-flow: done
+  test-coverage:
+    status: todo
+    comment: |
+      api.py/apiparser.py are at 100 %, coordinator.py and the config-flow
+      helpers are covered, but the platform modules (sensor, binary_sensor,
+      switch, button, update, entity) are not tested yet; overall coverage is
+      below the required 95 %.
+
+  # Gold
+  devices: done
+  diagnostics: done
+  discovery:
+    status: todo
+    comment: |
+      TrueNAS advertises via mDNS; evaluate zeroconf discovery for the config
+      flow.
+  discovery-update-info:
+    status: todo
+    comment: Follows the discovery rule.
+  docs-data-update: done
+  docs-examples: done
+  docs-known-limitations:
+    status: todo
+    comment: |
+      Scattered hints exist (reverse-proxy/Cloudflare section); consolidate a
+      dedicated known-limitations section in the README.
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
+  dynamic-devices: done
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default: done
+  entity-translations:
+    status: todo
+    comment: |
+      Only the diagnostic buttons use translation_key; the remaining entities
+      carry hard-coded English names in their descriptions.
+  exception-translations:
+    status: todo
+    comment: |
+      ServiceValidationError/HomeAssistantError are raised with literal
+      English messages instead of translation_domain/translation_key.
+  icon-translations:
+    status: todo
+    comment: Icons are set via the entity descriptions; no icons.json yet.
+  reconfiguration-flow: done
+  repair-issues: done
+  stale-devices:
+    status: done
+    comment: |
+      Orphaned entities and empty devices are removed on every setup
+      (_cleanup_orphaned_entities); recorder statistics get a repair issue.
+
+  # Platinum
+  async-dependency: done
+  inject-websession:
+    status: exempt
+    comment: |
+      aiotruenas speaks JSON-RPC over its own `websockets` connection; there
+      is no aiohttp/httpx session to inject.
+  strict-typing:
+    status: done
+    comment: |
+      aiotruenas is PEP 561 compliant (ships py.typed) and the integration
+      passes mypy --strict (configured in pyproject.toml).

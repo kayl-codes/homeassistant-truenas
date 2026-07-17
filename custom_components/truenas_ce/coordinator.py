@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypeGuard
 
-from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -21,12 +21,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .api import TrueNASAPI
-from .apiparser import parse_api
+from .apiparser import ApiValueSpec, parse_api
 from .const import (
     BEHAVIOR_SKIP_DISABLED_CRONJOBS,
     CONF_BEHAVIORS,
@@ -66,7 +67,7 @@ _NETDATA_GRAPHS = "reporting.netdata_graphs"
 
 # Field mapping shared by ``pool.query`` and ``boot.get_state`` (the boot-pool
 # reports the same top-level shape, so both are parsed with these lists).
-_POOL_VALS = [
+_POOL_VALS: list[ApiValueSpec] = [
     {"name": "guid", "default": 0},
     {"name": "id", "default": 0},
     {"name": "name", "default": "unknown"},
@@ -108,7 +109,7 @@ _POOL_VALS = [
         "default": 0,
     },
 ]
-_POOL_ENSURE_VALS = [
+_POOL_ENSURE_VALS: list[ApiValueSpec] = [
     {"name": "available", "default": 0.0},
     {"name": "total", "default": 0.0},
     {"name": "usage", "default": 0.0},
@@ -119,7 +120,7 @@ _POOL_ENSURE_VALS = [
 ]
 
 # Job-progress fields shared by the cloudsync, replication and rsync queries.
-_JOB_PROGRESS_VALS = [
+_JOB_PROGRESS_VALS: list[ApiValueSpec] = [
     {
         "name": "time_started",
         "source": "job/time_started/$date",
@@ -143,13 +144,13 @@ _JOB_PROGRESS_VALS = [
 # Cloudsync and rsync report their status via the last job (job/state).
 # Replication has its own persistent ``state`` object (``state/state``) — the
 # value shown in the TrueNAS WebUI — and overrides this (see get_replication, #34).
-_JOB_STATUS_VALS = [
+_JOB_STATUS_VALS: list[ApiValueSpec] = [
     {"name": "state", "source": "job/state", "default": "unknown"},
     *_JOB_PROGRESS_VALS,
 ]
 
 # Certificate expiry monitoring (certificate.query).
-_CERTIFICATE_VALS = [
+_CERTIFICATE_VALS: list[ApiValueSpec] = [
     {"name": "id", "default": 0},
     {"name": "name", "default": "unknown"},
     {"name": "cert_type", "default": "unknown"},
@@ -368,7 +369,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.name = config_entry.data[CONF_NAME]
         self.host = config_entry.data[CONF_HOST]
 
-        self.ds = {
+        self.ds: dict[str, dict[str, Any]] = {
             "interface": {},
             "disk": {},
             "pool": {},
@@ -404,7 +405,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._systemstats_errored: dict[str, datetime] = {}
         self._systemstats_error_cooldown = timedelta(minutes=10)
-        self._disk_temp_graph = None
+        self._disk_temp_graph: str | None = None
         self._ups_graphs: set[str] | None = None
         self.datasets_hass_device_id = None
         self.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
@@ -491,7 +492,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   _async_update_data
     # ---------------------------
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> dict[str, Any]:
         """Update TrueNAS data."""
 
         await self._async_ensure_connected()
@@ -520,7 +521,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         if self.api.connected():
 
-            async def _run_job(job):
+            async def _run_job(job: Callable[[], Awaitable[None]]) -> None:
                 try:
                     await job()
                 except Exception as err:
@@ -938,7 +939,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # No new version in status object, keep current
             self._reset_update_status()
 
-    def _updatecheck_process_new_version(self, new_version_obj: dict) -> None:
+    def _updatecheck_process_new_version(self, new_version_obj: dict[str, Any]) -> None:
         """Process new version data for updatecheck."""
         self.ds["system_info"]["update_version"] = new_version_obj["version"]
         self.ds["system_info"]["update_available"] = True
@@ -1022,11 +1023,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ]
 
     async def _fetch_stat_graphs(
-        self, graph_names: list[str], graph_query: dict
-    ) -> list:
+        self, graph_names: list[str], graph_query: dict[str, Any]
+    ) -> list[Any]:
         """Query each stat graph, returning combined data and tracking failures."""
         reporting_path = _NETDATA_GRAPH
-        tmp_graph: list = []
+        tmp_graph: list[Any] = []
         failed_graphs: list[str] = []
 
         for graph_name in graph_names:
@@ -1064,7 +1065,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 newly_failed_graphs,
             )
 
-    def _process_system_stat(self, item: dict) -> None:
+    def _process_system_stat(self, item: dict[str, Any]) -> None:
         """Process a single system statistic item."""
         name = item.get("name")
         if not name:
@@ -1092,7 +1093,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             self._handle_unknown_stat(name)
 
-    def _process_cputemp(self, item: dict) -> None:
+    def _process_cputemp(self, item: dict[str, Any]) -> None:
         """Store the CPU temperature from a cputemp graph item."""
         mean_vals = item.get("aggregations", {}).get("mean", {})
         valid_means = [v for v in mean_vals.values() if isinstance(v, (int, float))]
@@ -1100,7 +1101,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             round(max(valid_means), 2) if valid_means else None
         )
 
-    def _process_memory_stat(self, item: dict) -> None:
+    def _process_memory_stat(self, item: dict[str, Any]) -> None:
         """Store memory totals and usage percentage from a memory graph item."""
         self.ds["system_info"]["memory-total_value"] = round(
             self.ds["system_info"].get("physmem", 0)
@@ -1137,7 +1138,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(sorted(near_misses)),
             )
 
-    def _process_system_stat_interface(self, item: dict, tmp_etc: str) -> None:
+    def _process_system_stat_interface(
+        self, item: dict[str, Any], tmp_etc: str
+    ) -> None:
         """Process interface system statistics."""
         tmp_arr = ("rx", "tx")
         legend = item.get("legend")
@@ -1176,7 +1179,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   _systemstats_process
     # ---------------------------
-    def _systemstats_process(self, arr, graph, t) -> None:
+    def _systemstats_process(
+        self, arr: str | tuple[str, ...], graph: dict[str, Any], t: str
+    ) -> None:
         arr = (arr,) if isinstance(arr, str) else tuple(arr)
         aggregations = graph.get("aggregations")
         legend = graph.get("legend")
@@ -1209,7 +1214,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             info[tmp_var] = round(tmp_val, 2)
 
-    def _store_stat_defaults(self, t: str, arr: tuple) -> None:
+    def _store_stat_defaults(self, t: str, arr: tuple[str, ...]) -> None:
         """Store zeroed defaults when a statistic graph has no aggregations."""
         info = self.ds["system_info"]
         for tmp_load in arr:
@@ -1650,7 +1655,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 temps,
             )
 
-    def _is_valid_disk_temperature_payload(self, temps: Any) -> bool:
+    def _is_valid_disk_temperature_payload(
+        self, temps: Any
+    ) -> TypeGuard[dict[str, Any]]:
         """Validate the shape of the disk temperature API payload.
 
         Delegates specific value validation to per-disk mapping.
@@ -1730,7 +1737,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return ""
 
-    def _collect_disk_temp(self, entry: dict, temps: dict[str, float]) -> None:
+    def _collect_disk_temp(
+        self, entry: dict[str, Any], temps: dict[str, float]
+    ) -> None:
         """Extract a single disk's median temperature into temps."""
         identifier = entry.get("identifier")
         mean = entry.get("aggregations", {}).get("mean", {})
@@ -2332,7 +2341,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Rebuild the dict instead of mutating it while iterating, so disabled
         # cronjobs are dropped without needing a list() copy of the items.
-        filtered_cronjobs: dict = {}
+        filtered_cronjobs: dict[str, Any] = {}
         for uid, vals in self.ds["cronjob"].items():
             if skip_disabled and not vals.get("enabled", True):
                 continue

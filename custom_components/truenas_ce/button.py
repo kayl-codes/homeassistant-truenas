@@ -6,16 +6,16 @@ from logging import getLogger
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
+from homeassistant.const import CONF_NAME, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .button_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
+    TrueNASButtonEntityDescription,
 )
 from .const import (
     API_POOL_SCRUB_SCRUB,
@@ -36,6 +36,9 @@ from .entity import (
 )
 
 _LOGGER = getLogger(__name__)
+
+# Updates are centralized in the coordinator; entity actions may run unlimited.
+PARALLEL_UPDATES = 0
 
 
 # ---------------------------
@@ -76,11 +79,14 @@ async def async_setup_entry(
 class TrueNASButton(TrueNASEntity, ButtonEntity):
     """Define a TrueNAS run button (one-tap trigger for an on-demand task)."""
 
+    entity_description: TrueNASButtonEntityDescription
+
     async def async_press(self) -> None:
         """Trigger the configured JSON-RPC method for this object."""
         method = self.entity_description.api_method
+        data_path = self.entity_description.data_path
         object_id = self._data.get("id")
-        if not method or object_id is None:
+        if not method or not data_path or object_id is None:
             _LOGGER.warning(
                 "TrueNAS button %s has no api_method or object id; skipping",
                 self.entity_id,
@@ -88,9 +94,7 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
             return
 
         # Trigger the run and show RUNNING immediately (re-synced on next poll).
-        await self.coordinator.async_run_task(
-            method, object_id, self.entity_description.data_path
-        )
+        await self.coordinator.async_run_task(method, object_id, data_path)
 
 
 # ---------------------------
@@ -125,7 +129,7 @@ class TrueNASPoolScrubButton(TrueNASButton):
             )
             return
         self.coordinator.set_optimistic_running(
-            self.entity_description.data_path, task_id
+            self.entity_description.data_path or "", task_id
         )
         _LOGGER.debug(
             "TrueNAS scrub button %s: started scrub for pool %r",
