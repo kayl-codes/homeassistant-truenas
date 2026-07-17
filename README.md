@@ -369,6 +369,16 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   * *Hide RX/TX sensors for disconnected NICs* - when enabled, traffic sensors are only created for connected interfaces; when disabled (default), every interface gets RX/TX sensors.
 * **Monitored groups** - Enable or disable whole sensor groups: **UPS**, **Virtual Machines**, **Containers**, **Cloudsync**, **Replication**, **Rsync Tasks**, **Snapshot Tasks**, **Datasets** and **Directory Services**. Disabling a group skips its API query entirely (saving resources) and removes its entities and device from Home Assistant on the next reload. Core groups (system, network, pools, disks, apps, services, alerts) are always monitored.
 
+## Removing the integration
+
+To completely remove the integration from Home Assistant:
+
+1. Go to **Settings → Devices & Services → TrueNAS**, open the entry menu (⋮) and select **Delete**. This removes the config entry together with all its devices and entities (including any stored dataset passphrases).
+2. To also remove the code, open **HACS**, search for **TrueNAS Community Edition**, open its menu (⋮) and select **Remove**, then restart Home Assistant.
+3. Optionally revoke the API key that was created for the integration in the TrueNAS UI (**Credentials → Users → API Keys**), since it is no longer needed.
+
+Long-term statistics recorded for the sensors are kept by Home Assistant's recorder and expire with your regular recorder purge settings; no manual cleanup is required.
+
 # Development
 
 ## Translation

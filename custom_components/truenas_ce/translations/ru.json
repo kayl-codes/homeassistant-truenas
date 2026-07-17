@@ -64,6 +64,7 @@
             "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
+            "already_configured": "Этот хост TrueNAS уже настроен.",
             "reconfigure_successful": "Перенастройка выполнена успешно.",
             "reauth_successful": "Повторная аутентификация выполнена успешно."
         }

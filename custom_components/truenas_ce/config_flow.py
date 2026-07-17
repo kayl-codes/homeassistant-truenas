@@ -405,6 +405,11 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
         truenas_config.update(user_input)
 
+        # The same device must not be configurable twice: abort when another
+        # entry already points at this host (the name check below alone would
+        # let the same host in again under a different name).
+        self._async_abort_entries_match({CONF_HOST: truenas_config[CONF_HOST]})
+
         # Check if instance with this name already exists
         if truenas_config[CONF_NAME] in configured_instances(self.hass):
             errors["base"] = "name_exists"
@@ -482,7 +487,8 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         description_placeholders: dict[str, str],
     ) -> None:
         """Set errors if any passphrase key is not a known dataset name."""
-        coordinator = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        coordinator = getattr(entry, "runtime_data", None)
         if coordinator is None:
             return
         known = {

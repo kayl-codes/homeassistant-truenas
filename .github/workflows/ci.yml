@@ -54,6 +54,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements_tests.txt
+      - name: Install pytest-homeassistant-custom-component (CI-only, Linux)
+        run: |
+          pip install pytest-homeassistant-custom-component
       - name: Test with pytest
         run: |
           pip install pytest

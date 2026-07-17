@@ -6,7 +6,7 @@ from logging import getLogger
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_NAME
 from homeassistant.core import (
     HomeAssistant,
@@ -19,6 +19,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.typing import ConfigType
 
 from .binary_sensor_types import SENSOR_TYPES as BINARY_SENSOR_TYPES
 from .const import (
@@ -51,7 +52,7 @@ from .const import (
     SERVICE_PASSPHRASE_REMOVE,
     SIGNAL_UPDATE_SENSORS,
 )
-from .coordinator import TrueNASCoordinator
+from .coordinator import TrueNASConfigEntry, TrueNASCoordinator
 from .entity import TrueNASEntityDescription, _is_uid_excluded, format_unique_id
 from .helper import alert_action, scaled_data_unit
 from .migration import (
@@ -298,42 +299,51 @@ def _cleanup_orphaned_entities(
 # ---------------------------
 #   Alert Service Handlers
 # ---------------------------
-def _get_coordinator(
+def _resolve_config_entry(
     hass: HomeAssistant, entry_id: str | None
-) -> tuple[str | None, dict[str, str]]:
-    """Resolve coordinator; return (entry_id, error_dict) or (entry_id, {})."""
-    coords = hass.data.get(DOMAIN, {})
-    if not coords:
+) -> tuple[TrueNASConfigEntry | None, dict[str, str]]:
+    """Resolve the target config entry; return (entry, {}) or (None, error_dict).
+
+    Services are registered in ``async_setup`` (before any entry exists), so the
+    target entry is validated here at call time: it must exist and be loaded.
+    """
+    loaded: list[TrueNASConfigEntry] = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.state is ConfigEntryState.LOADED
+    ]
+    if not loaded:
         return None, {"error": "No TrueNAS instances configured"}
 
     if not entry_id:
-        entries = list(coords.keys())
-        if len(entries) != 1:
+        if len(loaded) != 1:
             return (
                 None,
                 {
                     "error": (
-                        f"Multiple TrueNAS instances ({len(entries)}); "
+                        f"Multiple TrueNAS instances ({len(loaded)}); "
                         "please specify config_entry"
                     )
                 },
             )
-        entry_id = entries[0]
+        return loaded[0], {}
 
-    if entry_id not in coords:
-        return None, {"error": f"TrueNAS instance {entry_id} not found"}
+    for entry in loaded:
+        if entry.entry_id == entry_id:
+            return entry, {}
 
-    return entry_id, {}
+    return None, {"error": f"TrueNAS instance {entry_id} not found"}
 
 
 async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """List all TrueNAS alerts with selectable properties."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
-    if error:
+    entry, error = _resolve_config_entry(
+        hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
+    )
+    if error or entry is None:
         return {"alerts": [], **error}
 
-    coordinator = hass.data[DOMAIN][entry_id]
-    alerts = await coordinator.api.query("alert.list")
+    alerts = await entry.runtime_data.api.query("alert.list")
     if not isinstance(alerts, list):
         return {"alerts": [], "error": "Unexpected alert.list response"}
 
@@ -349,54 +359,53 @@ async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str
 
 async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
     """Dismiss a TrueNAS alert by UUID."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
-    if error:
+    entry, error = _resolve_config_entry(
+        hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
+    )
+    if error or entry is None:
         raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
         raise ServiceValidationError("Alert UUID is required for dismiss action")
 
-    coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(coordinator, uuid, "dismiss")
+    await alert_action(entry.runtime_data, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
     """Restore a TrueNAS alert by UUID."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
-    if error:
+    entry, error = _resolve_config_entry(
+        hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
+    )
+    if error or entry is None:
         raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
         raise ServiceValidationError("Alert UUID is required for restore action")
 
-    coordinator = hass.data[DOMAIN][entry_id]
-    await alert_action(coordinator, uuid, "restore")
+    await alert_action(entry.runtime_data, uuid, "restore")
 
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> None:
     """Remove a stored dataset passphrase by dataset path."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
-    if error or entry_id is None:
+    entry, error = _resolve_config_entry(hass, call.data.get(SERVICE_CONFIG_ENTRY))
+    if error or entry is None:
         raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
 
     dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
     if not dataset_path:
         raise ServiceValidationError("dataset_path is required")
 
-    config_entry = hass.config_entries.async_get_entry(entry_id)
-    if config_entry is None:
-        raise ServiceValidationError(f"Config entry '{entry_id}' not found")
-    existing = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+    existing = entry.data.get(CONF_DATASET_PASSPHRASES, {})
     if not isinstance(existing, dict) or dataset_path not in existing:
         raise ServiceValidationError(
             f"No stored passphrase found for dataset '{dataset_path}'"
         )
     updated = {k: v for k, v in existing.items() if k != dataset_path}
     hass.config_entries.async_update_entry(
-        config_entry,
-        data={**config_entry.data, CONF_DATASET_PASSPHRASES: updated},
+        entry,
+        data={**entry.data, CONF_DATASET_PASSPHRASES: updated},
     )
 
 
@@ -404,26 +413,87 @@ async def _handle_passphrase_list(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
     """Return the dataset names that have a stored passphrase (no values)."""
-    entry_id, error = _get_coordinator(hass, call.data.get(SERVICE_CONFIG_ENTRY))
-    if error or entry_id is None:
+    entry, error = _resolve_config_entry(hass, call.data.get(SERVICE_CONFIG_ENTRY))
+    if error or entry is None:
         return {"datasets": [], **error}
 
-    config_entry = hass.config_entries.async_get_entry(entry_id)
-    if config_entry is None:
-        return {"datasets": [], "error": f"Config entry '{entry_id}' not found"}
-    stored = config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
+    stored = entry.data.get(CONF_DATASET_PASSPHRASES, {})
     datasets = sorted(stored.keys()) if isinstance(stored, dict) else []
     return {"datasets": datasets}
 
 
 # ---------------------------
+#   async_setup
+# ---------------------------
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the domain-level services.
+
+    Registration happens at integration setup (not per config entry) so the
+    services exist independently of any entry; the handlers resolve and
+    validate the target entry at call time (see ``_resolve_config_entry``).
+    """
+
+    async def _alert_dismiss_handler(call: ServiceCall) -> None:
+        await _handle_alert_dismiss(hass, call)
+
+    async def _alert_restore_handler(call: ServiceCall) -> None:
+        await _handle_alert_restore(hass, call)
+
+    async def _alert_list_handler(call: ServiceCall) -> ServiceResponse:
+        return await _handle_alert_list(hass, call)
+
+    async def _passphrase_remove_handler(call: ServiceCall) -> None:
+        await _handle_passphrase_remove(hass, call)
+
+    async def _passphrase_list_handler(call: ServiceCall) -> ServiceResponse:
+        return await _handle_passphrase_list(hass, call)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ALERT_DISMISS,
+        _alert_dismiss_handler,
+        schema=SCHEMA_SERVICE_ALERT_DISMISS,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ALERT_RESTORE,
+        _alert_restore_handler,
+        schema=SCHEMA_SERVICE_ALERT_RESTORE,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ALERT_LIST,
+        _alert_list_handler,
+        schema=SCHEMA_SERVICE_ALERT_LIST,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PASSPHRASE_REMOVE,
+        _passphrase_remove_handler,
+        schema=SCHEMA_SERVICE_PASSPHRASE_REMOVE,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PASSPHRASE_LIST,
+        _passphrase_list_handler,
+        schema=SCHEMA_SERVICE_PASSPHRASE_LIST,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    return True
+
+
+# ---------------------------
 #   async_setup_entry
 # ---------------------------
-async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, config_entry: TrueNASConfigEntry
+) -> bool:
     """Set up TrueNAS config entry."""
     coordinator = TrueNASCoordinator(hass, config_entry)
     await coordinator.async_config_entry_first_refresh()
-    hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = coordinator
+    config_entry.runtime_data = coordinator
 
     # Community-Edition rename: free the legacy "truenas" entity_ids before the
     # platforms create the new entities (no-op until the domain is renamed).
@@ -433,65 +503,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     _cleanup_orphaned_entities(hass, config_entry, coordinator)
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
-
-    # Register alert services (domain-level, instance-specific) once.
-    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_DISMISS):
-
-        async def _alert_dismiss_handler(call: ServiceCall) -> None:
-            await _handle_alert_dismiss(hass, call)
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_ALERT_DISMISS,
-            _alert_dismiss_handler,
-            schema=SCHEMA_SERVICE_ALERT_DISMISS,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_RESTORE):
-
-        async def _alert_restore_handler(call: ServiceCall) -> None:
-            await _handle_alert_restore(hass, call)
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_ALERT_RESTORE,
-            _alert_restore_handler,
-            schema=SCHEMA_SERVICE_ALERT_RESTORE,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ALERT_LIST):
-
-        async def _alert_list_handler(call: ServiceCall) -> ServiceResponse:
-            return await _handle_alert_list(hass, call)
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_ALERT_LIST,
-            _alert_list_handler,
-            schema=SCHEMA_SERVICE_ALERT_LIST,
-            supports_response=SupportsResponse.OPTIONAL,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_REMOVE):
-
-        async def _passphrase_remove_handler(call: ServiceCall) -> None:
-            await _handle_passphrase_remove(hass, call)
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_PASSPHRASE_REMOVE,
-            _passphrase_remove_handler,
-            schema=SCHEMA_SERVICE_PASSPHRASE_REMOVE,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_PASSPHRASE_LIST):
-
-        async def _passphrase_list_handler(call: ServiceCall) -> ServiceResponse:
-            return await _handle_passphrase_list(hass, call)
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_PASSPHRASE_LIST,
-            _passphrase_list_handler,
-            schema=SCHEMA_SERVICE_PASSPHRASE_LIST,
-            supports_response=SupportsResponse.OPTIONAL,
-        )
 
     # Re-attach the freed legacy entity_ids now that the new entities exist, then
     # report the outcome once (validation checks + guide link + rollback hint).
@@ -517,13 +528,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 # ---------------------------
 #   async_unload_entry
 # ---------------------------
-async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, config_entry: TrueNASConfigEntry
+) -> bool:
     """Unload TrueNAS config entry."""
 
     if unload_ok := await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
     ):
-        coordinator = hass.data[DOMAIN].pop(config_entry.entry_id)
-        await coordinator.api.close()
+        await config_entry.runtime_data.api.close()
 
     return unload_ok

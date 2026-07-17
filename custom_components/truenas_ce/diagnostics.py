@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, TO_REDACT
+from .const import TO_REDACT
+from .coordinator import TrueNASConfigEntry
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, config_entry: ConfigEntry
+    hass: HomeAssistant, config_entry: TrueNASConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     return {
@@ -20,7 +20,5 @@ async def async_get_config_entry_diagnostics(
             "data": async_redact_data(config_entry.data, TO_REDACT),
             "options": async_redact_data(config_entry.options, TO_REDACT),
         },
-        "data": async_redact_data(
-            hass.data[DOMAIN][config_entry.entry_id].ds, TO_REDACT
-        ),
+        "data": async_redact_data(config_entry.runtime_data.ds, TO_REDACT),
     }

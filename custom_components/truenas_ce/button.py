@@ -58,7 +58,7 @@ async def async_setup_entry(
 
     # The orphaned-statistics cleanup button is a single diagnostic entity per
     # config entry, not tied to a TrueNAS object, so it is added directly.
-    coordinator: TrueNASCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator: TrueNASCoordinator = config_entry.runtime_data
     _async_add_entities([TrueNASStatisticsCleanupButton(coordinator)])
 
     # On-demand data refresh: a diagnostic button that forces an immediate

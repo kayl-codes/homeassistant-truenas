@@ -347,6 +347,10 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
     return any(_DEVICE_NAME_SLUG in token for token in tokens)
 
 
+# Typed alias: a TrueNAS config entry carries its coordinator as runtime_data.
+type TrueNASConfigEntry = ConfigEntry[TrueNASCoordinator]
+
+
 # ---------------------------
 #   TrueNASControllerData
 # ---------------------------

@@ -240,7 +240,7 @@ def test_find_legacy_config_none_when_no_legacy_entries() -> None:
 def test_validate_passphrase_names_no_coordinator_skips() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
@@ -252,7 +252,9 @@ def test_validate_passphrase_names_no_known_datasets_skips() -> None:
     coordinator = MagicMock()
     coordinator.ds = {"dataset": {}}
     flow.hass = MagicMock()
-    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    flow.hass.config_entries.async_get_entry.return_value = MagicMock(
+        runtime_data=coordinator
+    )
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
@@ -264,7 +266,9 @@ def test_validate_passphrase_names_unknown_dataset_sets_error() -> None:
     coordinator = MagicMock()
     coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
     flow.hass = MagicMock()
-    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    flow.hass.config_entries.async_get_entry.return_value = MagicMock(
+        runtime_data=coordinator
+    )
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names(
@@ -279,7 +283,9 @@ def test_validate_passphrase_names_multiple_unknown_datasets_sets_error() -> Non
     coordinator = MagicMock()
     coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
     flow.hass = MagicMock()
-    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    flow.hass.config_entries.async_get_entry.return_value = MagicMock(
+        runtime_data=coordinator
+    )
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names(
@@ -294,7 +300,9 @@ def test_validate_passphrase_names_all_known_sets_no_error() -> None:
     coordinator = MagicMock()
     coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
     flow.hass = MagicMock()
-    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    flow.hass.config_entries.async_get_entry.return_value = MagicMock(
+        runtime_data=coordinator
+    )
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
@@ -307,7 +315,7 @@ def test_validate_passphrase_names_all_known_sets_no_error() -> None:
 def test_apply_passphrase_input_blank_text_removes_key() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     user_input = {"dataset_passphrases": "   "}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
@@ -319,7 +327,7 @@ def test_apply_passphrase_input_blank_text_removes_key() -> None:
 def test_apply_passphrase_input_malformed_line_sets_error() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     user_input = {"dataset_passphrases": "no-separator-here"}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
@@ -331,7 +339,7 @@ def test_apply_passphrase_input_malformed_line_sets_error() -> None:
 def test_apply_passphrase_input_empty_dataset_name_sets_error() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     user_input = {"dataset_passphrases": "#value"}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
@@ -343,7 +351,7 @@ def test_apply_passphrase_input_empty_dataset_name_sets_error() -> None:
 def test_apply_passphrase_input_empty_passphrase_value_sets_error() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     user_input = {"dataset_passphrases": "dataset#"}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
@@ -355,7 +363,7 @@ def test_apply_passphrase_input_empty_passphrase_value_sets_error() -> None:
 def test_apply_passphrase_input_merges_with_existing() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     truenas_config = {"dataset_passphrases": {"tank/old": "oldsecret"}}
     user_input = {"dataset_passphrases": "tank/new#newsecret"}
     errors: dict[str, str] = {}
@@ -372,7 +380,7 @@ def test_apply_passphrase_input_merges_with_existing() -> None:
 def test_apply_passphrase_input_overrides_existing_dataset_passphrase() -> None:
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     truenas_config = {"dataset_passphrases": {"tank/data": "oldsecret"}}
     user_input = {"dataset_passphrases": "tank/data#newsecret"}
     errors: dict[str, str] = {}
@@ -388,7 +396,7 @@ def test_apply_passphrase_input_strips_dataset_name_but_not_passphrase() -> None
     """The dataset name is trimmed; the passphrase value is taken verbatim."""
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
-    flow.hass.data = {}
+    flow.hass.config_entries.async_get_entry.return_value = None
     user_input = {"dataset_passphrases": "  tank/data  #  secret  "}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
@@ -402,7 +410,9 @@ def test_apply_passphrase_input_unknown_dataset_propagates_validation_error() ->
     coordinator = MagicMock()
     coordinator.ds = {"dataset": {"1": {"name": "tank/data"}}}
     flow.hass = MagicMock()
-    flow.hass.data = {DOMAIN: {"entry1": coordinator}}
+    flow.hass.config_entries.async_get_entry.return_value = MagicMock(
+        runtime_data=coordinator
+    )
     user_input = {"dataset_passphrases": "tank/unknown#secret"}
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}

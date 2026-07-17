@@ -30,7 +30,8 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Show the fix/ignore menu."""
-        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        coordinator = getattr(entry, "runtime_data", None)
         count = len(coordinator.orphaned_statistics) if coordinator else 0
         return self.async_show_menu(
             step_id="init",
@@ -42,7 +43,8 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Delete the orphaned statistics."""
-        coordinator = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        coordinator = getattr(entry, "runtime_data", None)
         if coordinator is not None:
             await coordinator.async_clear_orphaned_statistics()
         return self.async_create_entry(title="", data={})

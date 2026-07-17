@@ -1,49 +1,52 @@
 rules:
   # Bronze
   action-setup:
-    status: todo
+    status: done
     comment: |
-      Domain-level alert/passphrase services are registered in
-      async_setup_entry (guarded by has_service); move them to async_setup so
-      they validate config-entry state at call time instead.
+      Domain-level alert/passphrase services are registered in async_setup;
+      the handlers resolve the target config entry at call time and reject
+      missing/unloaded entries with ServiceValidationError.
   appropriate-polling: done
   brands:
-    status: todo
+    status: done
     comment: |
-      No home-assistant/brands entry for the truenas_ce domain yet
-      (custom_integrations/truenas_ce). Planned for the core-readiness phase.
+      Brand images ship inside the integration (brand/ folder with icon,
+      dark_icon and @2x variants), served locally by HA 2026.3+. The brands
+      repository no longer accepts custom-integration submissions, so this is
+      the supported path. A core migration would still need a brands-repo PR.
   common-modules: done
   config-flow: done
   config-flow-test-coverage:
-    status: todo
+    status: done
     comment: |
       tests/test_config_flow.py covers the pure helpers and validation logic;
-      full flow coverage (user/migrate/reauth/reconfigure/options steps) needs
-      pytest-homeassistant-custom-component, which is currently blocked on the
-      Windows dev machine (its plugin imports fcntl).
+      tests/test_config_flow_flows.py drives the user/migrate/reauth/
+      reconfigure/options steps end to end via pytest-homeassistant-custom-
+      component, installed CI-only (Linux) since it cannot run on the Windows
+      dev machine (its plugin imports fcntl) -- conftest.py skips collecting
+      that module locally when the package is absent.
   dependency-transparency: done
   docs-actions: done
   docs-high-level-description: done
   docs-installation-instructions: done
   docs-removal-instructions:
-    status: todo
-    comment: README lacks an explicit removal/uninstall section.
+    status: done
+    comment: README has a dedicated "Removing the integration" section.
   entity-event-setup: done
   entity-unique-id: done
   has-entity-name: done
   runtime-data:
-    status: todo
+    status: done
     comment: |
-      The coordinator is stored in hass.data[DOMAIN][entry_id]; migrate to
-      config_entry.runtime_data with a typed ConfigEntry alias.
+      The coordinator lives in config_entry.runtime_data, typed via the
+      TrueNASConfigEntry alias in coordinator.py.
   test-before-configure: done
   test-before-setup: done
   unique-config-entry:
-    status: todo
+    status: done
     comment: |
-      The config flow only rejects duplicate instance *names*
-      (configured_instances); the same host can still be added twice under a
-      different name. Match on host or a system identifier instead.
+      The user flow aborts (already_configured) when another entry already
+      uses the same host, in addition to the duplicate-name check.
 
   # Silver
   action-exceptions:
