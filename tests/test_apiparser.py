@@ -413,10 +413,33 @@ def test_parse_api_convert_timestamp_non_int_normalized_to_none(
     assert result["1"]["started"] is None
 
 
+def test_parse_api_convert_timestamp_negative_normalized_to_none(
+    ap: ModuleType,
+) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "started": -1}],
+        key="id",
+        vals=[{"name": "started", "convert": "utc_from_timestamp"}],
+    )
+    assert result["1"]["started"] is None
+
+
 def test_parse_api_convert_timestamp_bool_normalized_to_none(ap: ModuleType) -> None:
     """bool is an int subclass but never a valid timestamp."""
     result = ap.parse_api(
         source=[{"id": "1", "started": True}],
+        key="id",
+        vals=[{"name": "started", "convert": "utc_from_timestamp"}],
+    )
+    assert result["1"]["started"] is None
+
+
+def test_parse_api_convert_timestamp_bool_false_normalized_to_none(
+    ap: ModuleType,
+) -> None:
+    """False is also a bool and must not be treated as a timestamp."""
+    result = ap.parse_api(
+        source=[{"id": "1", "started": False}],
         key="id",
         vals=[{"name": "started", "convert": "utc_from_timestamp"}],
     )
@@ -444,6 +467,31 @@ def test_parse_api_convert_timestamp_running_scrub_end_time_none(
         ],
     )
     assert result["1"]["scrub_end"] is None
+
+
+def test_parse_api_convert_timestamp_completed_scrub_end_time_converted(
+    ap: ModuleType,
+) -> None:
+    """Companion to the running-scrub regression: a finished scrub reports
+    end_time as {"$date": <millis>}, which must convert to a UTC datetime."""
+    result = ap.parse_api(
+        source=[
+            {
+                "id": "1",
+                "scan": {"state": "FINISHED", "end_time": {"$date": 1700000000000}},
+            }
+        ],
+        key="id",
+        vals=[
+            {
+                "name": "scrub_end",
+                "source": "scan/end_time/$date",
+                "default": 0,
+                "convert": "utc_from_timestamp",
+            }
+        ],
+    )
+    assert result["1"]["scrub_end"] == ap.utc_from_timestamp(1700000000)
 
 
 def test_parse_api_convert_human_date(ap: ModuleType) -> None:
