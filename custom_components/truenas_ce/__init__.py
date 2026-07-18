@@ -536,6 +536,8 @@ async def async_unload_entry(
     if unload_ok := await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
     ):
-        await config_entry.runtime_data.api.close()
+        coordinator = getattr(config_entry, "runtime_data", None)
+        if coordinator is not None:
+            await coordinator.api.close()
 
     return unload_ok

@@ -15,10 +15,11 @@ async def async_get_config_entry_diagnostics(
     _hass: HomeAssistant, config_entry: TrueNASConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
+    coordinator = getattr(config_entry, "runtime_data", None)
     return {
         "entry": {
             "data": async_redact_data(config_entry.data, TO_REDACT),
             "options": async_redact_data(config_entry.options, TO_REDACT),
         },
-        "data": async_redact_data(config_entry.runtime_data.ds, TO_REDACT),
+        "data": async_redact_data(coordinator.ds, TO_REDACT) if coordinator else {},
     }
