@@ -16,6 +16,7 @@ module when the package is absent, e.g. on the local Windows dev machine.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -92,11 +93,17 @@ def _mock_connection_ok() -> Iterator[None]:
         yield
 
 
-def _mock_connection_failure(errorcode: str) -> AsyncMock:
-    return patch(
-        f"{_API_PATH}.connection_test",
-        AsyncMock(return_value=(False, errorcode)),
-    )
+@contextmanager
+def _mock_connection_failure(errorcode: str) -> Iterator[None]:
+    """Patch connection_test to fail with errorcode; disconnect stays a no-op."""
+    with (
+        patch(
+            f"{_API_PATH}.connection_test",
+            AsyncMock(return_value=(False, errorcode)),
+        ),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        yield
 
 
 # ---------------------------
@@ -149,10 +156,7 @@ async def test_user_flow_aborts_on_duplicate_host(hass: HomeAssistant) -> None:
 
 
 async def test_user_flow_connection_error_maps_to_ha_error(hass: HomeAssistant) -> None:
-    with (
-        _mock_connection_failure(ERR_INVALID_KEY),
-        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
-    ):
+    with _mock_connection_failure(ERR_INVALID_KEY):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
@@ -239,28 +243,25 @@ async def test_migrate_manual_skips_takeover(hass: HomeAssistant) -> None:
 # ---------------------------
 #   reauth step
 # ---------------------------
+@pytest.mark.usefixtures("_mock_connection_ok")
 async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
     entry.add_to_hass(hass)
 
-    with (
-        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
-        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={
-                "source": config_entries.SOURCE_REAUTH,
-                "entry_id": entry.entry_id,
-            },
-            data=entry.data,
-        )
-        assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "reauth_confirm"
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=entry.data,
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
 
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_API_KEY: "new-key"}
-        )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_KEY] == "new-key"
@@ -272,10 +273,7 @@ async def test_reauth_flow_shows_error_on_failed_connection(
     entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
     entry.add_to_hass(hass)
 
-    with (
-        _mock_connection_failure(ERR_INVALID_KEY),
-        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
-    ):
+    with _mock_connection_failure(ERR_INVALID_KEY):
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={
