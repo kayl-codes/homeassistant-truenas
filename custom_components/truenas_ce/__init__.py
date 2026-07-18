@@ -16,6 +16,7 @@ from homeassistant.core import (
     callback,
 )
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -66,6 +67,9 @@ from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
 
 _LOGGER = getLogger(__name__)
 _UNKNOWN_ERROR = "Unknown error"
+
+# This integration is config-entry only; it has no configuration.yaml schema.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # All entity descriptions across platforms, used to compute the set of unique_ids
 # that legitimately exist for the current TrueNAS objects (orphan cleanup).
