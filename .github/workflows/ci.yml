@@ -58,9 +58,7 @@ jobs:
         run: |
           pip install pytest-homeassistant-custom-component
       - name: Test with pytest
-        run: |
-          pip install pytest
-          pytest
+        run: pytest
 
   mypy:
     name: Mypy strict typing
