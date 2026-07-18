@@ -71,6 +71,7 @@ from .const import (
     MONITOR_GROUP_UPS,
     MONITOR_GROUP_VMS,
 )
+from .coordinator import get_truenas_coordinator
 
 _LOGGER = getLogger(__name__)
 
@@ -488,7 +489,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> None:
         """Set errors if any passphrase key is not a known dataset name."""
         entry = self.hass.config_entries.async_get_entry(entry_id)
-        coordinator = getattr(entry, "runtime_data", None)
+        coordinator = get_truenas_coordinator(entry)
         if coordinator is None:
             return
         known = {

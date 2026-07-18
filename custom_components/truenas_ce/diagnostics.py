@@ -8,14 +8,14 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from .const import TO_REDACT
-from .coordinator import TrueNASConfigEntry
+from .coordinator import TrueNASConfigEntry, get_truenas_coordinator
 
 
 async def async_get_config_entry_diagnostics(
     _hass: HomeAssistant, config_entry: TrueNASConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    coordinator = getattr(config_entry, "runtime_data", None)
+    coordinator = get_truenas_coordinator(config_entry)
     return {
         "entry": {
             "data": async_redact_data(config_entry.data, TO_REDACT),

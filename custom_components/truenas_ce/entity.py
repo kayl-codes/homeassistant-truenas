@@ -27,7 +27,7 @@ from .const import (
     DOMAIN,
     SIGNAL_UPDATE_SENSORS,
 )
-from .coordinator import TrueNASCoordinator
+from .coordinator import TrueNASCoordinator, get_truenas_coordinator
 from .helper import format_attribute
 
 _LOGGER = getLogger(__name__)
@@ -205,7 +205,7 @@ async def async_add_entities(
     # before the platforms are forwarded, so it is always present; guard
     # explicitly so a future change to that contract fails loudly (logged)
     # instead of with an AttributeError deep inside platform setup.
-    this_coordinator = getattr(config_entry, "runtime_data", None)
+    this_coordinator = get_truenas_coordinator(config_entry)
     if this_coordinator is None:
         _LOGGER.error(
             "No TrueNAS coordinator found for entry %s; skipping entity setup",

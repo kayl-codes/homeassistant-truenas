@@ -16,6 +16,7 @@ from .const import (
     ISSUE_STATISTICS_ORPHANED,
     MIGRATION_RECORDS,
 )
+from .coordinator import get_truenas_coordinator
 from .migration import async_rollback_to_legacy
 
 
@@ -31,7 +32,7 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
     ) -> FlowResult:
         """Show the fix/ignore menu."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        coordinator = getattr(entry, "runtime_data", None)
+        coordinator = get_truenas_coordinator(entry)
         count = len(coordinator.orphaned_statistics) if coordinator else 0
         return self.async_show_menu(
             step_id="init",
@@ -44,7 +45,7 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
     ) -> FlowResult:
         """Delete the orphaned statistics."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        coordinator = getattr(entry, "runtime_data", None)
+        coordinator = get_truenas_coordinator(entry)
         if coordinator is not None:
             await coordinator.async_clear_orphaned_statistics()
         return self.async_create_entry(title="", data={})

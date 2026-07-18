@@ -351,6 +351,20 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
 type TrueNASConfigEntry = ConfigEntry[TrueNASCoordinator]
 
 
+def get_truenas_coordinator(
+    config_entry: ConfigEntry[Any] | None,
+) -> TrueNASCoordinator | None:
+    """Return the coordinator stored as ``runtime_data``, or ``None`` if unset.
+
+    ``runtime_data`` is a bare annotation on ``ConfigEntry`` with no default, so
+    direct attribute access raises ``AttributeError`` before ``__init__`` has
+    assigned it (or after ``async_unload_entry`` has cleared it). Centralizing
+    the ``getattr`` fallback here keeps every call site safe without repeating
+    the same guard.
+    """
+    return getattr(config_entry, "runtime_data", None)
+
+
 # ---------------------------
 #   TrueNASControllerData
 # ---------------------------

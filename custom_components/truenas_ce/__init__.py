@@ -52,7 +52,7 @@ from .const import (
     SERVICE_PASSPHRASE_REMOVE,
     SIGNAL_UPDATE_SENSORS,
 )
-from .coordinator import TrueNASConfigEntry, TrueNASCoordinator
+from .coordinator import TrueNASConfigEntry, TrueNASCoordinator, get_truenas_coordinator
 from .entity import TrueNASEntityDescription, _is_uid_excluded, format_unique_id
 from .helper import alert_action, scaled_data_unit
 from .migration import (
@@ -540,9 +540,10 @@ async def async_unload_entry(
     if unload_ok := await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
     ):
-        coordinator = getattr(config_entry, "runtime_data", None)
+        coordinator = get_truenas_coordinator(config_entry)
         if coordinator is not None:
             await coordinator.api.close()
+        if hasattr(config_entry, "runtime_data"):
             del config_entry.runtime_data
 
     return unload_ok
