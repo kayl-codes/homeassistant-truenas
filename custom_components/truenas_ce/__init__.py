@@ -307,32 +307,36 @@ def _resolve_config_entry(
     Services are registered in ``async_setup`` (before any entry exists), so the
     target entry is validated here at call time: it must exist and be loaded.
     """
-    loaded: list[TrueNASConfigEntry] = [
-        entry
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.state is ConfigEntryState.LOADED
-    ]
+    entries: list[TrueNASConfigEntry] = hass.config_entries.async_entries(DOMAIN)
+    loaded = [entry for entry in entries if entry.state is ConfigEntryState.LOADED]
+
+    if entry_id:
+        for entry in entries:
+            if entry.entry_id != entry_id:
+                continue
+            if entry.state is not ConfigEntryState.LOADED:
+                return None, {
+                    "error": (
+                        f"TrueNAS instance {entry_id} is not loaded "
+                        f"(state: {entry.state.value})"
+                    )
+                }
+            return entry, {}
+        return None, {"error": f"TrueNAS instance {entry_id} not found"}
+
     if not loaded:
         return None, {"error": "No TrueNAS instances configured"}
-
-    if not entry_id:
-        if len(loaded) != 1:
-            return (
-                None,
-                {
-                    "error": (
-                        f"Multiple TrueNAS instances ({len(loaded)}); "
-                        "please specify config_entry"
-                    )
-                },
-            )
-        return loaded[0], {}
-
-    for entry in loaded:
-        if entry.entry_id == entry_id:
-            return entry, {}
-
-    return None, {"error": f"TrueNAS instance {entry_id} not found"}
+    if len(loaded) != 1:
+        return (
+            None,
+            {
+                "error": (
+                    f"Multiple TrueNAS instances ({len(loaded)}); "
+                    "please specify config_entry"
+                )
+            },
+        )
+    return loaded[0], {}
 
 
 async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
@@ -539,5 +543,6 @@ async def async_unload_entry(
         coordinator = getattr(config_entry, "runtime_data", None)
         if coordinator is not None:
             await coordinator.api.close()
+            del config_entry.runtime_data
 
     return unload_ok
