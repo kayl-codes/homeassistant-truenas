@@ -63,7 +63,7 @@ async def _add_loaded_entry(
     entry = MockConfigEntry(domain=DOMAIN, data=data or {})
     entry.add_to_hass(hass)
 
-    async def _fake_setup_entry(_hass: HomeAssistant, config_entry: Any) -> bool:
+    def _fake_setup_entry(_hass: HomeAssistant, config_entry: Any) -> bool:
         config_entry.runtime_data = runtime_data
         return True
 
