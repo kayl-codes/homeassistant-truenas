@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from logging import getLogger
 from typing import Any
 
@@ -11,7 +12,6 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
-    ServiceResponse,
     SupportsResponse,
     callback,
 )
@@ -339,6 +339,20 @@ def _resolve_config_entry(
     return loaded[0], {}
 
 
+def _require_config_entry(
+    hass: HomeAssistant, entry_id: str | None
+) -> TrueNASConfigEntry:
+    """Resolve the target config entry for a void service, raising on failure.
+
+    Centralizes the error-dict-to-exception translation that every void
+    service handler previously repeated after calling ``_resolve_config_entry``.
+    """
+    entry, error = _resolve_config_entry(hass, entry_id)
+    if error or entry is None:
+        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
+    return entry
+
+
 async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """List all TrueNAS alerts with selectable properties."""
     entry, error = _resolve_config_entry(
@@ -363,11 +377,7 @@ async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str
 
 async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
     """Dismiss a TrueNAS alert by UUID."""
-    entry, error = _resolve_config_entry(
-        hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
-    )
-    if error or entry is None:
-        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
+    entry = _require_config_entry(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
@@ -378,11 +388,7 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
     """Restore a TrueNAS alert by UUID."""
-    entry, error = _resolve_config_entry(
-        hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
-    )
-    if error or entry is None:
-        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
+    entry = _require_config_entry(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
 
     uuid = call.data.get(SERVICE_ALERT_UUID)
     if not uuid:
@@ -393,9 +399,7 @@ async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> None:
     """Remove a stored dataset passphrase by dataset path."""
-    entry, error = _resolve_config_entry(hass, call.data.get(SERVICE_CONFIG_ENTRY))
-    if error or entry is None:
-        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
+    entry = _require_config_entry(hass, call.data.get(SERVICE_CONFIG_ENTRY))
 
     dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
     if not dataset_path:
@@ -435,52 +439,40 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     Registration happens at integration setup (not per config entry) so the
     services exist independently of any entry; the handlers resolve and
     validate the target entry at call time (see ``_resolve_config_entry``).
+
+    Each ``_handle_*`` function takes ``hass`` as its first argument only to
+    receive it as a bound ``functools.partial`` here; the domain-level
+    handlers below are thin wrappers with no logic of their own beyond that.
     """
-
-    async def _alert_dismiss_handler(call: ServiceCall) -> None:
-        await _handle_alert_dismiss(hass, call)
-
-    async def _alert_restore_handler(call: ServiceCall) -> None:
-        await _handle_alert_restore(hass, call)
-
-    async def _alert_list_handler(call: ServiceCall) -> ServiceResponse:
-        return await _handle_alert_list(hass, call)
-
-    async def _passphrase_remove_handler(call: ServiceCall) -> None:
-        await _handle_passphrase_remove(hass, call)
-
-    async def _passphrase_list_handler(call: ServiceCall) -> ServiceResponse:
-        return await _handle_passphrase_list(hass, call)
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_ALERT_DISMISS,
-        _alert_dismiss_handler,
+        functools.partial(_handle_alert_dismiss, hass),
         schema=SCHEMA_SERVICE_ALERT_DISMISS,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_ALERT_RESTORE,
-        _alert_restore_handler,
+        functools.partial(_handle_alert_restore, hass),
         schema=SCHEMA_SERVICE_ALERT_RESTORE,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_ALERT_LIST,
-        _alert_list_handler,
+        functools.partial(_handle_alert_list, hass),
         schema=SCHEMA_SERVICE_ALERT_LIST,
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_PASSPHRASE_REMOVE,
-        _passphrase_remove_handler,
+        functools.partial(_handle_passphrase_remove, hass),
         schema=SCHEMA_SERVICE_PASSPHRASE_REMOVE,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_PASSPHRASE_LIST,
-        _passphrase_list_handler,
+        functools.partial(_handle_passphrase_list, hass),
         schema=SCHEMA_SERVICE_PASSPHRASE_LIST,
         supports_response=SupportsResponse.OPTIONAL,
     )

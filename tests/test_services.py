@@ -171,6 +171,21 @@ async def test_alert_list_default_properties_filters_fields(
     }
 
 
+async def test_alert_list_non_list_response_is_handled_defensively(
+    hass: HomeAssistant,
+) -> None:
+    """A malformed (non-list) alert.list response yields an error, not a crash."""
+    coordinator = _fake_coordinator()
+    coordinator.api.query.return_value = {"unexpected": "structure"}
+    await _add_loaded_entry(hass, coordinator)
+
+    result = await hass.services.async_call(
+        DOMAIN, SERVICE_ALERT_LIST, {}, blocking=True, return_response=True
+    )
+
+    assert result == {"alerts": [], "error": "Unexpected alert.list response"}
+
+
 async def test_alert_list_wildcard_properties_returns_raw_alerts(
     hass: HomeAssistant,
 ) -> None:

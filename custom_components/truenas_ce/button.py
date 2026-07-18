@@ -27,7 +27,7 @@ from .const import (
     MIGRATION_LEGACY_ENTRY_ID,
     SCRUB_ACTION_START,
 )
-from .coordinator import TrueNASCoordinator
+from .coordinator import TrueNASCoordinator, get_truenas_coordinator
 from .entity import (
     TrueNASEntity,
     async_add_entities,
@@ -58,7 +58,9 @@ async def async_setup_entry(
 
     # The orphaned-statistics cleanup button is a single diagnostic entity per
     # config entry, not tied to a TrueNAS object, so it is added directly.
-    coordinator: TrueNASCoordinator = config_entry.runtime_data
+    coordinator: TrueNASCoordinator | None = get_truenas_coordinator(config_entry)
+    if coordinator is None:
+        return
     _async_add_entities([TrueNASStatisticsCleanupButton(coordinator)])
 
     # On-demand data refresh: a diagnostic button that forces an immediate
