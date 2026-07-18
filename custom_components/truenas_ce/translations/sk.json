@@ -64,6 +64,7 @@
             "passphrase_empty_name": "Empty dataset name is not allowed on line: {line}. Each line must be in the format: DatasetName#Passphrase."
         },
         "abort": {
+            "already_configured": "Tento TrueNAS host je už nakonfigurovaný.",
             "reconfigure_successful": "Rekonfigurácia úspešná.",
             "reauth_successful": "Opätovná autentifikácia úspešná."
         }

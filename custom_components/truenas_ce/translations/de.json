@@ -64,6 +64,7 @@
             "passphrase_empty_name": "Leerer Dataset-Name ist nicht erlaubt in Zeile: {line}. Jede Zeile muss das Format haben: DatasetName#Passphrase."
         },
         "abort": {
+            "already_configured": "Dieser TrueNAS-Host ist bereits konfiguriert.",
             "reconfigure_successful": "Neukonfiguration erfolgreich.",
             "reauth_successful": "Erneute Authentifizierung erfolgreich."
         }

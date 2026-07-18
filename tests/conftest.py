@@ -18,6 +18,17 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# test_config_flow_flows.py needs pytest-homeassistant-custom-component (the
+# hass/enable_custom_integrations fixtures, MockConfigEntry), which is only
+# installed in CI -- its pytest11 plugin unconditionally imports the
+# POSIX-only fcntl module and crashes every local pytest run on this repo's
+# Windows dev machine, so it must never be installed there.
+collect_ignore_glob: list[str] = (
+    ["test_config_flow_flows.py", "test_services.py"]
+    if importlib.util.find_spec("pytest_homeassistant_custom_component") is None
+    else []
+)
+
 
 def load_module_from_path(name: str, path: Path) -> ModuleType:
     """Load a standalone module by file path."""
