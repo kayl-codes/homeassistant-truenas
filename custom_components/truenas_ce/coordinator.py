@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeGuard
+from typing import Any, TypeGuard, cast
 
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.config_entries import ConfigEntry
@@ -365,6 +365,13 @@ def get_truenas_coordinator(
     return getattr(config_entry, "runtime_data", None)
 
 
+def _unwrap_app_stats_message(msg: dict[str, Any]) -> dict[str, Any] | None:
+    """Unwrap collection_update envelope; return params dict or None."""
+    if msg.get("method") == "collection_update" and isinstance(msg.get("params"), dict):
+        return cast(dict[str, Any], msg["params"])
+    return msg
+
+
 # ---------------------------
 #   TrueNASControllerData
 # ---------------------------
@@ -403,6 +410,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "snapshottask": {},
             "scrub": {},
             "app": {},
+            "app_stats": {},
             "cronjob": {},
             "ups": {},
             "alerts": {
@@ -436,6 +444,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
 
+        self._app_stats_event_name: str | None = None
+        self._app_stats_sub_id: str | None = None
+
     # ---------------------------
     #   connected
     # ---------------------------
@@ -448,7 +459,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     def _is_group_monitored(self, group: str) -> bool:
         """Return True when the given sensor group is enabled in options."""
-        monitored = self.config_entry.options.get(
+        config_entry = getattr(self, "config_entry", None)
+        if config_entry is None:
+            return True
+        monitored = getattr(config_entry, "options", {}).get(
             CONF_MONITORED_GROUPS, DEFAULT_MONITORED_GROUPS
         )
         return group in monitored
@@ -529,6 +543,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_snapshottask,
             self.get_scrub,
             self.get_app,
+            self.get_app_stats,
             self.get_cronjob,
             self.get_alerts,
             self.get_certificates,
@@ -2320,6 +2335,145 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 state = jobs[0].get("state")
             if state not in ("RUNNING", "WAITING"):
                 vals["update_jobid"] = 0
+
+    # ---------------------------
+    #   start_app_stats
+    # ---------------------------
+    async def start_app_stats(self) -> None:
+        """Initialize the app.stats subscription."""
+        if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
+            if self._app_stats_sub_id:
+                await self.stop_app_stats(force=True)
+            self.ds["app_stats"] = {}
+            return
+
+        poll = int(
+            self.config_entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+        )
+        interval = max(poll, 2)
+        event_name = f'app.stats:{{"interval": {interval}}}'
+
+        if self._app_stats_event_name and self._app_stats_event_name != event_name:
+            await self.stop_app_stats(force=True)
+
+        if self._app_stats_sub_id and not self.api.is_subscribed(
+            self._app_stats_sub_id
+        ):
+            self._app_stats_sub_id = None
+            self._app_stats_event_name = None
+
+        if not self._app_stats_sub_id:
+            try:
+                sub_id, queue = await self.api.subscribe_events(event_name)
+                if sub_id and queue is not None:
+                    self._app_stats_sub_id = sub_id
+                    self._app_stats_event_name = event_name
+                    _LOGGER.debug(
+                        "TrueNAS app.stats subscription established: %s", sub_id
+                    )
+                else:
+                    _LOGGER.debug(
+                        "TrueNAS app.stats subscription failed: "
+                        "no sub_id/queue returned"
+                    )
+            except Exception as err:
+                _LOGGER.debug("Failed to establish app.stats subscription: %s", err)
+
+    # ---------------------------
+    #   get_app_stats
+    # ---------------------------
+    async def get_app_stats(self) -> None:
+        """Process buffered app.stats events and update state."""
+        if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
+            if self._app_stats_sub_id:
+                await self.stop_app_stats(force=True)
+            self.ds["app_stats"] = {}
+            return
+
+        if not self._app_stats_sub_id or not self.api.is_subscribed(
+            self._app_stats_sub_id
+        ):
+            await self.start_app_stats()
+            if not self._app_stats_sub_id:
+                return
+
+        if not self.api.connected():
+            return
+
+        messages = await self.api.get_subscription_events(self._app_stats_sub_id)
+        self._process_app_stats_messages(messages)
+
+        current_app_names = self._collect_current_app_names()
+        self._prune_stale_app_stats(current_app_names)
+
+    def _process_app_stats_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Append/update app_stats entries from buffered WebSocket messages."""
+        for msg in messages:
+            params = _unwrap_app_stats_message(msg)
+            if params is None:
+                continue
+            fields_list = params.get("fields", [])
+            if not isinstance(fields_list, list):
+                continue
+            for app in fields_list:
+                self._upsert_app_stats_entry(app)
+
+    def _upsert_app_stats_entry(self, app: object) -> None:
+        """Validate and store one app.stats entry."""
+        if not isinstance(app, dict):
+            return
+        app_name_raw = app.get("app_name")
+        if not isinstance(app_name_raw, str) or not app_name_raw:
+            return
+        app_name = app_name_raw
+        blkio = app.get("blkio", {})
+        self.ds["app_stats"][str(app_name)] = {
+            "app_name": app_name,
+            "cpu_usage": app.get("cpu_usage"),
+            "memory": app.get("memory"),
+            "blkio_read": blkio.get("read") if isinstance(blkio, dict) else 0,
+            "blkio_write": blkio.get("write") if isinstance(blkio, dict) else 0,
+            "networks": app.get("networks", []),
+        }
+
+    def _collect_current_app_names(self) -> set[str]:
+        """App names currently present in the app data."""
+        current_app_names: set[str] = set()
+        for vals in self.ds["app"].values():
+            if isinstance(vals, dict):
+                name = vals.get("name")
+                if isinstance(name, str) and name:
+                    current_app_names.add(name)
+        return current_app_names
+
+    def _prune_stale_app_stats(self, current_app_names: set[str]) -> None:
+        """Remove cached app_stats entries whose app no longer exists."""
+        for app_name in [
+            name for name in self.ds["app_stats"] if name not in current_app_names
+        ]:
+            del self.ds["app_stats"][app_name]
+
+    # ---------------------------
+    #   stop_app_stats
+    # ---------------------------
+    # force=True by default so local subscription metadata is always cleared
+    # on unload, even when the API is disconnected.
+    async def stop_app_stats(self, force: bool = True) -> None:
+        """Stop the app.stats subscription on unload."""
+        if self._app_stats_sub_id and self.api.connected():
+            try:
+                await self.api.unsubscribe_events(self._app_stats_sub_id)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "TrueNAS failed to unsubscribe app.stats %s (%s)",
+                    self._app_stats_sub_id,
+                    exc,
+                )
+            self._app_stats_sub_id = None
+            self._app_stats_event_name = None
+        elif force:
+            self._app_stats_sub_id = None
+            self._app_stats_event_name = None
 
     # ---------------------------
     #   get_cronjob

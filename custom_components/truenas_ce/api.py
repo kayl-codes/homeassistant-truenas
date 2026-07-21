@@ -1,5 +1,6 @@
 """TrueNAS API."""
 
+import asyncio
 from logging import DEBUG, getLogger
 from typing import Any
 
@@ -255,6 +256,104 @@ class TrueNASAPI:
             )
 
         return data
+
+    # ---------------------------
+    #   subscribe_events
+    # ---------------------------
+    async def subscribe_events(
+        self, event: str
+    ) -> tuple[str | None, asyncio.Queue[dict[str, Any]] | None]:
+        """Subscribe to an event and return (subscription_id, queue)."""
+        if not self.connected() and not await self.connect():
+            return None, None
+
+        self._error = ""
+        _LOGGER.debug("TrueNAS %s subscribe_events: %s", self._host, event)
+
+        try:
+            return await self._client.subscribe(event)
+        except TrueNASCallError as exc:
+            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+            return None, None
+        except TrueNASError as exc:
+            self._error = _classify_exception(exc, during_call=True)
+            _LOGGER.warning(
+                'TrueNAS %s unable to subscribe to events "%s" (%s)',
+                self._host,
+                event,
+                exc,
+            )
+            return None, None
+
+    # ---------------------------
+    #   unsubscribe_events
+    # ---------------------------
+    async def unsubscribe_events(self, subscription_id: str) -> None:
+        """Unsubscribe from a TrueNAS event."""
+        if not self.connected() and not await self.connect():
+            return
+
+        self._error = ""
+        _LOGGER.debug("TrueNAS %s unsubscribe_events: %s", self._host, subscription_id)
+
+        try:
+            await self._client.unsubscribe(subscription_id)
+        except TrueNASCallError as exc:
+            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+        except TrueNASError as exc:
+            self._error = _classify_exception(exc, during_call=True)
+            _LOGGER.warning(
+                "TrueNAS %s unable to unsubscribe_events %s (%s)",
+                self._host,
+                subscription_id,
+                exc,
+            )
+
+    async def get_subscription_events(
+        self, subscription_id: str, event_timeout: float | None = None
+    ) -> list[dict[str, Any]]:
+        """Read events from a subscription queue."""
+        if not self.connected() and not await self.connect():
+            return []
+
+        self._error = ""
+        _LOGGER.debug(
+            "TrueNAS %s get_subscription_events: %s", self._host, subscription_id
+        )
+
+        try:
+            events = await self._client.get_subscription_events(
+                subscription_id, event_timeout=event_timeout
+            )
+            if events:
+                _LOGGER.debug(
+                    "TrueNAS %s get_subscription_events drained %d events: %s",
+                    self._host,
+                    len(events),
+                    _summarize_payload(events),
+                )
+            return events
+        except TrueNASCallError as exc:
+            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+            return []
+        except TrueNASError as exc:
+            self._error = _classify_exception(exc, during_call=True)
+            _LOGGER.warning(
+                "TrueNAS %s unable to read subscription events %s (%s)",
+                self._host,
+                subscription_id,
+                exc,
+            )
+            return []
+
+    def is_subscribed(self, subscription_id: str) -> bool:
+        """Check if a subscription is currently active in the client."""
+        if not self.connected():
+            return False
+        return self._client.is_subscribed(subscription_id)
 
     @property
     def error(self) -> str:

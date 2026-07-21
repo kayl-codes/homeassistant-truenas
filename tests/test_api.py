@@ -345,3 +345,40 @@ async def test_query_logs_summarized_payload_when_debug_enabled(
 # ---------------------------
 def test_error_property_defaults_empty(api: TrueNASAPI) -> None:
     assert api.error == ""
+
+
+# ---------------------------
+#   subscribe_events / unsubscribe_events
+# ---------------------------
+async def test_subscribe_events_returns_queue(connected_api: TrueNASAPI) -> None:
+    mock_queue = MagicMock()
+    connected_api._client.subscribe = AsyncMock(return_value=("sub-123", mock_queue))
+    sub_id, queue = await connected_api.subscribe_events("app.stats")
+    assert sub_id == "sub-123"
+    assert queue is mock_queue
+
+
+async def test_subscribe_events_returns_none_on_failure(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.subscribe = AsyncMock(
+        side_effect=TrueNASCallError("boom", reason="nope")
+    )
+    sub_id, queue = await connected_api.subscribe_events("app.stats")
+    assert sub_id is None
+    assert queue is None
+    assert connected_api.error == "nope"
+
+
+async def test_unsubscribe_events_calls_client(connected_api: TrueNASAPI) -> None:
+    connected_api._client.unsubscribe = AsyncMock()
+    await connected_api.unsubscribe_events("sub-123")
+    connected_api._client.unsubscribe.assert_awaited_once_with("sub-123")
+
+
+async def test_unsubscribe_events_handles_call_error(connected_api: TrueNASAPI) -> None:
+    connected_api._client.unsubscribe = AsyncMock(
+        side_effect=TrueNASCallError("boom", reason="no such sub")
+    )
+    await connected_api.unsubscribe_events("sub-123")
+    assert connected_api.error == "no such sub"

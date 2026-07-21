@@ -17,7 +17,6 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
@@ -54,7 +53,13 @@ from .const import (
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASConfigEntry, TrueNASCoordinator, get_truenas_coordinator
-from .entity import TrueNASEntityDescription, _is_uid_excluded, format_unique_id
+from .entity import (
+    TrueNASEntityDescription,
+    _cleanup_orphaned_entities,
+    _composite_references,
+    _is_uid_excluded,
+    format_unique_id,
+)
 from .helper import alert_action, scaled_data_unit
 from .migration import (
     async_adopt_legacy_entities,
@@ -216,88 +221,105 @@ def _collect_active_unique_ids(
     monitored = coordinator.config_entry.options.get(
         CONF_MONITORED_GROUPS, DEFAULT_MONITORED_GROUPS
     )
-    disabled_data_paths: set[str] = set()
-    for group, paths in GROUP_DATA_PATHS.items():
-        if group not in monitored:
-            disabled_data_paths.update(paths)
+    disabled_data_paths = _build_disabled_data_paths(monitored)
 
     active: set[str] = set()
     live_bases: set[str] = set()
 
     for description in _ALL_DESCRIPTIONS:
-        base = format_unique_id(inst, description.key)
-        is_disabled_group = description.data_path in disabled_data_paths
+        _process_static_description(
+            inst,
+            description,
+            disabled_data_paths,
+            honor_exclude,
+            active,
+            live_bases,
+            coordinator.data,
+        )
 
-        if not getattr(description, "data_reference", None):
-            _handle_keyless(base, is_disabled_group, active, live_bases)
-            continue
-
-        data = coordinator.data.get(description.data_path or "")
-
-        if not data and not is_disabled_group:
-            # Transient empty fetch for an enabled group → protect entities.
-            continue
-
-        # Mark base as live so the cleanup loop considers it.
-        live_bases.add(base)
-        if data and not is_disabled_group:
-            # Normal enabled group: build the active set (respecting NIC exclusion).
-            active |= _referenced_unique_ids(inst, description, data, honor_exclude)
-        # Disabled group: base in live_bases, nothing in active → entities removed.
+    for description in _ALL_DESCRIPTIONS:
+        new_active, new_live_bases = _process_dynamic_description(
+            inst,
+            description,
+            coordinator.data,
+            honor_exclude,
+            disabled_data_paths,
+        )
+        active |= new_active
+        live_bases |= new_live_bases
 
     return active, live_bases
 
 
-def _cleanup_orphaned_entities(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    coordinator: TrueNASCoordinator,
-) -> None:
-    """Remove registry entities the integration would no longer create.
+def _build_disabled_data_paths(monitored: list[str]) -> set[str]:
+    """Data paths for groups that are not monitored."""
+    disabled: set[str] = set()
+    for group, paths in GROUP_DATA_PATHS.items():
+        if group not in monitored:
+            disabled.update(paths)
+    return disabled
 
-    An entity is deleted when it is not in the active set yet belongs to a data
-    domain that currently holds data. This covers both true orphans (the object
-    is gone) and entities filtered out by ``data_exclude`` (e.g. traffic sensors
-    of a down interface). A transient empty fetch of a whole domain never wipes
-    the corresponding group, and cleanup is skipped unless the last update
-    succeeded.
-    """
-    if not coordinator.last_update_success:
+
+def _process_static_description(
+    inst: str,
+    description: TrueNASEntityDescription,
+    disabled_data_paths: set[str],
+    honor_exclude: bool,
+    active: set[str],
+    live_bases: set[str],
+    data: dict[str, Any],
+) -> None:
+    """Process one non-dynamic-key description for active/live_bases."""
+    base = format_unique_id(inst, description.key)
+    is_disabled_group = description.data_path in disabled_data_paths
+
+    if not getattr(description, "data_reference", None):
+        _handle_keyless(base, is_disabled_group, active, live_bases)
         return
 
-    inst = config_entry.data[CONF_NAME]
-    active, live_bases = _collect_active_unique_ids(inst, coordinator)
+    sub_data = data.get(description.data_path or "")
+    if not sub_data and not is_disabled_group:
+        return
 
-    ent_reg = er.async_get(hass)
-    for entity_entry in er.async_entries_for_config_entry(
-        ent_reg, config_entry.entry_id
-    ):
-        unique_id = entity_entry.unique_id
-        if unique_id in active:
-            continue
-        if any(
-            unique_id == base or unique_id.startswith(f"{base}-") for base in live_bases
-        ):
-            _LOGGER.info(
-                "Removing orphaned TrueNAS entity %s (unique_id=%s)",
-                entity_entry.entity_id,
-                unique_id,
-            )
-            ent_reg.async_remove(entity_entry.entity_id)
+    live_bases.add(base)
+    if sub_data and not is_disabled_group:
+        active |= _referenced_unique_ids(inst, description, sub_data, honor_exclude)
 
-    # Remove devices that are now empty (all their entities were cleaned up above).
-    dev_reg = dr.async_get(hass)
-    for device_entry in dr.async_entries_for_config_entry(
-        dev_reg, config_entry.entry_id
-    ):
-        if not er.async_entries_for_device(
-            ent_reg, device_entry.id, include_disabled_entities=True
-        ):
-            _LOGGER.info(
-                "Removing empty TrueNAS device %s",
-                device_entry.name_by_user or device_entry.name,
-            )
-            dev_reg.async_remove_device(device_entry.id)
+
+def _process_dynamic_description(
+    inst: str,
+    description: TrueNASEntityDescription,
+    data: dict[str, Any],
+    honor_exclude: bool,
+    disabled_data_paths: set[str],
+) -> tuple[set[str], set[str]]:
+    """Return (new active ids, live bases) for one dynamic-key description."""
+    if not getattr(description, "data_dynamic_keys", False):
+        return set(), set()
+
+    base = format_unique_id(inst, description.key)
+    live_bases: set[str] = {base}
+
+    is_disabled_group = description.data_path in disabled_data_paths
+    if is_disabled_group:
+        return set(), live_bases
+
+    ref = getattr(description, "data_reference", None)
+    if not ref:
+        return set(), live_bases
+
+    sub_data = data.get(description.data_path or "")
+    if not sub_data:
+        return set(), live_bases
+
+    active: set[str] = set()
+    composite = getattr(description, "data_composite_references", ())
+    if composite:
+        active |= _composite_references(inst, description, sub_data)
+    else:
+        active |= _referenced_unique_ids(inst, description, sub_data, honor_exclude)
+
+    return active, live_bases
 
 
 # ---------------------------
@@ -538,6 +560,7 @@ async def async_unload_entry(
     ):
         coordinator = get_truenas_coordinator(config_entry)
         if coordinator is not None:
+            await coordinator.stop_app_stats()
             await coordinator.api.close()
         if hasattr(config_entry, "runtime_data"):
             del config_entry.runtime_data

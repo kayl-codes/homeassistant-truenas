@@ -45,7 +45,10 @@ from custom_components.truenas_ce.coordinator import (
 
 def _bare_coordinator() -> TrueNASCoordinator:
     """Build a TrueNASCoordinator without running its hass-dependent __init__."""
-    return TrueNASCoordinator.__new__(TrueNASCoordinator)
+    coord = TrueNASCoordinator.__new__(TrueNASCoordinator)
+    coord._app_stats_event_name = None
+    coord._app_stats_sub_id = None
+    return coord
 
 
 # ---------------------------
@@ -647,6 +650,176 @@ async def test_get_updatecheck_malformed_response_resets_idle() -> None:
     assert info["update_available"] is False
     assert info["update_state"] == "IDLE"
     assert info["update_version"] == "25.04.1"
+
+
+# ---------------------------
+#   start_app_stats / get_app_stats / stop_app_stats
+# ---------------------------
+async def test_start_app_stats_subscribes_once() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"test-app": {}}}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", MagicMock()))
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {}
+    coord._app_stats_sub_id = None
+
+    await coord.start_app_stats()
+
+    coord.api.subscribe_events.assert_awaited_once()
+    assert coord._app_stats_sub_id == "sub-1"
+
+
+async def test_start_app_stats_clears_stale_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"test-app": {}}}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", MagicMock()))
+    coord.api.unsubscribe_events = AsyncMock()
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {}
+    coord._app_stats_sub_id = "sub-old"
+    coord._app_stats_event_name = 'app.stats:{"interval": 5}'
+
+    await coord.start_app_stats()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-old")
+    coord.api.subscribe_events.assert_awaited_once()
+    assert coord._app_stats_sub_id == "sub-new"
+
+
+async def test_start_app_stats_handles_subscribe_failure() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"test-app": {}}}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(side_effect=Exception("subscribe failed"))
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {}
+    coord._app_stats_sub_id = None
+
+    await coord.start_app_stats()
+
+    assert coord._app_stats_sub_id is None
+
+
+async def test_get_app_stats_processes_and_updates_state() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.get_subscription_events = AsyncMock(
+        return_value=[
+            {
+                "fields": [
+                    {
+                        "app_name": "test-app",
+                        "cpu_usage": 12.5,
+                        "memory": 1024000,
+                        "blkio": {"read": 5000, "write": 2000},
+                        "networks": [
+                            {
+                                "interface_name": "eth0",
+                                "rx_bytes": 1000,
+                                "tx_bytes": 500,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ]
+    )
+    coord._app_stats_sub_id = "sub-1"
+
+    await coord.get_app_stats()
+
+    assert coord.ds["app_stats"]["test-app"]["app_name"] == "test-app"
+    assert coord.ds["app_stats"]["test-app"]["cpu_usage"] == pytest.approx(12.5)
+    assert coord.ds["app_stats"]["test-app"]["memory"] == 1024000
+    assert coord.ds["app_stats"]["test-app"]["blkio_read"] == 5000
+    assert coord.ds["app_stats"]["test-app"]["blkio_write"] == 2000
+    assert coord.ds["app_stats"]["test-app"]["networks"] == [
+        {"interface_name": "eth0", "rx_bytes": 1000, "tx_bytes": 500}
+    ]
+
+
+async def test_get_app_stats_removes_missing_apps() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {
+            "test-app": {"name": "test-app"},
+        },
+        "app_stats": {
+            "test-app": {"app_name": "test-app"},
+            "old-app": {"app_name": "old-app"},
+        },
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.get_subscription_events = AsyncMock(return_value=[])
+    coord._app_stats_sub_id = "sub-1"
+
+    await coord.get_app_stats()
+
+    assert "test-app" in coord.ds["app_stats"]
+    assert "old-app" not in coord.ds["app_stats"]
+
+
+async def test_get_app_stats_skips_malformed_fields() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.get_subscription_events = AsyncMock(
+        return_value=[
+            {"fields": "not-a-list"},
+            {"fields": [{"not_an_app": 1}]},
+            {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
+        ]
+    )
+    coord._app_stats_sub_id = "sub-1"
+
+    await coord.get_app_stats()
+
+    assert "test-app" in coord.ds["app_stats"]
+    assert coord.ds["app_stats"]["test-app"]["cpu_usage"] == pytest.approx(1.0)
+
+
+async def test_stop_app_stats_unsubscribes_events() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._app_stats_sub_id = "sub-1"
+
+    await coord.stop_app_stats()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._app_stats_sub_id is None
+    assert coord._app_stats_event_name is None
+
+
+async def test_stop_app_stats_default_clears_even_when_disconnected() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._app_stats_sub_id = "sub-1"
+    coord._app_stats_event_name = 'app.stats:{"interval": 5}'
+
+    await coord.stop_app_stats()
+
+    coord.api.unsubscribe_events.assert_not_awaited()
+    assert coord._app_stats_sub_id is None
+    assert coord._app_stats_event_name is None
 
 
 async def test_get_updatecheck_empty_response_resets_status() -> None:

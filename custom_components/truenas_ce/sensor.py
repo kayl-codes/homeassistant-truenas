@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from logging import getLogger
@@ -10,9 +11,11 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfInformation, UnitOfTime
-from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_NAME, UnitOfInformation, UnitOfTime
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import entity_platform as ep
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util.dt import utc_from_timestamp
@@ -25,9 +28,10 @@ from .const import (
     CONF_DATA_UNIT,
     CONF_DATASET_PASSPHRASES,
     DEFAULT_DATA_UNIT,
+    SIGNAL_UPDATE_SENSORS,
 )
-from .coordinator import TrueNASCoordinator
-from .entity import TrueNASEntity, async_add_entities
+from .coordinator import TrueNASCoordinator, get_truenas_coordinator
+from .entity import TrueNASEntity, async_add_entities, format_unique_id
 from .helper import alert_action, scaled_data_unit
 from .sensor_types import (  # noqa: F401
     SENSOR_SERVICES,
@@ -59,6 +63,27 @@ async def async_setup_entry(
     _async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up entry for TrueNAS component."""
+    coordinator: TrueNASCoordinator | None = get_truenas_coordinator(config_entry)
+    if coordinator is None:
+        return None
+
+    platform = ep.async_get_current_platform()
+
+    @callback
+    def _discover_app_stats_sensors(
+        updated_coordinator: TrueNASCoordinator | None = None,
+    ) -> None:
+        _discover_app_stats(
+            platform, updated_coordinator or coordinator, _async_add_entities
+        )
+
+    _discover_app_stats_sensors()
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, SIGNAL_UPDATE_SENSORS, _discover_app_stats_sensors
+        )
+    )
+
     dispatcher = {
         "TrueNASSensor": TrueNASSensor,
         "TrueNASAlertSensor": TrueNASAlertSensor,
@@ -69,9 +94,109 @@ async def async_setup_entry(
         "TrueNASDiskSensor": TrueNASDiskSensor,
         "TrueNASRsyncSensor": TrueNASRsyncSensor,
         "TrueNASReplicationSensor": TrueNASReplicationSensor,
-        "TrueNASSnapshotTaskSensor": TrueNASSnapshotTaskSensor,
     }
     await async_add_entities(hass, config_entry, dispatcher)
+
+
+@callback
+def _discover_app_stats(
+    platform: Any,
+    coord: TrueNASCoordinator,
+    add_entities: AddEntitiesCallback,
+) -> None:
+    """Discover dynamic app stats sensors for the current coordinator state."""
+    app_stats_data = coord.data.get("app_stats", {})
+    app_stats_entities: list[TrueNASAppStatsSensor] = []
+
+    loaded = {
+        entity.unique_id
+        for entity in platform.entities.values()
+        if entity.unique_id is not None
+    }
+
+    inst = coord.config_entry.data[CONF_NAME]
+
+    for description in _app_stats_descriptions():
+        for uid, app_data in app_stats_data.items():
+            _maybe_discover_app_stats_sensor(
+                description, uid, app_data, inst, loaded, app_stats_entities, coord
+            )
+
+    if app_stats_entities:
+        add_entities(app_stats_entities)
+
+
+def _app_stats_descriptions() -> list[TrueNASSensorEntityDescription]:
+    """Sensor descriptions that belong to the app_stats dynamic family."""
+    return [d for d in SENSOR_TYPES if d.func == "TrueNASAppStatsSensor"]
+
+
+def _maybe_discover_app_stats_sensor(
+    description: TrueNASSensorEntityDescription,
+    uid: str,
+    app_data: dict[str, Any],
+    inst: str,
+    loaded: set[str],
+    entities: list[TrueNASAppStatsSensor],
+    coord: TrueNASCoordinator,
+) -> None:
+    """Append a new entity if it is not already loaded."""
+    if not app_data:
+        return
+
+    if description.key in (
+        "app_stats_network_rx",
+        "app_stats_network_tx",
+    ):
+        _discover_network_sensors(
+            description, uid, app_data, inst, loaded, entities, coord
+        )
+    else:
+        _discover_standard_sensor(description, uid, inst, loaded, entities, coord)
+
+
+def _discover_network_sensors(
+    description: TrueNASSensorEntityDescription,
+    uid: str,
+    app_data: dict[str, Any],
+    inst: str,
+    loaded: set[str],
+    entities: list[TrueNASAppStatsSensor],
+    coord: TrueNASCoordinator,
+) -> None:
+    """Create network interface sensors for one app entry."""
+    networks = app_data.get("networks", [])
+    if not isinstance(networks, list):
+        return
+    for net in networks:
+        if not isinstance(net, dict):
+            continue
+        interface_name = net.get("interface_name")
+        if not interface_name:
+            continue
+        unique_id = format_unique_id(inst, description.key, f"{uid}::{interface_name}")
+        if unique_id in loaded:
+            continue
+        entities.append(
+            TrueNASAppStatsSensor(coord, description, f"{uid}::{interface_name}")
+        )
+        loaded.add(unique_id)
+
+
+def _discover_standard_sensor(
+    description: TrueNASSensorEntityDescription,
+    uid: str,
+    inst: str,
+    loaded: set[str],
+    entities: list[TrueNASAppStatsSensor],
+    coord: TrueNASCoordinator,
+) -> None:
+    """Create a single standard app stats sensor if not already loaded."""
+    unique_id = format_unique_id(inst, description.key, uid)
+    if unique_id in loaded:
+        return
+    entities.append(TrueNASAppStatsSensor(coord, description, uid))
+    loaded.add(unique_id)
 
 
 # ---------------------------
@@ -600,3 +725,129 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
             return
 
         await self.coordinator.api.query("cloudsync.abort", [self._data["id"]])
+
+
+# ---------------------------
+#   TrueNASAppStatsSensor
+# ---------------------------
+class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
+    """Define a TrueNAS App Statistics sensor."""
+
+    entity_description: TrueNASSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: TrueNASCoordinator,
+        entity_description: TrueNASSensorEntityDescription,
+        uid: str | None = None,
+    ) -> None:
+        """Initialize the app stats sensor."""
+        super().__init__(coordinator, entity_description, uid)
+
+    def _refresh_data(self) -> None:
+        """Refresh cached data specifically from the app_stats directory structure."""
+        if (
+            self._uid
+            and self.entity_description.key
+            in ("app_stats_network_rx", "app_stats_network_tx")
+            and "::" in self._uid
+        ):
+            app_name, interface_name = self._uid.rsplit("::", 1)
+            main_data = self.coordinator.data.get("app_stats", {}).get(app_name, {})
+
+            if main_data and isinstance(main_data.get("networks"), list):
+                for net in main_data["networks"]:
+                    if (
+                        isinstance(net, dict)
+                        and net.get("interface_name") == interface_name
+                    ):
+                        self._data = {
+                            **main_data,
+                            "interface_name": interface_name,
+                            "rx_bytes": net.get("rx_bytes"),
+                            "tx_bytes": net.get("tx_bytes"),
+                        }
+                        return
+            self._data = {}
+        else:
+            self._data = self.coordinator.data.get("app_stats", {}).get(self._uid, {})
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return super().available
+
+    @property
+    def unique_id(self) -> str:
+        """Return a truly unique id, preventing conflict between apps sharing eth0."""
+        return format_unique_id(self._inst, self.entity_description.key, self._uid)
+
+    @property
+    def name(self) -> str | None:
+        """Return the dynamic friendly name for the entity."""
+        app_name = self._data.get("app_name", self._uid)
+        if not self._data and isinstance(self._uid, str) and "::" in self._uid:
+            app_name = self._uid.rsplit("::", 1)[0]
+
+        if self.entity_description.key in (
+            "app_stats_network_rx",
+            "app_stats_network_tx",
+        ):
+            interface_name = self._data.get("interface_name")
+            if not interface_name:
+                _LOGGER.debug(
+                    "App stats network sensor %s: interface_name missing from _data, "
+                    "falling back to uid parse, _data=%s",
+                    self._uid,
+                    self._data,
+                )
+                if self._uid and "::" in self._uid:
+                    interface_name = self._uid.rsplit("::", 1)[1]
+                else:
+                    return None
+            return f"{app_name} {interface_name} {self.entity_description.name}"
+
+        return f"{app_name} {self.entity_description.name}"
+
+    @property
+    def native_value(self) -> Any:
+        """Return the state of the sensor."""
+        if not self._data:
+            return None
+
+        description = self.entity_description
+        data_attribute = description.data_attribute
+        if data_attribute is None:
+            return None
+
+        val = self._data.get(data_attribute)
+        if val is None:
+            return None
+
+        if description.key in (
+            "app_stats_network_rx",
+            "app_stats_network_tx",
+        ):
+            try:
+                return float(val) / 1024.0
+            except (ValueError, TypeError):
+                return val
+
+        return val
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """Return extra state attributes for advanced card telemetry."""
+        attrs = dict(super().extra_state_attributes or {})
+        if not self._data:
+            return attrs
+
+        app_name = self._data.get("app_name")
+        if app_name is not None:
+            attrs["app_name"] = app_name
+            if "interface_name" in self._data:
+                interface_name = self._data.get("interface_name")
+                if interface_name is not None:
+                    attrs["interface_name"] = interface_name
+
+        return attrs
