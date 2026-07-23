@@ -19,6 +19,7 @@ from aiotruenas.exceptions import (
     TrueNASCertificateVerificationError,
     TrueNASConnectionClosedError,
     TrueNASConnectionRefusedError,
+    TrueNASError,
     TrueNASHostUnknownError,
     TrueNASMalformedResponseError,
 )
@@ -381,4 +382,124 @@ async def test_unsubscribe_events_handles_call_error(connected_api: TrueNASAPI) 
         side_effect=TrueNASCallError("boom", reason="no such sub")
     )
     await connected_api.unsubscribe_events("sub-123")
-    assert connected_api.error == "no such sub"
+    assert connected_api.error == ""
+
+
+async def test_unsubscribe_events_handles_generic_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.unsubscribe = AsyncMock(
+        side_effect=TrueNASError("boom"),
+    )
+    await connected_api.unsubscribe_events("sub-123")
+    assert connected_api.error == ERR_UNKNOWN
+
+
+async def test_get_subscription_events_success(connected_api: TrueNASAPI) -> None:
+    events = [
+        {"id": 1, "name": "app.stats", "data": {"foo": "bar"}},
+        {"id": 2, "name": "app.other", "data": {"baz": "qux"}},
+    ]
+    connected_api._client.get_subscription_events = AsyncMock(return_value=events)
+
+    result = await connected_api.get_subscription_events("sub-123")
+
+    assert len(result) == 2
+    assert result[0]["id"] == 1
+    assert result[1]["id"] == 2
+    assert connected_api.error == ""
+
+
+async def test_get_subscription_events_call_error(connected_api: TrueNASAPI) -> None:
+    connected_api._client.get_subscription_events = AsyncMock(
+        side_effect=TrueNASCallError("boom", reason="nope")
+    )
+    result = await connected_api.get_subscription_events("sub-123")
+    assert result == []
+    assert connected_api.error == "nope"
+
+
+async def test_get_subscription_events_generic_error(connected_api: TrueNASAPI) -> None:
+    connected_api._client.get_subscription_events = AsyncMock(
+        side_effect=TrueNASError("boom"),
+    )
+    result = await connected_api.get_subscription_events("sub-123")
+    assert result == []
+    assert connected_api.error == ERR_UNKNOWN
+
+
+async def test_subscribe_events_connect_returns_false(api: TrueNASAPI) -> None:
+    """subscribe_events: connection failure when connect() returns False."""
+    api._client.connected = False
+    api.connect = AsyncMock(return_value=False)
+
+    sub_id, queue = await api.subscribe_events("app.stats")
+
+    assert sub_id is None
+    assert queue is None
+    assert api.error == ERR_CONNECTION_REFUSED
+
+
+async def test_get_subscription_events_connect_returns_false(api: TrueNASAPI) -> None:
+    """get_subscription_events: connection failure when connect() returns False."""
+    api._client.connected = False
+    api.connect = AsyncMock(return_value=False)
+
+    result = await api.get_subscription_events("sub-123")
+
+    assert result == []
+    assert api.error == ERR_CONNECTION_REFUSED
+
+
+async def test_is_subscribed_returns_false_when_not_connected(api: TrueNASAPI) -> None:
+    api._client = None
+    assert await api.is_subscribed("sub-123") is False
+
+
+async def test_is_subscribed_delegates_when_connected(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.is_subscribed = AsyncMock(return_value=True)
+    assert await connected_api.is_subscribed("sub-123") is True
+    connected_api._client.is_subscribed.assert_called_once_with("sub-123")
+
+
+async def test_subscribe_events_clears_previous_error_on_success(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._error = "previous error"
+    mock_queue = MagicMock()
+    connected_api._client.subscribe = AsyncMock(return_value=("sub-123", mock_queue))
+
+    sub_id, queue = await connected_api.subscribe_events("app.stats")
+
+    assert sub_id == "sub-123"
+    assert queue is mock_queue
+    assert connected_api.error == ""
+
+
+async def test_get_subscription_events_passes_timeout(
+    connected_api: TrueNASAPI,
+) -> None:
+    events = [{"id": 1}]
+    connected_api._client.get_subscription_events = AsyncMock(return_value=events)
+
+    result = await connected_api.get_subscription_events("sub-123", event_timeout=1.5)
+
+    assert result == events
+    connected_api._client.get_subscription_events.assert_awaited_once_with(
+        "sub-123", event_timeout=1.5
+    )
+    assert connected_api.error == ""
+
+
+async def test_get_subscription_events_truenas_call_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    error = TrueNASCallError("boom")
+    connected_api._client.get_subscription_events = AsyncMock(side_effect=error)
+
+    result = await connected_api.get_subscription_events("sub-123", event_timeout=1.0)
+
+    assert result == []
+    assert connected_api.error == str(error)

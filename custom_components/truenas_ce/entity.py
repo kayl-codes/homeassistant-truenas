@@ -34,6 +34,8 @@ from .helper import format_attribute
 
 _LOGGER = getLogger(__name__)
 
+_UNKNOWN_KEY = "<unknown>"
+
 
 # ---------------------------
 #   format_unique_id
@@ -62,6 +64,15 @@ def format_device_identifier(inst: str, hostname: str) -> str:
 # ---------------------------
 #   TrueNASEntityDescription
 # ---------------------------
+# Dynamic vs static entity contract:
+#   - Static descriptions (data_dynamic_keys=False) have a fixed data_path and
+#     produce either one keyless entity or one entity per referenced object.
+#   - Dynamic descriptions (data_dynamic_keys=True) use top-level data keys as
+#     entity UIDs, allowing arbitrary objects to become entities.
+#   - Composite references (data_composite_references=(container, leaf)) add a
+#     second level of dynamism: the leaf value from each nested object becomes
+#     part of the composite UID (``uid::leaf``), used for per-subobject entities
+#     like per-NIC network sensors.
 @dataclass(frozen=True, kw_only=True)
 class TrueNASEntityDescription(EntityDescription):
     """Fields shared by the entity descriptions of every TrueNAS platform."""
@@ -78,32 +89,92 @@ class TrueNASEntityDescription(EntityDescription):
     data_composite_references: tuple[str, ...] = ()
     func: str = ""
 
+    def __post_init__(self) -> None:
+        """Validate combinations of dynamic flags and references.
+
+        Invalid configurations emit warnings so they fail fast in tests/CI
+        without crashing the integration at import time.
+        """
+        composite = self.data_composite_references or ()
+        has_composite = bool(composite)
+        dynamic = self.data_dynamic_keys
+
+        if has_composite and not dynamic:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_composite_references requires data_dynamic_keys=True",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+            return
+
+        if has_composite and len(composite) != 2:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_composite_references must contain exactly two segments "
+                "(container_key, leaf_key)",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+            return
+
+        if dynamic and not self.data_reference and not has_composite:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_dynamic_keys=True requires either data_reference or "
+                "data_composite_references",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+
 
 def _composite_references(
     inst: str,
     description: TrueNASEntityDescription,
     data: dict[str, Any],
+    honor_exclude: bool = True,
 ) -> set[str]:
-    """Unique_ids for descriptions whose reference is nested inside a list."""
+    """Compute unique_ids for descriptions whose reference is nested inside a list.
+
+    For each top-level uid in ``data``, the leaf value at
+    ``data[uid][container_key][item][leaf_key]`` becomes a composite unique_id
+    of the form ``inst-key-uid::ref``. This supports entities like per-NIC
+    network sensors where the interface name lives inside a list of dicts.
+
+    When ``honor_exclude`` is True, items matching ``description.data_exclude``
+    are skipped, mirroring ``_referenced_unique_ids`` behavior.
+    """
     ids: set[str] = set()
-    composite_path = getattr(description, "data_composite_references", ())
-    if not composite_path or len(composite_path) < 2:
-        return ids
-    container_key, leaf_key = composite_path[0], composite_path[1]
+    container_key, leaf_key = description.data_composite_references
     for uid, vals in data.items():
-        if not isinstance(vals, dict):
-            continue
-        container = vals.get(container_key)
-        if not isinstance(container, list):
+        container = _get_composite_container(vals, container_key)
+        if container is None:
             continue
         for item in container:
-            if not isinstance(item, dict):
-                continue
-            ref = item.get(leaf_key)
-            if ref is None:
-                continue
-            ids.add(format_unique_id(inst, description.key, f"{uid}::{ref}"))
+            ref = _extract_composite_ref(item, description, honor_exclude, leaf_key)
+            if ref is not None:
+                ids.add(format_unique_id(inst, description.key, f"{uid}::{ref}"))
     return ids
+
+
+def _get_composite_container(vals: Any, container_key: str) -> list[Any] | None:
+    """Return the composite container list if present and valid, else None."""
+    if not isinstance(vals, dict):
+        return None
+    container = vals.get(container_key)
+    return container if isinstance(container, list) else None
+
+
+def _extract_composite_ref(
+    item: Any,
+    description: TrueNASEntityDescription,
+    honor_exclude: bool,
+    leaf_key: str,
+) -> str | None:
+    """Validate a composite item and return its leaf reference, or None."""
+    if not isinstance(item, dict):
+        return None
+    if honor_exclude and _is_uid_excluded(description, item):
+        return None
+    ref = item.get(leaf_key)
+    return ref if ref is not None else None
 
 
 # ---------------------------
@@ -118,9 +189,7 @@ def _skip_keyless_description(
         "data_attribute",
         getattr(entity_description, "data_is_on", None),
     )
-    if not attr_name:
-        return False
-    return data.get(attr_name) is None
+    return data.get(attr_name) is None if attr_name else False
 
 
 def _is_uid_excluded(entity_description: TrueNASEntityDescription, vals: Any) -> bool:
@@ -396,10 +465,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         if data_value is None:
             data_value = str(self._uid)
 
-        if desc_name:
-            return f"{data_value} {desc_name}"
-
-        return f"{data_value}"
+        return f"{data_value} {desc_name}" if desc_name else f"{data_value}"
 
     @property
     def unique_id(self) -> str:

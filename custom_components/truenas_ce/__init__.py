@@ -252,7 +252,12 @@ def _collect_active_unique_ids(
 
 
 def _build_disabled_data_paths(monitored: list[str]) -> set[str]:
-    """Data paths for groups that are not monitored."""
+    """Return the set of data paths for groups that are not monitored.
+
+    GROUP_DATA_PATHS maps each monitor group to its top-level coordinator data
+    key(s). Any group absent from ``monitored`` contributes its paths here so
+    downstream entity creation can skip disabled domains.
+    """
     disabled: set[str] = set()
     for group, paths in GROUP_DATA_PATHS.items():
         if group not in monitored:
@@ -269,7 +274,13 @@ def _process_static_description(
     live_bases: set[str],
     data: dict[str, Any],
 ) -> None:
-    """Process one non-dynamic-key description for active/live_bases."""
+    """Process one static (data_dynamic_keys=False) description.
+
+    Populates ``active`` with unique_ids for referenced objects that currently
+    exist, and ``live_bases`` with the base unique_id when the data path is
+    present. Keyless descriptions are handled by ``_handle_keyless``; referenced
+    descriptions are expanded via ``_referenced_unique_ids``.
+    """
     base = format_unique_id(inst, description.key)
     is_disabled_group = description.data_path in disabled_data_paths
 
@@ -293,7 +304,13 @@ def _process_dynamic_description(
     honor_exclude: bool,
     disabled_data_paths: set[str],
 ) -> tuple[set[str], set[str]]:
-    """Return (new active ids, live bases) for one dynamic-key description."""
+    """Return (new active ids, live bases) for one dynamic-key description.
+
+    For ``data_dynamic_keys=True`` descriptions the top-level data mapping key
+    becomes the entity uid. If ``data_composite_references`` is set, the leaf
+    key from each nested object is appended (``uid::ref``); otherwise the
+    referenced unique_ids are computed directly.
+    """
     if not getattr(description, "data_dynamic_keys", False):
         return set(), set()
 
@@ -313,9 +330,8 @@ def _process_dynamic_description(
         return set(), live_bases
 
     active: set[str] = set()
-    composite = getattr(description, "data_composite_references", ())
-    if composite:
-        active |= _composite_references(inst, description, sub_data)
+    if getattr(description, "data_composite_references", ()):
+        active |= _composite_references(inst, description, sub_data, honor_exclude)
     else:
         active |= _referenced_unique_ids(inst, description, sub_data, honor_exclude)
 
@@ -405,22 +421,20 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
     """Dismiss a TrueNAS alert by UUID."""
     entry = _require_config_entry(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
 
-    uuid = call.data.get(SERVICE_ALERT_UUID)
-    if not uuid:
+    if uuid := call.data.get(SERVICE_ALERT_UUID):
+        await alert_action(entry.runtime_data, uuid, "dismiss")
+    else:
         raise ServiceValidationError("Alert UUID is required for dismiss action")
-
-    await alert_action(entry.runtime_data, uuid, "dismiss")
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
     """Restore a TrueNAS alert by UUID."""
     entry = _require_config_entry(hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY))
 
-    uuid = call.data.get(SERVICE_ALERT_UUID)
-    if not uuid:
+    if uuid := call.data.get(SERVICE_ALERT_UUID):
+        await alert_action(entry.runtime_data, uuid, "restore")
+    else:
         raise ServiceValidationError("Alert UUID is required for restore action")
-
-    await alert_action(entry.runtime_data, uuid, "restore")
 
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> None:

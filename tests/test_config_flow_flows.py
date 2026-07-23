@@ -55,8 +55,7 @@ def _user_input(**overrides: object) -> dict[str, object]:
         CONF_VERIFY_SSL: False,
         CONF_CRONJOB_SKIP_DISABLED: DEFAULT_CRONJOB_SKIP_DISABLED,
         CONF_DATA_UNIT: DEFAULT_DATA_UNIT,
-    }
-    data.update(overrides)
+    } | overrides
     return data
 
 

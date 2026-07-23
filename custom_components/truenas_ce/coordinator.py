@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeGuard, cast
+from typing import Any, TypeGuard
 
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.config_entries import ConfigEntry
@@ -26,7 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
-from .api import TrueNASAPI
+from .api import TrueNASAPI, _summarize_payload
 from .apiparser import ApiValueSpec, parse_api
 from .const import (
     BEHAVIOR_SKIP_DISABLED_CRONJOBS,
@@ -366,10 +366,15 @@ def get_truenas_coordinator(
 
 
 def _unwrap_app_stats_message(msg: dict[str, Any]) -> dict[str, Any] | None:
-    """Unwrap collection_update envelope; return params dict or None."""
-    if msg.get("method") == "collection_update" and isinstance(msg.get("params"), dict):
-        return cast(dict[str, Any], msg["params"])
-    return msg
+    """Unwrap collection_update envelope; return inner params/fields dict or None."""
+    params = msg.get("params")
+    if (
+        msg.get("method") == "collection_update"
+        and isinstance(params, dict)
+        and isinstance(params.get("fields"), list)
+    ):
+        return params
+    return msg if isinstance(msg.get("fields"), list) else None
 
 
 # ---------------------------
@@ -1622,24 +1627,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _update_disk_temperatures(self) -> None:
         """Update disk temperatures from netdata and fallback to API."""
         netdata_temps = await self._disk_temps_from_netdata()
-        if netdata_temps:
-            self._apply_netdata_disk_temps(netdata_temps)
 
-        # When netdata is unavailable (returns None) refresh all disks via the
-        # API so a temperature set at boot doesn't stay frozen indefinitely.
-        fallback_disks = [
+        if netdata_temps:
+            disk_map = self._build_disk_name_map()
+            self._apply_netdata_temps(netdata_temps, disk_map)
+
+        if fallback_disks := [
             uid
             for uid, vals in self.ds["disk"].items()
             if vals.get("temperature") is None or netdata_temps is None
-        ]
-        if fallback_disks:
+        ]:
             await self._fallback_disk_temperatures(fallback_disks, bool(netdata_temps))
 
-    def _apply_netdata_disk_temps(self, netdata_temps: dict[str, float]) -> None:
-        """Map netdata temperatures to disk entities."""
-        disk_map = {}
+    def _build_disk_name_map(self) -> dict[str, str]:
+        """Build a mapping from disk name/identifier to uid."""
+        disk_map: dict[str, str] = {}
         for uid, vals in self.ds["disk"].items():
-            # Priority: identifier > devname > name
             for key in (
                 vals.get("identifier"),
                 vals.get("devname"),
@@ -1656,7 +1659,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             disk_map[key],
                             uid,
                         )
+        return disk_map
 
+    def _apply_netdata_temps(
+        self, netdata_temps: dict[str, float], disk_map: dict[str, str]
+    ) -> None:
+        """Apply netdata temperatures to the matching disks."""
         for disk_name, temp in netdata_temps.items():
             if disk_name in disk_map:
                 self.ds["disk"][disk_map[disk_name]]["temperature"] = round(temp, 2)
@@ -2337,47 +2345,112 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 vals["update_jobid"] = 0
 
     # ---------------------------
+    #   app stats subscription helpers
+    # ---------------------------
+    # Subscription lifecycle:
+    #   UNSUBSCRIBED: _app_stats_sub_id is None.
+    #   SUBSCRIBED:   _app_stats_sub_id and _app_stats_event_name are set together.
+    #   stop_app_stats clears both, unconditionally.
+    #   get_app_stats re-enters start_app_stats when is_subscribed returns False.
+    def _set_app_stats_subscription(
+        self, sub_id: str | None, event_name: str | None
+    ) -> None:
+        """Atomically set the app.stats subscription metadata."""
+        self._app_stats_sub_id = sub_id
+        self._app_stats_event_name = event_name
+
+    def _clear_app_stats_subscription(self) -> None:
+        """Clear the app.stats subscription metadata."""
+        self._app_stats_sub_id = None
+        self._app_stats_event_name = None
+
+    def _get_app_identifier(self, app: dict[str, Any]) -> str | None:
+        """Return the canonical app identifier used for stats and group membership.
+
+        Prefers ``name``, falls back to ``app_name`` for legacy payloads.
+        """
+        name = app.get("name")
+        if isinstance(name, str) and name:
+            return name
+        app_name = app.get("app_name")
+        return app_name if isinstance(app_name, str) and app_name else None
+
+    # ---------------------------
     #   start_app_stats
     # ---------------------------
     async def start_app_stats(self) -> None:
         """Initialize the app.stats subscription."""
         if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
-            if self._app_stats_sub_id:
-                await self.stop_app_stats(force=True)
+            _LOGGER.debug("start_app_stats: containers group not monitored, skipping")
+            await self._stop_app_stats_if_active()
             self.ds["app_stats"] = {}
             return
 
-        poll = int(
-            self.config_entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
-        )
-        interval = max(poll, 2)
-        event_name = f'app.stats:{{"interval": {interval}}}'
+        if not self.api.connected():
+            _LOGGER.debug("start_app_stats: API not connected, skipping")
+            return
 
+        event_name = self._resolve_app_stats_event_name()
+        await self._maybe_teardown_changed_app_stats_subscription(event_name)
+        await self._maybe_clear_inactive_app_stats_subscription()
+
+        if not self._app_stats_sub_id:
+            _LOGGER.debug(
+                "start_app_stats: no active subscription, subscribing to %s",
+                event_name,
+            )
+            await self._subscribe_to_app_stats(event_name)
+        else:
+            _LOGGER.debug(
+                "start_app_stats: subscription already active (%s)",
+                self._app_stats_sub_id,
+            )
+
+    async def _stop_app_stats_if_active(self) -> None:
+        """Stop app.stats subscription only if one is currently active."""
+        if self._app_stats_sub_id:
+            await self.stop_app_stats(force=True)
+
+    def _resolve_app_stats_event_name(self) -> str:
+        """Compute the app.stats event name from the current poll interval."""
+        try:
+            poll = int(
+                getattr(self.config_entry, "options", {}).get(
+                    CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+                )
+            )
+        except (ValueError, TypeError):
+            poll = DEFAULT_POLL_INTERVAL
+        interval = max(poll, 2)
+        return f'app.stats:{{"interval": {interval}}}'
+
+    async def _maybe_teardown_changed_app_stats_subscription(
+        self, event_name: str
+    ) -> None:
+        """Tear down the existing subscription if the event definition changed."""
         if self._app_stats_event_name and self._app_stats_event_name != event_name:
             await self.stop_app_stats(force=True)
 
-        if self._app_stats_sub_id and not self.api.is_subscribed(
+    async def _maybe_clear_inactive_app_stats_subscription(self) -> None:
+        """Clear local subscription state if the existing sub is no longer active."""
+        if self._app_stats_sub_id and not await self.api.is_subscribed(
             self._app_stats_sub_id
         ):
-            self._app_stats_sub_id = None
-            self._app_stats_event_name = None
+            self._clear_app_stats_subscription()
 
-        if not self._app_stats_sub_id:
-            try:
-                sub_id, queue = await self.api.subscribe_events(event_name)
-                if sub_id and queue is not None:
-                    self._app_stats_sub_id = sub_id
-                    self._app_stats_event_name = event_name
-                    _LOGGER.debug(
-                        "TrueNAS app.stats subscription established: %s", sub_id
-                    )
-                else:
-                    _LOGGER.debug(
-                        "TrueNAS app.stats subscription failed: "
-                        "no sub_id/queue returned"
-                    )
-            except Exception as err:
-                _LOGGER.debug("Failed to establish app.stats subscription: %s", err)
+    async def _subscribe_to_app_stats(self, event_name: str) -> None:
+        """Attempt to establish a new app.stats subscription."""
+        try:
+            sub_id, queue = await self.api.subscribe_events(event_name)
+            if sub_id and queue is not None:
+                self._set_app_stats_subscription(sub_id, event_name)
+                _LOGGER.debug("TrueNAS app.stats subscription established: %s", sub_id)
+            else:
+                _LOGGER.debug(
+                    "TrueNAS app.stats subscription failed: no sub_id/queue returned"
+                )
+        except Exception as err:
+            _LOGGER.exception("Failed to establish app.stats subscription: %s", err)
 
     # ---------------------------
     #   get_app_stats
@@ -2385,19 +2458,35 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def get_app_stats(self) -> None:
         """Process buffered app.stats events and update state."""
         if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
+            _LOGGER.debug(
+                "get_app_stats: containers group not monitored, clearing app_stats"
+            )
             if self._app_stats_sub_id:
                 await self.stop_app_stats(force=True)
             self.ds["app_stats"] = {}
+            # Containers group unmonitored; tear down and clear state.
             return
 
-        if not self._app_stats_sub_id or not self.api.is_subscribed(
+        if not self._app_stats_sub_id or not await self.api.is_subscribed(
             self._app_stats_sub_id
         ):
+            _LOGGER.debug(
+                "get_app_stats: no active subscription, re-entering start_app_stats"
+            )
+            # Existing sub missing or inactive; re-enters start_app_stats.
             await self.start_app_stats()
             if not self._app_stats_sub_id:
+                _LOGGER.debug(
+                    "get_app_stats: subscription not established, skipping event fetch"
+                )
                 return
 
         if not self.api.connected():
+            # Cannot fetch events while disconnected; skip this poll cycle.
+            return
+
+        if not self.ds.get("app"):
+            # No apps to collect stats for; skip event fetch.
             return
 
         messages = await self.api.get_subscription_events(self._app_stats_sub_id)
@@ -2405,35 +2494,79 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         current_app_names = self._collect_current_app_names()
         self._prune_stale_app_stats(current_app_names)
+        # Remove cached app_stats entries whose app no longer exists.
 
     def _process_app_stats_messages(self, messages: list[dict[str, Any]]) -> None:
         """Append/update app_stats entries from buffered WebSocket messages."""
+        _LOGGER.debug("Processing %d app.stats messages", len(messages))
         for msg in messages:
             params = _unwrap_app_stats_message(msg)
             if params is None:
+                _LOGGER.debug(
+                    "Skipping app.stats message with no unwrappable fields: %s",
+                    _summarize_payload(msg),
+                )
                 continue
             fields_list = params.get("fields", [])
             if not isinstance(fields_list, list):
+                _LOGGER.debug(
+                    "Skipping app.stats message with non-list fields: %s",
+                    _summarize_payload(msg),
+                )
                 continue
             for app in fields_list:
                 self._upsert_app_stats_entry(app)
 
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        """Defensively coerce a value to float, returning None on invalid/missing."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def _upsert_app_stats_entry(self, app: object) -> None:
         """Validate and store one app.stats entry."""
         if not isinstance(app, dict):
+            _LOGGER.debug("Skipping non-dict app.stats entry: %r", app)
             return
-        app_name_raw = app.get("app_name")
-        if not isinstance(app_name_raw, str) or not app_name_raw:
+        app_name = self._get_app_identifier(app)
+        if not isinstance(app_name, str) or not app_name:
+            _LOGGER.debug(
+                "Skipping app.stats entry with missing/invalid app_name: %r",
+                app,
+            )
             return
-        app_name = app_name_raw
-        blkio = app.get("blkio", {})
+
+        blkio_raw = app.get("blkio")
+        if isinstance(blkio_raw, dict):
+            blkio_read = self._coerce_float(blkio_raw.get("read"))
+            blkio_write = self._coerce_float(blkio_raw.get("write"))
+        else:
+            blkio_read = blkio_write = None
+
+        networks = app.get("networks", [])
+        if not isinstance(networks, list):
+            networks = []
+        else:
+            networks = [
+                net
+                for net in networks
+                if isinstance(net, dict) and bool(net.get("interface_name"))
+            ]
+
+        cpu_usage = self._coerce_float(app.get("cpu_usage"))
+        memory = self._coerce_float(app.get("memory"))
+
         self.ds["app_stats"][str(app_name)] = {
             "app_name": app_name,
-            "cpu_usage": app.get("cpu_usage"),
-            "memory": app.get("memory"),
-            "blkio_read": blkio.get("read") if isinstance(blkio, dict) else 0,
-            "blkio_write": blkio.get("write") if isinstance(blkio, dict) else 0,
-            "networks": app.get("networks", []),
+            "cpu_usage": cpu_usage,
+            "memory": memory,
+            "blkio_read": blkio_read,
+            "blkio_write": blkio_write,
+            "networks": networks,
         }
 
     def _collect_current_app_names(self) -> set[str]:
@@ -2441,17 +2574,19 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current_app_names: set[str] = set()
         for vals in self.ds["app"].values():
             if isinstance(vals, dict):
-                name = vals.get("name")
+                name = self._get_app_identifier(vals)
                 if isinstance(name, str) and name:
                     current_app_names.add(name)
         return current_app_names
 
     def _prune_stale_app_stats(self, current_app_names: set[str]) -> None:
         """Remove cached app_stats entries whose app no longer exists."""
-        for app_name in [
+        if stale := [
             name for name in self.ds["app_stats"] if name not in current_app_names
         ]:
-            del self.ds["app_stats"][app_name]
+            _LOGGER.debug("Pruning stale app_stats entries: %s", stale)
+            for app_name in stale:
+                del self.ds["app_stats"][app_name]
 
     # ---------------------------
     #   stop_app_stats
@@ -2472,6 +2607,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._app_stats_sub_id = None
             self._app_stats_event_name = None
         elif force:
+            # Metadata is cleared unconditionally so the coordinator does not
+            # believe it is still subscribed after a disconnect/reconnect cycle.
             self._app_stats_sub_id = None
             self._app_stats_event_name = None
 

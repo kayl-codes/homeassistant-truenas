@@ -104,7 +104,14 @@ def _discover_app_stats(
     coord: TrueNASCoordinator,
     add_entities: AddEntitiesCallback,
 ) -> None:
-    """Discover dynamic app stats sensors for the current coordinator state."""
+    """Discover dynamic app stats sensors for the current coordinator state.
+
+    coord.data["app_stats"] is a dict keyed by app name. Each app-stats
+    description may yield:
+      - one standard sensor per app (e.g. cpu, memory), keyed by app_name
+      - one sensor per network interface, keyed by the composite UID
+        ``app_name::interface_name`` so apps sharing an NIC name remain unique
+    """
     app_stats_data = coord.data.get("app_stats", {})
     app_stats_entities: list[TrueNASAppStatsSensor] = []
 
@@ -140,7 +147,12 @@ def _maybe_discover_app_stats_sensor(
     entities: list[TrueNASAppStatsSensor],
     coord: TrueNASCoordinator,
 ) -> None:
-    """Append a new entity if it is not already loaded."""
+    """Append a new entity if it is not already loaded.
+
+    Network descriptions branch to ``_discover_network_sensors`` (one composite
+    UID per interface). All other descriptions branch to ``_discover_standard_sensor``
+    (one entity per app).
+    """
     if not app_data:
         return
 
@@ -153,6 +165,70 @@ def _maybe_discover_app_stats_sensor(
         )
     else:
         _discover_standard_sensor(description, uid, inst, loaded, entities, coord)
+
+
+# ---------------------------
+#   App Stats Network UID Helpers
+# ---------------------------
+# Composite UIDs for app network sensors use the format ``app_name::interface_name``.
+# These helpers centralize composition, parsing, and data resolution so discovery,
+# entity refresh, and naming all stay consistent.
+_APP_STATS_NETWORK_UID_SEPARATOR = "::"
+
+
+def _compose_app_network_uid(base_uid: str, interface_name: str) -> str:
+    """Compose a unique identifier for an app network interface sensor.
+
+    Network sensors share the same ``app_name`` base UID as other app-stats
+    sensors; the ``interface_name`` suffix differentiates per-NIC readings.
+    This helper is the canonical way to build composite UIDs so the delimiter
+    and formatting stay consistent across discovery and entity construction.
+    """
+    return f"{base_uid}{_APP_STATS_NETWORK_UID_SEPARATOR}{interface_name}"
+
+
+def _parse_app_network_uid(uid: str) -> tuple[str | None, str | None]:
+    """Parse an app network interface UID into base UID and interface name.
+
+    Uses ``_APP_STATS_NETWORK_UID_SEPARATOR`` to split the UID. Returns:
+        A tuple of (base_uid, interface_name). If the UID does not contain
+        the expected separator, (None, None) is returned to signal a parse
+        failure. Callers should treat a None base_uid as an unknown/malformed
+        network sensor and skip/reset the entity.
+
+        Any UID where either the base UID or interface name is empty after
+        splitting is also treated as malformed and returns (None, None).
+    """
+    base_uid, sep, iface = uid.rpartition(_APP_STATS_NETWORK_UID_SEPARATOR)
+    return (base_uid, iface) if sep and base_uid and iface else (None, None)
+
+
+def _resolve_app_network_data(
+    uid: str, app_stats: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Resolve a composite app-network UID to its merged sensor data.
+
+    Uses ``_APP_STATS_NETWORK_UID_SEPARATOR`` to split the UID, then looks up
+    the base app in ``app_stats`` and merges the matching network interface
+    payload. Pure helper that operates on the ``app_stats`` payload directly
+    so it can be tested without a full coordinator. Returns the app_stats
+    entry merged with the matching network interface payload, or ``None`` if
+    the UID is malformed or the interface is unknown.
+    """
+    base_uid, interface_name = _parse_app_network_uid(uid)
+    if base_uid is None or interface_name is None:
+        return None
+    main_data = app_stats.get(base_uid, {})
+    if not main_data or not isinstance(main_data.get("networks"), list):
+        return None
+    return next(
+        (
+            {**main_data, "interface_name": interface_name, **net}
+            for net in main_data["networks"]
+            if (isinstance(net, dict) and net.get("interface_name") == interface_name)
+        ),
+        None,
+    )
 
 
 def _discover_network_sensors(
@@ -174,12 +250,11 @@ def _discover_network_sensors(
         interface_name = net.get("interface_name")
         if not interface_name:
             continue
-        unique_id = format_unique_id(inst, description.key, f"{uid}::{interface_name}")
+        composed_uid = _compose_app_network_uid(uid, interface_name)
+        unique_id = format_unique_id(inst, description.key, composed_uid)
         if unique_id in loaded:
             continue
-        entities.append(
-            TrueNASAppStatsSensor(coord, description, f"{uid}::{interface_name}")
-        )
+        entities.append(TrueNASAppStatsSensor(coord, description, composed_uid))
         loaded.add(unique_id)
 
 
@@ -282,9 +357,7 @@ class TrueNASCertExpirySensor(TrueNASSensor):
         )
         if days is None:
             return None
-        if days >= 365:
-            return round(days / _DAYS_PER_YEAR, 1)
-        return days
+        return round(days / _DAYS_PER_YEAR, 1) if days >= 365 else days
 
     @property
     def native_unit_of_measurement(self) -> UnitOfTime:
@@ -372,17 +445,17 @@ class TrueNASAlertSensor(TrueNASSensor):
 
     async def dismiss(self, **kwargs: Any) -> None:
         """Dismiss a TrueNAS alert by its UUID."""
-        uuid = kwargs.get("uuid")
-        if not uuid:
+        if uuid := kwargs.get("uuid"):
+            await alert_action(self.coordinator, uuid, "dismiss")
+        else:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await alert_action(self.coordinator, uuid, "dismiss")
 
     async def restore(self, **kwargs: Any) -> None:
         """Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID."""
-        uuid = kwargs.get("uuid")
-        if not uuid:
+        if uuid := kwargs.get("uuid"):
+            await alert_action(self.coordinator, uuid, "restore")
+        else:
             raise ServiceValidationError("Missing required parameter: uuid")
-        await alert_action(self.coordinator, uuid, "restore")
 
 
 # ---------------------------
@@ -746,29 +819,26 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
 
     def _refresh_data(self) -> None:
         """Refresh cached data specifically from the app_stats directory structure."""
-        if (
-            self._uid
-            and self.entity_description.key
-            in ("app_stats_network_rx", "app_stats_network_tx")
-            and "::" in self._uid
+        if self.entity_description.key in (
+            "app_stats_network_rx",
+            "app_stats_network_tx",
         ):
-            app_name, interface_name = self._uid.rsplit("::", 1)
-            main_data = self.coordinator.data.get("app_stats", {}).get(app_name, {})
-
-            if main_data and isinstance(main_data.get("networks"), list):
-                for net in main_data["networks"]:
-                    if (
-                        isinstance(net, dict)
-                        and net.get("interface_name") == interface_name
-                    ):
-                        self._data = {
-                            **main_data,
-                            "interface_name": interface_name,
-                            "rx_bytes": net.get("rx_bytes"),
-                            "tx_bytes": net.get("tx_bytes"),
-                        }
-                        return
-            self._data = {}
+            resolved = None
+            base_uid, interface_name = _parse_app_network_uid(self._uid or "")
+            if base_uid is not None and interface_name is not None:
+                resolved = _resolve_app_network_data(
+                    self._uid or "", self.coordinator.data.get("app_stats", {})
+                )
+                self._data = resolved or {}
+            else:
+                self._data = {}
+            self._has_valid_interface_payload = bool(resolved)
+            if not resolved:
+                _LOGGER.debug(
+                    "Network sensor %s (%s) could not resolve interface data",
+                    self.entity_description.key,
+                    self._uid,
+                )
         else:
             self._data = self.coordinator.data.get("app_stats", {}).get(self._uid, {})
 
@@ -785,28 +855,24 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
     @property
     def name(self) -> str | None:
         """Return the dynamic friendly name for the entity."""
-        app_name = self._data.get("app_name", self._uid)
-        if not self._data and isinstance(self._uid, str) and "::" in self._uid:
-            app_name = self._uid.rsplit("::", 1)[0]
-
         if self.entity_description.key in (
             "app_stats_network_rx",
             "app_stats_network_tx",
         ):
-            interface_name = self._data.get("interface_name")
-            if not interface_name:
-                _LOGGER.debug(
-                    "App stats network sensor %s: interface_name missing from _data, "
-                    "falling back to uid parse, _data=%s",
-                    self._uid,
-                    self._data,
-                )
-                if self._uid and "::" in self._uid:
-                    interface_name = self._uid.rsplit("::", 1)[1]
-                else:
-                    return None
-            return f"{app_name} {interface_name} {self.entity_description.name}"
+            base_uid, interface_name = _parse_app_network_uid(self._uid or "")
+            if base_uid is not None and interface_name is not None:
+                if resolved := _resolve_app_network_data(
+                    self._uid or "", self.coordinator.data.get("app_stats", {})
+                ):
+                    return (
+                        f"{resolved.get('app_name', self._uid)} "
+                        f"{resolved.get('interface_name')} "
+                        f"{self.entity_description.name}"
+                    )
+                return f"{base_uid} {self.entity_description.name}"
+            return None
 
+        app_name = self._data.get("app_name", self._uid)
         return f"{app_name} {self.entity_description.name}"
 
     @property
@@ -829,9 +895,13 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
             "app_stats_network_tx",
         ):
             try:
+                # Backend provides bytes/sec; convert to KiB/s to match
+                # the declared unit.
                 return float(val) / 1024.0
             except (ValueError, TypeError):
-                return val
+                # Parsing failed; avoid returning a value with incorrect units.
+                # Returning None keeps the state consistent with the declared unit.
+                return None
 
         return val
 

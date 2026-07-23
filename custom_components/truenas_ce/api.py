@@ -5,6 +5,7 @@ from logging import DEBUG, getLogger
 from typing import Any
 
 from aiotruenas import TrueNASClient
+from aiotruenas.client import _SubscriptionTerminator
 from aiotruenas.exceptions import (
     TrueNASAuthenticationError,
     TrueNASCallError,
@@ -89,13 +90,14 @@ def _classify_exception(exc: TrueNASError, *, during_call: bool) -> str:
     if isinstance(exc, TrueNASConnectionClosedError):
         return ERR_LOST_QUERY if during_call else ERR_LOST_LOGIN
 
-    for exc_type, err_code in _EXCEPTION_ERR_MAP:
-        if isinstance(exc, exc_type):
-            return err_code
-
-    # TrueNASCallError, TrueNASUnknownError and any other unclassified
-    # TrueNASError fall back to a generic unknown error.
-    return ERR_UNKNOWN
+    return next(
+        (
+            err_code
+            for exc_type, err_code in _EXCEPTION_ERR_MAP
+            if isinstance(exc, exc_type)
+        ),
+        ERR_UNKNOWN,
+    )
 
 
 # ---------------------------
@@ -199,7 +201,7 @@ class TrueNASAPI:
     # ---------------------------
     def connected(self) -> bool:
         """Return connected boolean."""
-        return self._client.connected
+        return self._client is not None and self._client.connected
 
     # ---------------------------
     #   connection_test
@@ -262,9 +264,18 @@ class TrueNASAPI:
     # ---------------------------
     async def subscribe_events(
         self, event: str
-    ) -> tuple[str | None, asyncio.Queue[dict[str, Any]] | None]:
+    ) -> (
+        tuple[str, asyncio.Queue[dict[str, Any] | _SubscriptionTerminator]]
+        | tuple[None, None]
+    ):
         """Subscribe to an event and return (subscription_id, queue)."""
         if not self.connected() and not await self.connect():
+            self._error = self._error or ERR_CONNECTION_REFUSED
+            _LOGGER.warning(
+                "TrueNAS %s subscribe_events: connection failed for %s",
+                self._host,
+                event,
+            )
             return None, None
 
         self._error = ""
@@ -291,16 +302,26 @@ class TrueNASAPI:
     # ---------------------------
     async def unsubscribe_events(self, subscription_id: str) -> None:
         """Unsubscribe from a TrueNAS event."""
-        if not self.connected() and not await self.connect():
+        if not self.connected():
+            _LOGGER.debug(
+                "TrueNAS %s unsubscribe_events: client not connected,"
+                " skipping unsubscribe for %s",
+                self._host,
+                subscription_id,
+            )
             return
 
-        self._error = ""
         _LOGGER.debug("TrueNAS %s unsubscribe_events: %s", self._host, subscription_id)
 
         try:
             await self._client.unsubscribe(subscription_id)
         except TrueNASCallError as exc:
-            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            _LOGGER.debug(
+                "TrueNAS %s failed to unsubscribe %s: %s",
+                self._host,
+                subscription_id,
+                exc,
+            )
             _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
@@ -316,6 +337,12 @@ class TrueNASAPI:
     ) -> list[dict[str, Any]]:
         """Read events from a subscription queue."""
         if not self.connected() and not await self.connect():
+            self._error = self._error or ERR_CONNECTION_REFUSED
+            _LOGGER.warning(
+                "TrueNAS %s get_subscription_events: connection failed for %s",
+                self._host,
+                subscription_id,
+            )
             return []
 
         self._error = ""
@@ -349,11 +376,11 @@ class TrueNASAPI:
             )
             return []
 
-    def is_subscribed(self, subscription_id: str) -> bool:
+    async def is_subscribed(self, subscription_id: str) -> bool:
         """Check if a subscription is currently active in the client."""
         if not self.connected():
             return False
-        return self._client.is_subscribed(subscription_id)
+        return await self._client.is_subscribed(subscription_id)
 
     @property
     def error(self) -> str:

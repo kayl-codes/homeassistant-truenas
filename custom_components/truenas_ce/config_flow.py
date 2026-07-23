@@ -404,7 +404,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if CONF_HOST in user_input:
             user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-        truenas_config.update(user_input)
+        truenas_config |= user_input
 
         # The same device must not be configurable twice: abort when another
         # entry already points at this host (the name check below alone would
@@ -499,8 +499,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         if not known:
             return
-        unknown = [k for k in new_passphrases if k not in known]
-        if unknown:
+        if unknown := [k for k in new_passphrases if k not in known]:
             description_placeholders["datasets"] = ", ".join(sorted(unknown))
             errors[CONF_DATASET_PASSPHRASES] = "unknown_dataset"
 
@@ -530,7 +529,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             )
         if not errors:
             existing = dict(truenas_config.get(CONF_DATASET_PASSPHRASES) or {})
-            existing.update(new_passphrases)
+            existing |= new_passphrases
             user_input[CONF_DATASET_PASSPHRASES] = existing
 
     async def _check_connection_if_changed(
