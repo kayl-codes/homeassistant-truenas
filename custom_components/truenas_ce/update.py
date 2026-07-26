@@ -12,6 +12,7 @@ from homeassistant.components.update import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import TrueNASCoordinator
@@ -91,8 +92,10 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
         """
         job_id = await self.coordinator.api.query("update.update", {"reboot": True})
         if job_id is None:
-            _LOGGER.error("Failed to start TrueNAS system update")
-            return
+            raise HomeAssistantError(
+                f"Failed to start TrueNAS system update on {self.coordinator.host}: "
+                f"{self.coordinator.api.error or 'unknown error'}"
+            )
 
         self._data["update_jobid"] = job_id
         await self.coordinator.async_refresh()
@@ -167,8 +170,11 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
 
         job_id = await self.coordinator.api.query("app.upgrade", [self._data["id"]])
         if job_id is None:
-            _LOGGER.error("Failed to start TrueNAS app update for %s", self._data["id"])
-            return
+            raise HomeAssistantError(
+                f"Failed to start TrueNAS app update for {self._data['id']} on "
+                f"{self.coordinator.host}: "
+                f"{self.coordinator.api.error or 'unknown error'}"
+            )
 
         self._data["update_jobid"] = job_id
         await self.coordinator.async_refresh()

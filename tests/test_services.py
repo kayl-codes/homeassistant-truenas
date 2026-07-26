@@ -44,7 +44,7 @@ _SAMPLE_ALERTS = [
 
 def _fake_coordinator(alerts: list[dict[str, Any]] | None = None) -> SimpleNamespace:
     """A minimal stand-in for TrueNASCoordinator covering runtime_data uses."""
-    api = SimpleNamespace(query=AsyncMock(return_value=alerts or []))
+    api = SimpleNamespace(query=AsyncMock(return_value=alerts or []), error="")
     return SimpleNamespace(api=api, async_refresh=AsyncMock())
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.const import UnitOfInformation
+from homeassistant.exceptions import HomeAssistantError
 
 if TYPE_CHECKING:
     from .coordinator import TrueNASCoordinator
@@ -74,4 +75,9 @@ def format_attribute(attr: str) -> str:
 async def alert_action(coordinator: TrueNASCoordinator, uuid: str, action: str) -> None:
     """Execute alert dismiss/restore action (shared helper)."""
     await coordinator.api.query(f"alert.{action}", [uuid])
+    if coordinator.api.error:
+        raise HomeAssistantError(
+            f"Failed to {action} alert {uuid} on {coordinator.host}: "
+            f"{coordinator.api.error}"
+        )
     await coordinator.async_refresh()

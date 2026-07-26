@@ -50,11 +50,15 @@ rules:
 
   # Silver
   action-exceptions:
-    status: todo
+    status: done
     comment: |
-      Unsupported entity actions correctly raise ServiceValidationError, but a
-      failed API call inside an action (query returns None) does not raise
-      HomeAssistantError yet.
+      Unsupported entity actions raise ServiceValidationError
+      (_raise_unsupported). Every entity action that calls
+      coordinator.api.query() now also raises HomeAssistantError when that
+      call actually failed, via the shared TrueNASEntity._raise_if_api_error
+      helper (and coordinator.async_run_task for the shared run-task path) --
+      checking api.error rather than a None return value, since many
+      middleware endpoints legitimately return null on success too.
   config-entry-unloading: done
   docs-configuration-parameters: done
   docs-installation-parameters: done

@@ -18,7 +18,7 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.recorder import get_instance
@@ -503,8 +503,20 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Shared by the run buttons (button.py) and the *_run sensor actions
         (sensor.py) so the trigger + optimistic-state logic lives in one place.
+
+        Raises:
+            HomeAssistantError: if the middleware call itself failed. ``query()``
+                swallows connection/middleware errors and returns None instead of
+                raising, recording the failure in ``api.error`` -- checking that
+                (rather than the return value, which is legitimately None on
+                success for many of these fire-and-forget methods) is what
+                distinguishes a real failure from a normal null response.
         """
         await self.api.query(method, [object_id])
+        if self.api.error:
+            raise HomeAssistantError(
+                f"TrueNAS action failed on {self.host}: {self.api.error}"
+            )
         self.set_optimistic_running(data_path, object_id)
 
     # ---------------------------

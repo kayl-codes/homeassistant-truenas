@@ -8,6 +8,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -124,12 +125,11 @@ class TrueNASPoolScrubButton(TrueNASButton):
             API_POOL_SCRUB_SCRUB, [pool_name, SCRUB_ACTION_START]
         )
         if result is None:
-            _LOGGER.error(
-                "TrueNAS scrub button %s: pool.scrub.scrub failed for pool %r",
-                self.entity_id,
-                pool_name,
+            raise HomeAssistantError(
+                f"TrueNAS scrub failed for pool {pool_name!r} on "
+                f"{self.coordinator.host}: "
+                f"{self.coordinator.api.error or 'unknown error'}"
             )
-            return
         self.coordinator.set_optimistic_running(
             self.entity_description.data_path or "", task_id
         )
