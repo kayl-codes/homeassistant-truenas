@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
 
 from custom_components.truenas_ce import coordinator as coordinator_module
@@ -268,6 +269,34 @@ def test_set_optimistic_running_noop_for_unknown_object_id() -> None:
     coord.async_update_listeners = MagicMock()
     coord.set_optimistic_running("vm", "does-not-exist")
     assert coord.ds["vm"]["1"]["state"] == "STOPPED"
+    coord.async_update_listeners.assert_not_called()
+
+
+# ---------------------------
+#   async_run_task
+# ---------------------------
+async def test_async_run_task_marks_running_on_success() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {"1": {"state": "STOPPED"}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=42)
+    coord.api.error = ""
+    coord.async_update_listeners = MagicMock()
+    await coord.async_run_task("rsynctask.run", "1", "rsynctask")
+    assert coord.ds["rsynctask"]["1"]["state"] == "RUNNING"
+
+
+async def test_async_run_task_raises_and_skips_optimistic_state_on_failure() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {"1": {"state": "STOPPED"}}}
+    coord.host = "truenas.local"
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=None)
+    coord.api.error = "ERR_LOST_QUERY"
+    coord.async_update_listeners = MagicMock()
+    with pytest.raises(HomeAssistantError, match="ERR_LOST_QUERY"):
+        await coord.async_run_task("rsynctask.run", "1", "rsynctask")
+    assert coord.ds["rsynctask"]["1"]["state"] == "STOPPED"
     coord.async_update_listeners.assert_not_called()
 
 

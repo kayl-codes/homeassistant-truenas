@@ -15,6 +15,7 @@ __pycache__/
 
 # Claude Code (personal/local settings — permission rules etc.)
 .claude/
+.mcp.json
 
 # Editor / OS junk
 .DS_Store

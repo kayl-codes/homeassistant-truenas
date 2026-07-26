@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_platform as ep
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -397,6 +397,21 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             f"The '{action}' action is not supported by this TrueNAS entity "
             f"({self.entity_id})"
         )
+
+    def _raise_if_api_error(self, action: str) -> None:
+        """Raise HomeAssistantError if the most recent api.query() call failed.
+
+        query() swallows connection/middleware errors and returns None instead
+        of raising, recording the failure in api.error; many middleware
+        endpoints also legitimately return null on success, so only a
+        non-empty api.error (reset at the start of every query) marks an
+        actual failure.
+        """
+        if self.coordinator.api.error:
+            raise HomeAssistantError(
+                f"TrueNAS action '{action}' failed on {self.coordinator.host}: "
+                f"{self.coordinator.api.error}"
+            )
 
     async def start(self) -> None:
         """Run function."""

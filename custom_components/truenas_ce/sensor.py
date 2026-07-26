@@ -223,12 +223,14 @@ class TrueNASUptimeSensor(TrueNASSensor):
         await self.coordinator.api.query(
             "system.reboot", ["Home Assistant Integration"]
         )
+        self._raise_if_api_error("restart")
 
     async def stop(self) -> None:
         """Shutdown TrueNAS systen."""
         await self.coordinator.api.query(
             "system.shutdown", ["Home Assistant Integration"]
         )
+        self._raise_if_api_error("stop")
 
     async def refresh(self) -> None:
         """Force an immediate coordinator re-poll of TrueNAS.
@@ -354,7 +356,11 @@ class TrueNASDatasetSensor(TrueNASSensor):
         payload = {"dataset": f"{self._data['name']}", "name": f"custom-{ts}"}
         result = await self.coordinator.api.query("pool.snapshot.create", payload)
         if result is None:
-            await self.coordinator.api.query("zfs.snapshot.create", payload)
+            result = await self.coordinator.api.query("zfs.snapshot.create", payload)
+        if result is None and self.coordinator.api.error:
+            raise HomeAssistantError(
+                self._action_error("snapshot", self.coordinator.api.error)
+            )
 
     def _raise_if_not_encrypted(self, action: str) -> None:
         """Reject lock/unlock on a dataset that is not encrypted.
@@ -552,6 +558,7 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
         jobs = await self.coordinator.api.query(
             "cloudsync.query", [[["id", "=", self._data["id"]]]]
         )
+        self._raise_if_api_error("start")
         tmp_job = jobs[0] if isinstance(jobs, list) and jobs else None
 
         if not isinstance(tmp_job, dict) or "job" not in tmp_job:
@@ -580,6 +587,7 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
         jobs = await self.coordinator.api.query(
             "cloudsync.query", [[["id", "=", self._data["id"]]]]
         )
+        self._raise_if_api_error("stop")
         tmp_job = jobs[0] if isinstance(jobs, list) and jobs else None
 
         if not isinstance(tmp_job, dict) or "job" not in tmp_job:
@@ -600,3 +608,4 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
             return
 
         await self.coordinator.api.query("cloudsync.abort", [self._data["id"]])
+        self._raise_if_api_error("stop")
