@@ -193,7 +193,7 @@ async def test_validate_connection_success_sets_no_errors() -> None:
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
-    assert errors == {}
+    assert not errors
     api.disconnect.assert_awaited_once()
 
 
@@ -244,7 +244,7 @@ def test_validate_passphrase_names_no_coordinator_skips() -> None:
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
-    assert errors == {}
+    assert not errors
 
 
 def test_validate_passphrase_names_no_known_datasets_skips() -> None:
@@ -258,7 +258,7 @@ def test_validate_passphrase_names_no_known_datasets_skips() -> None:
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
-    assert errors == {}
+    assert not errors
 
 
 def test_validate_passphrase_names_unknown_dataset_sets_error() -> None:
@@ -306,7 +306,7 @@ def test_validate_passphrase_names_all_known_sets_no_error() -> None:
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._validate_passphrase_names({"tank/data": "x"}, "entry1", errors, placeholders)
-    assert errors == {}
+    assert not errors
 
 
 # ---------------------------
@@ -321,7 +321,7 @@ def test_apply_passphrase_input_blank_text_removes_key() -> None:
     placeholders: dict[str, str] = {}
     flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
     assert "dataset_passphrases" not in user_input
-    assert errors == {}
+    assert not errors
 
 
 def test_apply_passphrase_input_malformed_line_sets_error() -> None:
@@ -388,7 +388,7 @@ def test_apply_passphrase_input_overrides_existing_dataset_passphrase() -> None:
     flow._apply_passphrase_input(
         user_input, truenas_config, "entry1", errors, placeholders
     )
-    assert errors == {}
+    assert not errors
     assert user_input["dataset_passphrases"] == {"tank/data": "newsecret"}
 
 
@@ -401,7 +401,7 @@ def test_apply_passphrase_input_strips_dataset_name_but_not_passphrase() -> None
     errors: dict[str, str] = {}
     placeholders: dict[str, str] = {}
     flow._apply_passphrase_input(user_input, {}, "entry1", errors, placeholders)
-    assert errors == {}
+    assert not errors
     assert user_input["dataset_passphrases"] == {"tank/data": "  secret"}
 
 

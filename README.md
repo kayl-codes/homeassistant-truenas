@@ -41,6 +41,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Control and Monitor Services
  * Control and Monitor Virtual Machines (start / stop / restart)
  * Control and Monitor Containers (Incus instances: start / stop / restart)
+ * **Monitor Apps** (CPU, RAM, Network RX/TX, Block I/O — live event-based statistics per running app)
  * Control and Monitor Cloudsync
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
  * **Monitor Certificate Expiry** (expiration time, days remaining, expired status)
@@ -111,6 +112,21 @@ and `container_restart` actions (target the container's binary sensor).
 >
 > Note: a restart is a background job, so the brief down-state may not be sampled by the
 > poll — the steady state is always reported correctly.
+
+## Apps
+Monitor each running TrueNAS **app** (Kubernetes workload) with live, event-based statistics:
+- **CPU usage** (%)
+- **Memory** (bytes)
+- **Network RX/TX** per interface (bytes/sec)
+- **Block I/O Read/Write** (bytes)
+
+Sensors are created and removed automatically as apps are deployed or removed. Each app
+gets its own device, and network metrics are exposed per network interface. Stats are
+updated via TrueNAS `app.stats` event subscriptions rather than polling, so they reflect
+the current state without waiting for the next poll interval.
+
+> **Apps** is a monitored group (enabled by default). You can disable it under
+> *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
 
 ## Cloudsync
 Control and monitor status and attributes for each TrueNAS cloudsync task.

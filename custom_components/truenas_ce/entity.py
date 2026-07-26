@@ -12,7 +12,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_platform as ep
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity, EntityDescription
@@ -31,6 +33,8 @@ from .coordinator import TrueNASCoordinator, get_truenas_coordinator
 from .helper import format_attribute
 
 _LOGGER = getLogger(__name__)
+
+_UNKNOWN_KEY = "<unknown>"
 
 
 # ---------------------------
@@ -60,6 +64,15 @@ def format_device_identifier(inst: str, hostname: str) -> str:
 # ---------------------------
 #   TrueNASEntityDescription
 # ---------------------------
+# Dynamic vs static entity contract:
+#   - Static descriptions (data_dynamic_keys=False) have a fixed data_path and
+#     produce either one keyless entity or one entity per referenced object.
+#   - Dynamic descriptions (data_dynamic_keys=True) use top-level data keys as
+#     entity UIDs, allowing arbitrary objects to become entities.
+#   - Composite references (data_composite_references=(container, leaf)) add a
+#     second level of dynamism: the leaf value from each nested object becomes
+#     part of the composite UID (``uid::leaf``), used for per-subobject entities
+#     like per-NIC network sensors.
 @dataclass(frozen=True, kw_only=True)
 class TrueNASEntityDescription(EntityDescription):
     """Fields shared by the entity descriptions of every TrueNAS platform."""
@@ -72,7 +85,96 @@ class TrueNASEntityDescription(EntityDescription):
     data_uid: str | None = None
     data_reference: str | None = None
     data_attributes_list: tuple[str, ...] = ()
+    data_dynamic_keys: bool = False
+    data_composite_references: tuple[str, ...] = ()
     func: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate combinations of dynamic flags and references.
+
+        Invalid configurations emit warnings so they fail fast in tests/CI
+        without crashing the integration at import time.
+        """
+        composite = self.data_composite_references or ()
+        has_composite = bool(composite)
+        dynamic = self.data_dynamic_keys
+
+        if has_composite and not dynamic:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_composite_references requires data_dynamic_keys=True",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+            return
+
+        if has_composite and len(composite) != 2:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_composite_references must contain exactly two segments "
+                "(container_key, leaf_key)",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+            return
+
+        if dynamic and not self.data_reference and not has_composite:
+            _LOGGER.warning(
+                "Invalid TrueNASEntityDescription %r: "
+                "data_dynamic_keys=True requires either data_reference or "
+                "data_composite_references",
+                getattr(self, "key", _UNKNOWN_KEY),
+            )
+
+
+def _composite_references(
+    inst: str,
+    description: TrueNASEntityDescription,
+    data: dict[str, Any],
+    honor_exclude: bool = True,
+) -> set[str]:
+    """Compute unique_ids for descriptions whose reference is nested inside a list.
+
+    For each top-level uid in ``data``, the leaf value at
+    ``data[uid][container_key][item][leaf_key]`` becomes a composite unique_id
+    of the form ``inst-key-uid::ref``. This supports entities like per-NIC
+    network sensors where the interface name lives inside a list of dicts.
+
+    When ``honor_exclude`` is True, items matching ``description.data_exclude``
+    are skipped, mirroring ``_referenced_unique_ids`` behavior.
+    """
+    ids: set[str] = set()
+    container_key, leaf_key = description.data_composite_references
+    for uid, vals in data.items():
+        container = _get_composite_container(vals, container_key)
+        if container is None:
+            continue
+        for item in container:
+            ref = _extract_composite_ref(item, description, honor_exclude, leaf_key)
+            if ref is not None:
+                ids.add(format_unique_id(inst, description.key, f"{uid}::{ref}"))
+    return ids
+
+
+def _get_composite_container(vals: Any, container_key: str) -> list[Any] | None:
+    """Return the composite container list if present and valid, else None."""
+    if not isinstance(vals, dict):
+        return None
+    container = vals.get(container_key)
+    return container if isinstance(container, list) else None
+
+
+def _extract_composite_ref(
+    item: Any,
+    description: TrueNASEntityDescription,
+    honor_exclude: bool,
+    leaf_key: str,
+) -> str | None:
+    """Validate a composite item and return its leaf reference, or None."""
+    if not isinstance(item, dict):
+        return None
+    if honor_exclude and _is_uid_excluded(description, item):
+        return None
+    ref = item.get(leaf_key)
+    return ref if ref is not None else None
 
 
 # ---------------------------
@@ -87,9 +189,7 @@ def _skip_keyless_description(
         "data_attribute",
         getattr(entity_description, "data_is_on", None),
     )
-    if not attr_name:
-        return False
-    return data.get(attr_name) is None
+    return data.get(attr_name) is None if attr_name else False
 
 
 def _is_uid_excluded(entity_description: TrueNASEntityDescription, vals: Any) -> bool:
@@ -142,6 +242,8 @@ def _collect_new_entities(
     """
     new_entities: list[TrueNASEntity] = []
     for entity_description in descriptions:
+        if entity_description.func == "TrueNASAppStatsSensor":
+            continue
         data = coordinator.data.get(entity_description.data_path or "")
         if data is None:
             continue
@@ -164,6 +266,60 @@ def _append_if_new(
     if obj.unique_id not in seen:
         seen.add(obj.unique_id)
         new_entities.append(obj)
+
+
+def _cleanup_orphaned_entities(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    coordinator: TrueNASCoordinator,
+) -> None:
+    """Remove registry entities the integration would no longer create.
+
+    An entity is deleted when it is not in the active set yet belongs to a data
+    domain that currently holds data. This covers both true orphans (the object
+    is gone) and entities filtered out by ``data_exclude`` (e.g. traffic sensors
+    of a down interface). A transient empty fetch of a whole domain never wipes
+    the corresponding group, and cleanup is skipped unless the last update
+    succeeded.
+    """
+    from . import _collect_active_unique_ids
+
+    if not coordinator.last_update_success:
+        return
+
+    inst = config_entry.data[CONF_NAME]
+    active, live_bases = _collect_active_unique_ids(inst, coordinator)
+
+    ent_reg = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(
+        ent_reg, config_entry.entry_id
+    ):
+        unique_id = entity_entry.unique_id
+        if unique_id in active:
+            continue
+        if any(
+            unique_id == base or unique_id.startswith(f"{base}-") for base in live_bases
+        ):
+            _LOGGER.info(
+                "Removing orphaned TrueNAS entity %s (unique_id=%s)",
+                entity_entry.entity_id,
+                unique_id,
+            )
+            ent_reg.async_remove(entity_entry.entity_id)
+
+    # Remove devices that are now empty (all their entities were cleaned up above).
+    dev_reg = dr.async_get(hass)
+    for device_entry in dr.async_entries_for_config_entry(
+        dev_reg, config_entry.entry_id
+    ):
+        if not er.async_entries_for_device(
+            ent_reg, device_entry.id, include_disabled_entities=True
+        ):
+            _LOGGER.info(
+                "Removing empty TrueNAS device %s",
+                device_entry.name_by_user or device_entry.name,
+            )
+            dev_reg.async_remove_device(device_entry.id)
 
 
 async def async_add_entities(
@@ -215,6 +371,7 @@ async def async_add_entities(
 
     async def async_update_controller(coordinator: TrueNASCoordinator) -> None:
         """Add entities for newly-appeared objects on each coordinator refresh."""
+
         # SIGNAL_UPDATE_SENSORS is a global dispatcher signal that __init__ always
         # fires with the *same* coordinator instance object (one per config entry),
         # so the identity check below is safe. With more than one TrueNAS config
@@ -224,6 +381,8 @@ async def async_add_entities(
         # does not generate unique IDs … already exists" spam (#33).
         if coordinator is not this_coordinator:
             return
+
+        _cleanup_orphaned_entities(hass, config_entry, coordinator)
 
         async with add_lock:
             loaded = {
@@ -306,10 +465,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         if data_value is None:
             data_value = str(self._uid)
 
-        if desc_name:
-            return f"{data_value} {desc_name}"
-
-        return f"{data_value}"
+        return f"{data_value} {desc_name}" if desc_name else f"{data_value}"
 
     @property
     def unique_id(self) -> str:
