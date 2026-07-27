@@ -116,6 +116,7 @@ def _fake_api() -> SimpleNamespace:
     return SimpleNamespace(
         connected=MagicMock(return_value=True),
         connect=AsyncMock(return_value=True),
+        close=AsyncMock(),
         query=AsyncMock(side_effect=_query),
         error="",
         scheme="ws",
