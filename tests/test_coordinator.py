@@ -508,11 +508,30 @@ def test_systemstats_process_falls_back_to_defaults_without_aggregations() -> No
     assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(0.0)
 
 
+def test_systemstats_process_skips_legend_var_not_in_arr() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    graph = {
+        "legend": ["shortterm", "other"],
+        "aggregations": {"mean": {"shortterm": 1.0, "other": 99.0}},
+    }
+    coord._systemstats_process(("shortterm",), graph, "load")
+    assert coord.ds["system_info"]["load_shortterm"] == pytest.approx(1.0)
+    assert "load_other" not in coord.ds["system_info"]
+
+
 def test_store_stat_value_arcsize_uses_dedicated_key() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}}
     coord._store_stat_value("arcsize", "size", 12.345)
     assert coord.ds["system_info"]["cache_size-arc_value"] == pytest.approx(12.35)
+
+
+def test_store_stat_value_cpu_uses_prefixed_key() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._store_stat_value("cpu", "cpu", 12.345)
+    assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(12.35)
 
 
 def test_store_stat_value_memory_only_stores_available() -> None:
@@ -522,6 +541,13 @@ def test_store_stat_value_memory_only_stores_available() -> None:
     assert coord.ds["system_info"]["memory-free_value"] == 100
     coord._store_stat_value("memory", "used", 50.0)
     assert "memory-used" not in coord.ds["system_info"]
+
+
+def test_store_stat_value_unknown_type_stores_raw_key() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._store_stat_value("diskstats", "reads", 12.345)
+    assert coord.ds["system_info"]["reads"] == pytest.approx(12.35)
 
 
 # ---------------------------
@@ -834,6 +860,21 @@ async def test_start_app_stats_keeps_existing_sub_when_no_apps() -> None:
     coord.api.subscribe_events.assert_not_awaited()
     assert coord._app_stats_sub_id == "sub-old"
     assert coord._app_stats_event_name == 'app.stats:{"interval": 60}'
+
+
+async def test_get_app_stats_clears_when_containers_not_monitored() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app_stats": {"stale-app": {"cpu": 1}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.stop_app_stats = AsyncMock()
+    coord._app_stats_sub_id = "sub-1"
+
+    await coord.get_app_stats()
+
+    coord.stop_app_stats.assert_awaited_once_with(force=True)
+    assert coord.ds["app_stats"] == {}
 
 
 async def test_get_app_stats_does_nothing_when_disconnected_mid_call() -> None:
@@ -1774,6 +1815,22 @@ async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> N
     coord._handle_update_job.assert_not_awaited()
 
 
+async def test_get_systeminfo_returns_early_disconnected_after_update_job() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}, "interface": {}}
+    coord.api = MagicMock()
+    # Connected for the pre-update-job check, disconnected right after.
+    coord.api.connected = MagicMock(side_effect=[True, False])
+    coord.api.query = AsyncMock(return_value={"version": "25.04.1"})
+    coord._handle_update_job = AsyncMock()
+    coord._parse_version = MagicMock()
+
+    await coord.get_systeminfo()
+
+    coord._handle_update_job.assert_awaited_once()
+    coord._parse_version.assert_not_called()
+
+
 async def test_handle_update_job_noop_without_jobid() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {"update_jobid": 0}}
@@ -1920,6 +1977,76 @@ def test_process_system_stat_ignores_missing_name() -> None:
     coord._process_system_stat({})  # must not raise
 
 
+def test_process_system_stat_dispatches_cputemp() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    item = {"name": "cputemp", "aggregations": {"mean": {"core0": 40.0}}}
+    with patch.object(coord, "_process_cputemp") as mock:
+        coord._process_system_stat(item)
+    mock.assert_called_once_with(item)
+
+
+def test_process_system_stat_dispatches_cpu_and_rounds_usage() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._process_system_stat({"name": "cpu"})
+    # No aggregations/legend -> _store_stat_defaults zeroes cpu_cpu, which then
+    # feeds cpu_usage.
+    assert coord.ds["system_info"]["cpu_usage"] == pytest.approx(0.0)
+
+
+def test_process_system_stat_dispatches_interface_for_known_identifier() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}, "interface": {"eth0": {}}}
+    coord._process_system_stat(
+        {"name": "interface", "identifier": "eth0", "legend": "not-a-list"}
+    )
+    assert coord.ds["interface"]["eth0"]["rx"] == 0.0
+    assert coord.ds["interface"]["eth0"]["tx"] == 0.0
+
+
+def test_process_system_stat_ignores_interface_for_unknown_identifier() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}, "interface": {}}
+    coord._process_system_stat({"name": "interface", "identifier": "eth99"})
+    assert coord.ds["interface"] == {}
+
+
+def test_process_system_stat_dispatches_memory() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"physmem": 1000}}
+    coord._process_system_stat(
+        {
+            "name": "memory",
+            "legend": ["available"],
+            "aggregations": {"mean": {"available": 250.0}},
+        }
+    )
+    assert coord.ds["system_info"]["memory-free_value"] == 250
+
+
+def test_process_system_stat_dispatches_arcsize() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._process_system_stat(
+        {
+            "name": "arcsize",
+            "legend": ["size"],
+            "aggregations": {"mean": {"size": 12.345}},
+        }
+    )
+    assert coord.ds["system_info"]["cache_size-arc_value"] == pytest.approx(12.35)
+
+
+def test_process_system_stat_dispatches_unknown_name() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord.host = "truenas.local"
+    coord._unknown_system_stat_names = set()
+    coord._process_system_stat({"name": "weird_stat"})
+    assert "weird_stat" in coord._unknown_system_stat_names
+
+
 def test_process_cputemp_stores_max_mean() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}}
@@ -1977,6 +2104,18 @@ def test_process_system_stat_interface_zeroes_on_invalid_legend() -> None:
     assert coord.ds["interface"]["eth0"]["tx"] == 0.0
 
 
+def test_process_system_stat_interface_zeroes_when_mean_not_dict() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"interface": {"eth0": {}}}
+    item = {
+        "legend": ["received", "sent"],
+        "aggregations": {"mean": "not-a-dict"},
+    }
+    coord._process_system_stat_interface(item, "eth0")
+    assert coord.ds["interface"]["eth0"]["rx"] == 0.0
+    assert coord.ds["interface"]["eth0"]["tx"] == 0.0
+
+
 async def test_get_systemstats_returns_early_without_graph_names() -> None:
     coord = _bare_coordinator()
     coord.ds = {"interface": {}}
@@ -1991,6 +2130,20 @@ async def test_get_systemstats_returns_early_without_graph_names() -> None:
     coord.api.query = AsyncMock()
     await coord.get_systemstats()
     coord.api.query.assert_not_awaited()
+
+
+async def test_get_systemstats_returns_when_fetch_yields_no_graphs() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"interface": {}, "system_info": {}}
+    coord._is_virtual = True
+    coord._systemstats_errored = {}
+    coord.host = "truenas.local"
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=None)
+    await coord.get_systemstats()
+    assert coord.ds["system_info"] == {}
 
 
 async def test_get_systemstats_processes_returned_graphs() -> None:
@@ -2068,6 +2221,35 @@ async def test_get_pool_uses_dataset_mountpoint_match() -> None:
     assert coord.ds["pool"]["g1"]["fragmentation"] == 12
 
 
+async def test_get_pool_falls_back_to_name_match_when_no_mountpoint() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "pool": {},
+        # mountpoint "unknown" is excluded from the mountpoint lookup, forcing
+        # the fallback match by dataset id == pool name.
+        "dataset": {"tank": {"mountpoint": "unknown", "available": 40, "used": 60}},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "guid": "g1",
+                    "name": "tank",
+                    "path": "/mnt/tank",
+                    "fragmentation": "12",
+                    "topology": {},
+                }
+            ],
+            None,  # boot.get_state
+        ]
+    )
+    await coord.get_pool()
+    assert coord.ds["pool"]["g1"]["available"] == 40
+    assert coord.ds["pool"]["g1"]["total"] == 100
+
+
 async def test_get_pool_returns_early_when_disconnected() -> None:
     coord = _bare_coordinator()
     coord.ds = {"pool": {}, "dataset": {}}
@@ -2113,6 +2295,17 @@ async def test_get_dataset_empty_when_group_not_monitored() -> None:
     coord.api.query.assert_not_awaited()
 
 
+async def test_get_dataset_returns_early_when_no_datasets_found() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"dataset": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_DATASETS]}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[])
+    await coord.get_dataset()
+    assert coord.ds["dataset"] == {}
+
+
 async def test_get_dataset_parses_when_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"dataset": {}}
@@ -2124,6 +2317,39 @@ async def test_get_dataset_parses_when_monitored() -> None:
     )
     await coord.get_dataset()
     assert "tank" in coord.ds["dataset"]
+
+
+async def test_update_disk_temperatures_applies_netdata_and_falls_back() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"disk": {"d1": {"temperature": 40}, "d2": {"temperature": None}}}
+    coord._disk_temps_from_netdata = AsyncMock(return_value={"sda": 40.0})
+    coord._build_disk_name_map = MagicMock(return_value={"sda": "d1"})
+    coord._apply_netdata_temps = MagicMock()
+    coord._fallback_disk_temperatures = AsyncMock()
+
+    await coord._update_disk_temperatures()
+
+    coord._build_disk_name_map.assert_called_once()
+    coord._apply_netdata_temps.assert_called_once_with({"sda": 40.0}, {"sda": "d1"})
+    coord._fallback_disk_temperatures.assert_awaited_once_with(["d2"], True)
+
+
+async def test_update_disk_temperatures_falls_back_for_all_without_netdata() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"disk": {"d1": {"temperature": 40}, "d2": {"temperature": None}}}
+    coord._disk_temps_from_netdata = AsyncMock(return_value=None)
+    coord._build_disk_name_map = MagicMock()
+    coord._apply_netdata_temps = MagicMock()
+    coord._fallback_disk_temperatures = AsyncMock()
+
+    await coord._update_disk_temperatures()
+
+    coord._build_disk_name_map.assert_not_called()
+    coord._apply_netdata_temps.assert_not_called()
+    coord._fallback_disk_temperatures.assert_awaited_once()
+    fallback_uids = coord._fallback_disk_temperatures.call_args.args[0]
+    assert set(fallback_uids) == {"d1", "d2"}
+    assert coord._fallback_disk_temperatures.call_args.args[1] is False
 
 
 # ---------------------------
@@ -2241,6 +2467,14 @@ async def test_disk_temps_from_netdata_returns_none_without_graph() -> None:
     assert await coord._disk_temps_from_netdata() is None
 
 
+async def test_disk_temps_from_netdata_returns_none_on_invalid_graph_data() -> None:
+    coord = _bare_coordinator()
+    coord._disk_temp_graph = "disk_temp"
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=None)
+    assert await coord._disk_temps_from_netdata() is None
+
+
 async def test_disk_temps_from_netdata_collects_temps() -> None:
     coord = _bare_coordinator()
     coord._disk_temp_graph = "disk_temp"
@@ -2266,6 +2500,15 @@ async def test_discover_disk_temp_graph_returns_empty_when_not_found() -> None:
     coord = _bare_coordinator()
     coord.api = MagicMock()
     coord.api.query = AsyncMock(return_value=None)
+    assert await coord._discover_disk_temp_graph() == ""
+
+
+async def test_discover_disk_temp_graph_returns_empty_when_no_match() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"name": "cpu_load", "title": "CPU Load"}]
+    )
     assert await coord._discover_disk_temp_graph() == ""
 
 
@@ -2378,6 +2621,19 @@ async def test_get_container_filters_container_type_and_computes_fields() -> Non
     assert coord.ds["container"]["c1"]["memory"] == 1
     assert coord.ds["container"]["c1"]["running"] is True
     assert coord.ds["container"]["c1"]["ip_address"] == "10.0.0.5"
+
+
+async def test_get_container_normalizes_non_numeric_memory() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"id": "c1", "name": "app1", "type": "CONTAINER", "memory": None}]
+    )
+    await coord.get_container()
+    assert coord.ds["container"]["c1"]["memory"] == 0
 
 
 async def test_get_container_empty_when_not_monitored() -> None:
@@ -2545,6 +2801,24 @@ async def test_get_ups_returns_when_no_graphs_discovered() -> None:
     coord.api.query = AsyncMock()
     await coord.get_ups()
     coord.api.query.assert_not_awaited()
+
+
+async def test_get_ups_assigns_discovered_graphs_when_previously_none() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"ups": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_UPS]}
+    coord._ups_graphs = None
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        side_effect=[
+            [{"name": "upscharge"}],  # discovery call
+            [{"aggregations": {"mean": {"a": 80.0}}}],  # graph data call
+        ]
+    )
+    await coord.get_ups()
+    assert coord._ups_graphs == {"upscharge"}
+    assert coord.ds["ups"]["battery_charge"] == 80.0
 
 
 async def test_get_ups_populates_known_graphs() -> None:

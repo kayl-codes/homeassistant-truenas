@@ -28,6 +28,7 @@ from custom_components.truenas_ce import (
     _handle_passphrase_list,
     _handle_passphrase_remove,
     _migrate_data_size_units,
+    _migrate_description,
     _process_dynamic_description,
     _process_static_description,
     _referenced_unique_ids,
@@ -126,6 +127,58 @@ def test_migrate_data_size_units_processes_data_size_descriptions() -> None:
 
     # Called at least once for a DATA_SIZE sensor description (pool available/usage).
     assert migrate_mock.called
+
+
+def test_migrate_description_noop_when_data_not_dict() -> None:
+    coordinator = MagicMock()
+    coordinator.ds = {}
+    description = _desc(key="pool_size", data_path="pool", data_attribute="size")
+
+    with patch.object(init_module, "_force_entity_unit") as force_mock:
+        _migrate_description(MagicMock(), coordinator, "TrueNAS", description, False)
+
+    force_mock.assert_not_called()
+
+
+def test_migrate_description_without_reference_calls_once() -> None:
+    coordinator = MagicMock()
+    coordinator.ds = {"system_info": {"uptime_seconds": 12345}}
+    description = _desc(
+        key="uptime", data_path="system_info", data_attribute="uptime_seconds"
+    )
+    ent_reg = MagicMock()
+
+    with patch.object(init_module, "_force_entity_unit") as force_mock:
+        _migrate_description(ent_reg, coordinator, "TrueNAS", description, False)
+
+    force_mock.assert_called_once_with(
+        ent_reg, "TrueNAS", description, None, 12345, False
+    )
+
+
+def test_migrate_description_with_reference_skips_non_dict_vals() -> None:
+    coordinator = MagicMock()
+    coordinator.ds = {
+        "pool": {
+            "pool1": {"name": "tank", "size": 100},
+            "pool2": "not-a-dict",
+            "pool3": {"size": 200},
+        }
+    }
+    description = _desc(
+        key="pool_size",
+        data_path="pool",
+        data_reference="name",
+        data_attribute="size",
+    )
+    ent_reg = MagicMock()
+
+    with patch.object(init_module, "_force_entity_unit") as force_mock:
+        _migrate_description(ent_reg, coordinator, "TrueNAS", description, True)
+
+    assert force_mock.call_count == 2
+    force_mock.assert_any_call(ent_reg, "TrueNAS", description, "tank", 100, True)
+    force_mock.assert_any_call(ent_reg, "TrueNAS", description, "pool3", 200, True)
 
 
 # ---------------------------
@@ -342,6 +395,20 @@ def test_process_dynamic_description_with_composite_references() -> None:
     assert active == {init_module.format_unique_id("TrueNAS", "app_net", "a::eth0")}
 
 
+def test_process_dynamic_description_empty_sub_data_returns_live_base_only() -> None:
+    description = _desc(
+        key="app_stats",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+    )
+    active, live_bases = _process_dynamic_description(
+        "TrueNAS", description, {"app_stats": {}}, False, set()
+    )
+    assert active == set()
+    assert live_bases == {init_module.format_unique_id("TrueNAS", "app_stats")}
+
+
 # ---------------------------
 #   _collect_active_unique_ids (integration of the helpers above)
 # ---------------------------
@@ -407,6 +474,17 @@ def test_resolve_config_entry_by_explicit_id() -> None:
 
     resolved, error = _resolve_config_entry(hass, "entry1")
     assert resolved is entry
+    assert error == {}
+
+
+def test_resolve_config_entry_by_explicit_id_skips_non_matching_entries() -> None:
+    hass = MagicMock()
+    entry1 = _config_entry(entry_id="e1")
+    entry2 = _config_entry(entry_id="e2")
+    hass.config_entries.async_entries.return_value = [entry1, entry2]
+
+    resolved, error = _resolve_config_entry(hass, "e2")
+    assert resolved is entry2
     assert error == {}
 
 
@@ -680,6 +758,36 @@ async def test_async_setup_entry_wires_coordinator_and_platforms() -> None:
     cleanup_mock.assert_called_once()
     finalize_mock.assert_called_once()
     notify_mock.assert_called_once()
+
+
+async def test_async_setup_entry_refresh_listener_dispatches_update_signal() -> None:
+    hass = MagicMock()
+    hass.config_entries.async_forward_entry_setups = AsyncMock()
+    entry = _config_entry(entry_id="e1")
+    entry.async_on_unload = MagicMock()
+
+    coordinator = MagicMock()
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+    coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+
+    with (
+        patch.object(init_module, "TrueNASCoordinator", return_value=coordinator),
+        patch.object(
+            init_module, "async_adopt_legacy_entities", new=AsyncMock(return_value=[])
+        ),
+        patch.object(init_module, "_migrate_data_size_units"),
+        patch.object(init_module, "_cleanup_orphaned_entities"),
+        patch.object(init_module, "finalize_legacy_adoption"),
+        patch.object(init_module, "async_notify_migration_result"),
+        patch.object(init_module, "async_dispatcher_send") as dispatch_mock,
+    ):
+        await async_setup_entry(hass, entry)
+        refresh_callback = coordinator.async_add_listener.call_args.args[0]
+        refresh_callback()
+
+    dispatch_mock.assert_called_once_with(
+        hass, init_module.SIGNAL_UPDATE_SENSORS, coordinator
+    )
 
 
 async def test_async_unload_entry_stops_coordinator_on_success() -> None:
