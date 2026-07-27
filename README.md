@@ -376,7 +376,7 @@ The integration talks to TrueNAS over its modern JSON-RPC 2.0 **WebSocket** API 
 
 ## Reauthentication
 
-If the stored API key stops working (revoked, deleted, or its user's access disabled on
+If the stored API key stops working (revoked, deleted, or its user's account is disabled on
 TrueNAS), Home Assistant raises a **Repairs** issue instead of silently leaving every entity
 "unavailable". Open **Settings → Devices & Services** (or **Settings → Repairs**), click the
 TrueNAS notification and enter a new API key — the integration reconnects immediately and

@@ -33,6 +33,7 @@ from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     format_unique_id,
 )
+from custom_components.truenas_ce.sensor import TrueNASSnapshotTaskSensor
 from custom_components.truenas_ce.sensor_types import SENSOR_TYPES
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -110,15 +111,22 @@ async def test_cleanup_orphaned_entities_noop_after_failed_refresh(
 # ---------------------------
 #   async_add_entities (via a real platform-setup pass)
 # ---------------------------
-def _fake_api() -> SimpleNamespace:
+def _fake_api(extra_responses: dict[str, object] | None = None) -> SimpleNamespace:
     """A fake TrueNASAPI returning an empty (but present) system.info payload.
 
-    Every other query returns None, matching the coordinator's normal handling
-    of a not-yet-responding TrueNAS -- this keeps the platform-forward pass
-    real while avoiding any actual network I/O.
+    Every other query returns None -- matching the coordinator's normal
+    handling of a not-yet-responding TrueNAS -- unless ``extra_responses``
+    overrides it for a specific method. The coordinator's core jobs (disk,
+    scrub, app, alerts, certificates, arc, smb, pool, update-check, ...) run
+    unconditionally every update regardless of monitored groups, so a caller
+    only needs to override the one query it actually cares about; this keeps
+    the platform-forward pass real while avoiding any actual network I/O.
     """
+    responses = extra_responses or {}
 
-    async def _query(method: str, *args: object, **kwargs: object) -> dict | None:
+    async def _query(method: str, *args: object, **kwargs: object) -> object:
+        if method in responses:
+            return responses[method]
         return {} if method == "system.info" else None
 
     return SimpleNamespace(
@@ -169,26 +177,9 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
     platform module -- a missing one raises ``KeyError`` and aborts that
     platform's entire setup (the ``TrueNASSnapshotTaskSensor`` regression).
     """
-
-    async def _query(method: str, *args: object, **kwargs: object) -> object:
-        # The coordinator's core jobs (disk, scrub, app, alerts, certificates,
-        # arc, smb, pool, update-check, ...) run unconditionally every update
-        # regardless of monitored groups, so they fall through to None here
-        # like a not-yet-responding TrueNAS -- only the one query this test
-        # actually cares about is special-cased.
-        if method == "system.info":
-            return {}
-        if method == "pool.snapshottask.query":
-            return [{"id": 1, "dataset": "tank/data", "state": {"state": "PENDING"}}]
-        return None
-
-    fake_api = SimpleNamespace(
-        connected=MagicMock(return_value=True),
-        connect=AsyncMock(return_value=True),
-        close=AsyncMock(),
-        query=AsyncMock(side_effect=_query),
-        error="",
-        scheme="ws",
+    snapshottask_row = {"id": 1, "dataset": "tank/data", "state": {"state": "PENDING"}}
+    fake_api = _fake_api(
+        extra_responses={"pool.snapshottask.query": [snapshottask_row]}
     )
 
     entry = MockConfigEntry(
@@ -211,7 +202,7 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
         await hass.async_block_till_done()
 
     snapshottask_description = next(
-        d for d in SENSOR_TYPES if d.func == "TrueNASSnapshotTaskSensor"
+        d for d in SENSOR_TYPES if d.func == TrueNASSnapshotTaskSensor.__name__
     )
     ent_reg = er.async_get(hass)
     unique_id = format_unique_id("TrueNAS", snapshottask_description.key, 1)
