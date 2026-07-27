@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
 
 # GitHub Copilot & IDE spezifisch
 .github/copilot-instructions/

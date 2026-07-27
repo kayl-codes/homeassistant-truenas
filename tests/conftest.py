@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # POSIX-only fcntl module and crashes every local pytest run on this repo's
 # Windows dev machine, so it must never be installed there.
 collect_ignore_glob: list[str] = (
-    ["test_config_flow_flows.py", "test_services.py"]
+    ["test_config_flow_flows.py", "test_services.py", "test_entity_setup.py"]
     if importlib.util.find_spec("pytest_homeassistant_custom_component") is None
     else []
 )
