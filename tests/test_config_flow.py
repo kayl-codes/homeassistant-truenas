@@ -73,8 +73,11 @@ def test_text_to_passphrases_duplicate_datasets_last_wins() -> None:
 
 
 def test_text_to_passphrases_skips_blank_lines() -> None:
-    text = "\n  \ntank/data#secret1\n\n"
-    assert _text_to_passphrases(text) == {"tank/data": "secret1"}
+    text = "\n  \ntank/data#secret1\n\ntank/backup#secret2\n\n"
+    assert _text_to_passphrases(text) == {
+        "tank/data": "secret1",
+        "tank/backup": "secret2",
+    }
 
 
 @pytest.mark.parametrize("text", ["", "   \n  "])
