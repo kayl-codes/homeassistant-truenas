@@ -11,6 +11,8 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
     with open(path, "w") as f:
         for name in sorted(packages):
             spec = packages[name]
+            if extras := spec.get("extras"):
+                name += f"[{','.join(sorted(extras))}]"
             line = f"{name}{spec['version']}"
             if markers := spec.get("markers"):
                 line += f"; {markers}"

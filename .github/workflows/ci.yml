@@ -55,8 +55,10 @@ jobs:
           pip install --require-hashes --only-binary ":all:" -r requirements.txt
           pip install -r requirements_tests.txt
       - name: Install pytest-homeassistant-custom-component (CI-only, Linux)
+        # --only-binary omitted: its mock-open==1.4.0 dependency has never
+        # published a wheel, only an sdist, on any release.
         run: |
-          pip install --only-binary ":all:" pytest-homeassistant-custom-component==0.13.348
+          pip install pytest-homeassistant-custom-component==0.13.348
       - name: Test with pytest
         run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
