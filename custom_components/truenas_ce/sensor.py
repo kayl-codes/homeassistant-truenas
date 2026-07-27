@@ -94,6 +94,7 @@ async def async_setup_entry(
         "TrueNASDiskSensor": TrueNASDiskSensor,
         "TrueNASRsyncSensor": TrueNASRsyncSensor,
         "TrueNASReplicationSensor": TrueNASReplicationSensor,
+        "TrueNASSnapshotTaskSensor": TrueNASSnapshotTaskSensor,
     }
     await async_add_entities(hass, config_entry, dispatcher)
 

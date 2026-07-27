@@ -374,6 +374,15 @@ The integration talks to TrueNAS over its modern JSON-RPC 2.0 **WebSocket** API 
 * **An authentication gateway in front of TrueNAS does _not_ work** — for example **Cloudflare Access / Zero Trust**, Authelia, or HTTP basic-auth. These intercept the WebSocket handshake and redirect it to a login page (HTTP 302) or reject it (401/403) *before it ever reaches TrueNAS*, so the API key never gets a chance to authenticate. A headless integration cannot complete an interactive SSO login, so this is a hard limitation, not a bug. The integration detects this and reports it clearly instead of a generic error.
   * If you must reach TrueNAS through such a gateway, add a **bypass / service-token policy for the `/api/current` endpoint** so that path skips the interactive login — or simply use the LAN/VPN address instead.
 
+## Reauthentication
+
+If the stored API key stops working (revoked, deleted, or its user's access disabled on
+TrueNAS), Home Assistant raises a **Repairs** issue instead of silently leaving every entity
+"unavailable". Open **Settings → Devices & Services** (or **Settings → Repairs**), click the
+TrueNAS notification and enter a new API key — the integration reconnects immediately and
+existing entities, history and statistics are preserved. No need to remove and re-add the
+integration.
+
 ## Options
 
 After setup you can fine-tune the integration via **Settings → Devices & Services → TrueNAS → Configure**. Saving the options reloads the integration so changes take effect immediately.

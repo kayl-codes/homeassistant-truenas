@@ -24,8 +24,15 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.truenas_ce as init_module
-from custom_components.truenas_ce.const import CONF_MONITORED_GROUPS, DOMAIN
-from custom_components.truenas_ce.entity import _cleanup_orphaned_entities
+from custom_components.truenas_ce.const import (
+    CONF_MONITORED_GROUPS,
+    DOMAIN,
+    MONITOR_GROUP_SNAPSHOTS,
+)
+from custom_components.truenas_ce.entity import (
+    _cleanup_orphaned_entities,
+    format_unique_id,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -152,3 +159,60 @@ async def test_async_setup_entry_creates_entities_via_real_platform_setup(
         await hass.async_block_till_done()
 
     assert hass.states.async_entity_ids("sensor")
+
+
+async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
+    hass: HomeAssistant,
+) -> None:
+    """Every entity description's ``func`` must have a matching dispatcher
+    entry in its platform module -- a missing one raises ``KeyError`` deep
+    inside ``entity.async_add_entities`` and aborts that platform's entire
+    setup (see the ``TrueNASSnapshotTaskSensor`` regression: it existed as a
+    class and was referenced by a sensor description, but the ``sensor.py``
+    dispatcher dict never listed it, so every sensor -- not just snapshot
+    tasks -- went unavailable in production). Unlike the test above, this
+    enables the "snapshots" monitored group and returns one real snapshot-
+    task row, so the dispatcher lookup for ``TrueNASSnapshotTaskSensor``
+    actually executes instead of being skipped via an empty data set.
+    """
+
+    async def _query(method: str, *args: object, **kwargs: object) -> object:
+        if method == "system.info":
+            return {}
+        if method == "pool.snapshottask.query":
+            return [{"id": 1, "dataset": "tank/data", "state": {"state": "PENDING"}}]
+        return None
+
+    fake_api = SimpleNamespace(
+        connected=MagicMock(return_value=True),
+        connect=AsyncMock(return_value=True),
+        close=AsyncMock(),
+        query=AsyncMock(side_effect=_query),
+        error="",
+        scheme="ws",
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "TrueNAS",
+            CONF_HOST: "truenas.local",
+            CONF_API_KEY: "test-key",
+            CONF_VERIFY_SSL: False,
+        },
+        options={CONF_MONITORED_GROUPS: [MONITOR_GROUP_SNAPSHOTS]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.truenas_ce.coordinator.TrueNASAPI",
+        return_value=fake_api,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    unique_id = format_unique_id("TrueNAS", "snapshottask", 1)
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+    assert entity_id is not None
+    assert hass.states.get(entity_id) is not None
