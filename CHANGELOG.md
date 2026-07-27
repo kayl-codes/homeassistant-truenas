@@ -14,16 +14,51 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.5.1] — Sensor platform hotfix
+
+### Fixed
+- **Sensor platform failed to load entirely (regression from 2.5.0):** the `snapshottask`
+  sensor description referenced `TrueNASSnapshotTaskSensor`, but the class was missing from
+  `sensor.py`'s dispatcher map. Any config entry monitoring the Snapshots group hit a
+  `KeyError` during platform setup, aborting entity creation for **all** sensors (not just
+  snapshot tasks) and leaving them "Unavailable". Restored the missing dispatcher entry and
+  added a real-`hass` regression test that exercises the dispatcher end to end.
+
+## [2.5.0] — App Monitoring & Automatic Reauthentication
+
+### Added
+- **App resource monitoring (#38):** each running TrueNAS app now exposes live CPU, memory,
+  network RX/TX and block I/O sensors, updated event-driven via TrueNAS's `app.stats`
+  subscription. Toggle the group under *Settings → TrueNAS → Configure → Monitored groups →
+  Apps*.
+- **Automatic reauthentication (#28):** if the stored TrueNAS API key becomes invalid or is
+  revoked, the integration now raises a guided Repair flow to enter a new key — no more silent
+  "unavailable" state and no need to remove/re-add the integration.
+
 ### Changed
-- **Async API client — now powered by `aiotruenas`:** the integration's TrueNAS API layer was
-  rewritten from a synchronous, thread-based WebSocket client to a native `asyncio` client built
-  on the new [`aiotruenas`](https://github.com/kayl-codes/aiotruenas) library (a standalone,
+- **Async API client — now powered by `aiotruenas` (#27):** the integration's TrueNAS API layer
+  was rewritten from a synchronous, thread-based WebSocket client to a native `asyncio` client
+  built on the new [`aiotruenas`](https://github.com/kayl-codes/aiotruenas) library (a standalone,
   independently maintained TrueNAS client). This also moves the integration onto TrueNAS's modern
   JSON-RPC 2.0 **`/api/current`** endpoint, replacing the legacy `/websocket` endpoint the old
   client spoke. Purely an internal architecture change — connection behavior, error messages,
   sensors and actions all work exactly as before. If you run TrueNAS behind a reverse proxy with a
   path-specific bypass rule, update it from `/websocket` to `/api/current` (see
   [Remote access, reverse proxies & Cloudflare](README.md#remote-access-reverse-proxies--cloudflare)).
+- **Action error reporting (#40):** entity actions (VM/container/app control, service control,
+  cloudsync, snapshots, reboot/shutdown, scrub, alerts) now raise a proper error when the
+  underlying TrueNAS call actually fails, instead of failing silently.
+- **Quality & test hardening:** completed the Home Assistant **Bronze** and **Silver**
+  quality-scale tiers (`mypy --strict` typing, 99% CI test coverage, proper action-error
+  handling).
+
+### Fixed
+- **Scrub timestamp crash on never-scrubbed pools (#35, #39):** timestamp sensors no longer
+  error out for pools that have never been scrubbed (or while a scrub is actively running) —
+  both report cleanly as *unknown* until a real timestamp exists.
+
+### Requirements
+- Dependency bump: `aiotruenas>=1.1.0`.
 
 ## [2.4.1] — Deprecated update-listener fix
 
@@ -373,6 +408,11 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 - Handle JSON-RPC parsing errors to prevent crashes on unexpected API formats.
 - Modern type hints and `.get()` fallbacks to avoid `KeyError` crashes.
 
+[2.5.1]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.5.1
+[2.5.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.5.0
+[2.4.1]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.4.1
+[2.4.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.4.0
+[2.3.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.3.0
 [2.2.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.2.0
 [2.1.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/v2.1.0
 [2.0.0]: https://github.com/kayl-codes/homeassistant-truenas/releases/tag/2.0.0
