@@ -73,10 +73,12 @@ rules:
     status: done
     comment: |
       CI (pytest --cov, which includes the hass-fixture-based flow/service
-      tests skipped on this repo's Windows dev machine) reports 95 % overall
-      coverage, meeting the Silver requirement. Remaining gaps are the
-      TrueNASCoordinator.__init__ hass wiring and a couple of entity-discovery
-      edge branches in entity.py, none of which are reachable from pure unit
+      tests skipped on this repo's Windows dev machine) reports 99 % overall
+      coverage, well above the Silver requirement. The remaining handful of
+      lines are a couple of unreachable defensive branches in coordinator.py
+      (parse_api/​_unwrap_app_stats_message already guarantee the shapes they
+      guard against) and two multi-config-entry edge branches in
+      entity.async_add_entities, none of which are reachable from pure unit
       tests without a running Home Assistant core.
 
   # Gold
