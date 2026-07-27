@@ -40,6 +40,10 @@
                     "migrate_import": "Take over existing configuration",
                     "migrate_manual": "Set up from scratch"
                 }
+            },
+            "zeroconf_confirm": {
+                "title": "Discovered TrueNAS",
+                "description": "A TrueNAS instance was discovered at {host}. Do you want to set it up?"
             }
         },
         "error": {
@@ -66,7 +70,8 @@
         "abort": {
             "already_configured": "This TrueNAS host is already configured.",
             "reconfigure_successful": "Reconfigure successful.",
-            "reauth_successful": "Reauthentication successful."
+            "reauth_successful": "Reauthentication successful.",
+            "not_truenas": "The discovered device does not appear to be a TrueNAS instance."
         }
     },
     "options": {

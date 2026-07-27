@@ -25,8 +25,10 @@ from custom_components.truenas_ce.config_flow import (
     configured_instances,
 )
 from custom_components.truenas_ce.const import (
+    CONF_SYSTEM_ID,
     DOMAIN,
     ERR_CERT_VERIFY_FAILED,
+    ERR_CONNECTION_REFUSED,
     ERR_INVALID_KEY,
     ERR_MALFORMED_RESULT,
     LEGACY_DOMAIN,
@@ -193,10 +195,13 @@ async def test_validate_connection_success_sets_no_errors() -> None:
     errors: dict[str, str] = {}
     api = MagicMock()
     api.connection_test = AsyncMock(return_value=(True, ""))
+    api.query = AsyncMock(return_value="test-global-id")
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
     assert not errors
+    assert config[CONF_SYSTEM_ID] == "test-global-id"
+    api.query.assert_awaited_once_with("system.global.id")
     api.disconnect.assert_awaited_once()
 
 
@@ -210,6 +215,53 @@ async def test_validate_connection_failure_maps_error() -> None:
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
     assert errors[CONF_HOST] == ERR_MALFORMED_RESULT
+
+
+# ---------------------------
+#   TrueNASConfigFlow._probe_is_truenas
+# ---------------------------
+async def test_probe_is_truenas_true_on_invalid_key() -> None:
+    """A bogus-key rejection proves it's a real TrueNAS JSON-RPC endpoint."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_INVALID_KEY
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+    mock_api.assert_called_once_with("1.2.3.4", "-", verify_ssl=False, scheme="wss")
+    api.disconnect.assert_awaited_once()
+
+
+async def test_probe_is_truenas_false_when_not_truenas() -> None:
+    """Any other error means some unrelated _http._tcp device, not TrueNAS."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_CONNECTION_REFUSED
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is False
+    assert mock_api.call_count == 2
+    assert api.disconnect.await_count == 2
+
+
+async def test_probe_is_truenas_falls_back_from_wss_to_ws() -> None:
+    """A wss failure still tries plain ws before giving up."""
+    wss_api = MagicMock()
+    wss_api.connect = AsyncMock()
+    wss_api.disconnect = AsyncMock()
+    wss_api.error = ERR_CONNECTION_REFUSED
+
+    ws_api = MagicMock()
+    ws_api.connect = AsyncMock()
+    ws_api.disconnect = AsyncMock()
+    ws_api.error = ERR_INVALID_KEY
+
+    with patch.object(
+        config_flow, "TrueNASAPI", side_effect=[wss_api, ws_api]
+    ) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+    assert mock_api.call_count == 2
+    mock_api.assert_any_call("1.2.3.4", "-", verify_ssl=False, scheme="ws")
 
 
 # ---------------------------

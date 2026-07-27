@@ -394,6 +394,37 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   * *Hide RX/TX sensors for disconnected NICs* - when enabled, traffic sensors are only created for connected interfaces; when disabled (default), every interface gets RX/TX sensors.
 * **Monitored groups** - Enable or disable whole sensor groups: **UPS**, **Virtual Machines**, **Containers**, **Cloudsync**, **Replication**, **Rsync Tasks**, **Snapshot Tasks**, **Datasets** and **Directory Services**. Disabling a group skips its API query entirely (saving resources) and removes its entities and device from Home Assistant on the next reload. Core groups (system, network, pools, disks, apps, services, alerts) are always monitored.
 
+## Known Limitations
+
+* **Authentication gateways in front of TrueNAS are not supported.** Cloudflare Access, Authelia,
+  HTTP basic-auth and similar SSO/auth proxies intercept the WebSocket handshake before it reaches
+  TrueNAS, so the API key never gets a chance to authenticate. See
+  [Remote access, reverse proxies & Cloudflare](#remote-access-reverse-proxies--cloudflare) for
+  supported alternatives (local IP/VPN, or a plain TLS-terminating reverse proxy).
+* **TrueNAS development/nightly builds are not officially supported.** The integration is tested
+  against stable TrueNAS releases (currently 25.04–25.10.4); features may break without notice on a
+  development branch.
+* **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
+  **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
+  persistent "active" state of its own — this is a standard HA UX limitation, not a bug. The
+  corresponding sensor (e.g. scrub state, snapshot task state) does reflect an optimistic `RUNNING`
+  state right away and re-syncs to the real TrueNAS state on the next poll.
+* **A background job that starts and finishes between two polls may only be sampled in its final
+  state.** This applies to container restarts, and to Replication/Rsync/Snapshot tasks that run on a
+  *TrueNAS schedule* rather than through the integration's own Run button/action — the transient
+  "running" state can be missed if it starts and ends inside one poll interval. The persistent end
+  state always matches TrueNAS's own WebUI; only interim progress can be missed if it's fast enough.
+  Lowering the poll interval (see [Options](#options)) reduces the chance of missing it.
+* **The on-demand pool-scrub button has no threshold guard.** Pressing it starts a scrub immediately
+  regardless of how recently the pool was last scrubbed — TrueNAS's own scheduled-scrub frequency
+  setting is not checked. Use it deliberately, not as a substitute for a properly scheduled scrub.
+* **Container action targets aren't scoped to containers only.** `container_start` /
+  `container_stop` / `container_restart` target any `binary_sensor` entity from this integration (a
+  Home Assistant action-target limitation — actions can only scope by domain, not by a custom
+  sub-type), so VMs, apps, pool-health and network-link sensors also show up as pickable targets in
+  the UI even though only container sensors are actually supported. Picking a non-container target
+  fails at call time with a clear error.
+
 ## Removing the integration
 
 To completely remove the integration from Home Assistant:

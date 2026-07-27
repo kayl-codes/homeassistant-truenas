@@ -25,6 +25,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .api import TrueNASAPI
 from .const import (
@@ -37,6 +38,7 @@ from .const import (
     CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
+    CONF_SYSTEM_ID,
     DEFAULT_BEHAVIORS,
     DEFAULT_CRONJOB_SKIP_DISABLED,
     DEFAULT_DATA_UNIT,
@@ -346,6 +348,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             return
 
         conn, errorcode = await api.connection_test()
+        if conn:
+            system_id = await api.query("system.global.id")
+            if isinstance(system_id, str) and system_id:
+                config[CONF_SYSTEM_ID] = system_id
         await api.disconnect()
 
         if not conn:
@@ -426,6 +432,101 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=self._legacy_options or None,
             )
         return None
+
+    async def async_step_zeroconf(
+        self, discovery_info: ZeroconfServiceInfo
+    ) -> ConfigFlowResult:
+        """Handle a TrueNAS instance discovered over mDNS.
+
+        TrueNAS SCALE only advertises the generic ``_http._tcp`` service
+        type shared by countless unrelated devices (printers, routers,
+        media servers, ...), so the zeroconf type match alone cannot tell
+        TrueNAS apart. Instead, probe the discovered host with a bogus API
+        key: only a genuine TrueNAS JSON-RPC endpoint answers the WebSocket
+        handshake and then rejects it specifically as an invalid key
+        (``ERR_INVALID_KEY``). Any other outcome (connection refused,
+        handshake timeout, ...) means some other device is behind that
+        _http._tcp announcement, so the flow aborts silently without ever
+        showing the user anything.
+        """
+        host = discovery_info.host
+        self._async_abort_entries_match({CONF_HOST: host})
+        await self.async_set_unique_id(host)
+        self._abort_if_unique_id_configured()
+
+        if not await self._probe_is_truenas(host):
+            return self.async_abort(reason="not_truenas")
+
+        if await self._async_update_rediscovered_entry(host):
+            return self.async_abort(reason="already_configured")
+
+        self.truenas_config[CONF_HOST] = host
+        self.context["title_placeholders"] = {CONF_NAME: host}
+        return await self.async_step_zeroconf_confirm()
+
+    @staticmethod
+    async def _probe_is_truenas(host: str) -> bool:
+        """Return True only if ``host`` rejects a bogus key as invalid."""
+        for scheme in ("wss", "ws"):
+            api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
+            try:
+                await api.connect()
+                if api.error == ERR_INVALID_KEY:
+                    return True
+            finally:
+                await api.disconnect()
+        return False
+
+    async def _async_update_rediscovered_entry(self, host: str) -> bool:
+        """Update an existing entry's host if ``host`` is the same box, moved.
+
+        Tries each configured entry's own stored API key against the newly
+        discovered (and already-confirmed-TrueNAS) host. A successful login
+        whose ``system.global.id`` matches the entry's stored id is proof
+        it's the same physical box under a new IP; a successful login with
+        no stored id yet (entries predating this check) is accepted as
+        best-effort confirmation and backfills the id for next time. Returns
+        True (and updates+reloads the entry) on a match, False otherwise.
+        """
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.data.get(CONF_HOST) == host:
+                continue
+
+            api = TrueNASAPI(
+                host,
+                entry.data.get(CONF_API_KEY, ""),
+                entry.data.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
+            )
+            try:
+                if not await api.connect():
+                    continue
+                system_id = await api.query("system.global.id")
+            finally:
+                await api.disconnect()
+
+            stored_id = entry.data.get(CONF_SYSTEM_ID)
+            if stored_id and system_id != stored_id:
+                continue  # same key, different box -- not a match
+
+            new_data = dict(entry.data)
+            new_data[CONF_HOST] = host
+            if isinstance(system_id, str) and system_id:
+                new_data[CONF_SYSTEM_ID] = system_id
+            self.hass.config_entries.async_update_entry(entry, data=new_data)
+            await self.hass.config_entries.async_reload(entry.entry_id)
+            return True
+        return False
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask the user to confirm setup of the discovered TrueNAS host."""
+        if user_input is not None:
+            return await self.async_step_user()
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            description_placeholders={CONF_HOST: self.truenas_config[CONF_HOST]},
+        )
 
     def _find_legacy_config(self) -> ConfigEntry | None:
         """Return a legacy ``truenas`` entry to optionally take over, if any.
@@ -561,9 +662,12 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             config[CONF_API_KEY] = user_input[CONF_API_KEY]
             await self._validate_connection(config, errors)
             if not errors:
+                data_updates = {CONF_API_KEY: user_input[CONF_API_KEY]}
+                if CONF_SYSTEM_ID in config:
+                    data_updates[CONF_SYSTEM_ID] = config[CONF_SYSTEM_ID]
                 return self.async_update_reload_and_abort(
                     reauth_entry,
-                    data_updates={CONF_API_KEY: user_input[CONF_API_KEY]},
+                    data_updates=data_updates,
                 )
 
         return self.async_show_form(
