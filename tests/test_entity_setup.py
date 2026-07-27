@@ -33,6 +33,7 @@ from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     format_unique_id,
 )
+from custom_components.truenas_ce.sensor_types import SENSOR_TYPES
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -164,16 +165,9 @@ async def test_async_setup_entry_creates_entities_via_real_platform_setup(
 async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
     hass: HomeAssistant,
 ) -> None:
-    """Every entity description's ``func`` must have a matching dispatcher
-    entry in its platform module -- a missing one raises ``KeyError`` deep
-    inside ``entity.async_add_entities`` and aborts that platform's entire
-    setup (see the ``TrueNASSnapshotTaskSensor`` regression: it existed as a
-    class and was referenced by a sensor description, but the ``sensor.py``
-    dispatcher dict never listed it, so every sensor -- not just snapshot
-    tasks -- went unavailable in production). Unlike the test above, this
-    enables the "snapshots" monitored group and returns one real snapshot-
-    task row, so the dispatcher lookup for ``TrueNASSnapshotTaskSensor``
-    actually executes instead of being skipped via an empty data set.
+    """A description's ``func`` must have a matching dispatcher entry in its
+    platform module -- a missing one raises ``KeyError`` and aborts that
+    platform's entire setup (the ``TrueNASSnapshotTaskSensor`` regression).
     """
 
     async def _query(method: str, *args: object, **kwargs: object) -> object:
@@ -181,7 +175,7 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
             return {}
         if method == "pool.snapshottask.query":
             return [{"id": 1, "dataset": "tank/data", "state": {"state": "PENDING"}}]
-        return None
+        raise AssertionError(f"unexpected query method: {method}")
 
     fake_api = SimpleNamespace(
         connected=MagicMock(return_value=True),
@@ -211,8 +205,11 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
+    snapshottask_description = next(
+        d for d in SENSOR_TYPES if d.func == "TrueNASSnapshotTaskSensor"
+    )
     ent_reg = er.async_get(hass)
-    unique_id = format_unique_id("TrueNAS", "snapshottask", 1)
+    unique_id = format_unique_id("TrueNAS", snapshottask_description.key, 1)
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     assert entity_id is not None
     assert hass.states.get(entity_id) is not None
