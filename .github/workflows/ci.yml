@@ -58,7 +58,7 @@ jobs:
         run: |
           pip install pytest-homeassistant-custom-component
       - name: Test with pytest
-        run: pytest
+        run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
   mypy:
     name: Mypy strict typing
