@@ -30,7 +30,7 @@ jobs:
       - name: Check out code from GitHub
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Ruff
-        run: pip install ruff
+        run: pip install --only-binary ":all:" ruff==0.15.21
       - name: Run Ruff Check
         run: ruff check .
       - name: Run Ruff Format
@@ -52,11 +52,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --require-hashes --only-binary ":all:" -r requirements.txt
           pip install -r requirements_tests.txt
       - name: Install pytest-homeassistant-custom-component (CI-only, Linux)
+        # --only-binary omitted: its mock-open==1.4.0 dependency has never
+        # published a wheel, only an sdist, on any release.
         run: |
-          pip install pytest-homeassistant-custom-component
+          pip install pytest-homeassistant-custom-component==0.13.348
       - name: Test with pytest
         run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
@@ -78,9 +80,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --require-hashes --only-binary ":all:" -r requirements.txt
           pip install -r requirements_tests.txt
-          pip install mypy
+          pip install --only-binary ":all:" mypy==2.3.0
       - name: Run mypy (strict, per pyproject.toml)
         run: mypy
 
@@ -98,7 +100,7 @@ jobs:
         with:
           python-version: '3.14'
       - name: Install Bandit
-        run: pip install bandit
+        run: pip install --only-binary ":all:" bandit==1.9.4
       - name: Security check - Bandit
         run: bandit -r custom_components/truenas_ce
 

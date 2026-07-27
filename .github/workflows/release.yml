@@ -55,7 +55,7 @@ jobs:
 
       - name: Install requirements
         run: |
-          python3 -m pip install setuptools wheel PyGithub
+          python3 -m pip install --only-binary ":all:" setuptools==83.0.0 wheel==0.47.0 PyGithub==2.9.1
 
       - name: Update release notes
         env:
