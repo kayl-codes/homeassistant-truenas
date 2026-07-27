@@ -171,11 +171,16 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
     """
 
     async def _query(method: str, *args: object, **kwargs: object) -> object:
+        # The coordinator's core jobs (disk, scrub, app, alerts, certificates,
+        # arc, smb, pool, update-check, ...) run unconditionally every update
+        # regardless of monitored groups, so they fall through to None here
+        # like a not-yet-responding TrueNAS -- only the one query this test
+        # actually cares about is special-cased.
         if method == "system.info":
             return {}
         if method == "pool.snapshottask.query":
             return [{"id": 1, "dataset": "tank/data", "state": {"state": "PENDING"}}]
-        raise AssertionError(f"unexpected query method: {method}")
+        return None
 
     fake_api = SimpleNamespace(
         connected=MagicMock(return_value=True),
