@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -311,6 +312,40 @@ def test_name_referenced_entity_no_desc_name() -> None:
         uid="d1", data={"devname": "sda", "guid": "g1"}, description=desc
     )
     assert entity.name == "sda"
+
+
+def test_name_prefers_loaded_translation_over_literal_name() -> None:
+    desc = TrueNASEntityDescription(
+        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    entity.platform_data = SimpleNamespace(
+        platform_name="truenas_ce",
+        domain="sensor",
+        platform_translations={
+            "component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"
+        },
+    )
+    assert entity.name == "Laufzeit"
+
+
+def test_name_falls_back_to_literal_when_translation_missing() -> None:
+    desc = TrueNASEntityDescription(
+        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    entity.platform_data = SimpleNamespace(
+        platform_name="truenas_ce", domain="sensor", platform_translations={}
+    )
+    assert entity.name == "Uptime"
+
+
+def test_name_without_platform_data_uses_literal_name() -> None:
+    desc = TrueNASEntityDescription(
+        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    assert entity.name == "Uptime"
 
 
 def test_unique_id_static_description() -> None:

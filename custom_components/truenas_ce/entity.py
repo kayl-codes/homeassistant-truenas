@@ -445,15 +445,32 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         self._refresh_data()
         super()._handle_coordinator_update()
 
+    def _translated_description_name(self) -> str | None:
+        """Resolve the description's name, preferring loaded translations.
+
+        This entity builds its own name (below) instead of relying on HA's
+        has_entity_name machinery, so translation_key lookups have to be
+        replicated manually -- mirrors Entity._name_internal's platform-
+        translations lookup (homeassistant.helpers.entity).
+        """
+        translation_key = self.entity_description.translation_key
+        platform_data = self.platform_data
+        if translation_key and platform_data:
+            name_translation_key = (
+                f"component.{platform_data.platform_name}.entity."
+                f"{platform_data.domain}.{translation_key}.name"
+            )
+            translated = platform_data.platform_translations.get(name_translation_key)
+            if translated:
+                return translated
+
+        desc_name = self.entity_description.name
+        return desc_name if isinstance(desc_name, str) else None
+
     @property
     def name(self) -> str | None:
         """Return the name for this entity."""
-        # Descriptions set name to a str or None (never UNDEFINED); normalize so
-        # an entity without its own name falls back to the device name instead
-        # of showing "None".
-        desc_name = self.entity_description.name
-        if not isinstance(desc_name, str):
-            desc_name = None
+        desc_name = self._translated_description_name()
 
         if not self._uid:
             return desc_name

@@ -126,10 +126,20 @@ rules:
   entity-device-class: done
   entity-disabled-by-default: done
   entity-translations:
-    status: todo
+    status: done
     comment: |
-      Only the diagnostic buttons use translation_key; the remaining entities
-      carry hard-coded English names in their descriptions.
+      Every entity description that carries static suffix text now sets
+      translation_key (matching its key) instead of a literal name, with the
+      English text moved to strings.json's entity.<platform>.<key>.name (and
+      mirrored in translations/*.json). Dynamic/multi-object entities (pool,
+      dataset, disk, ...) build their own name by prefixing the translated
+      suffix with the object's data-driven identifier, so
+      TrueNASEntity._translated_description_name resolves translation_key via
+      the loaded platform translations (mirroring Entity._name_internal),
+      falling back to the literal name when no translation is loaded (e.g. in
+      unit tests that construct entities directly). Entities with no suffix
+      text (name="" or name=None -- the "unnamed" main feature of a device)
+      are unaffected since there is nothing to translate.
   exception-translations:
     status: todo
     comment: |

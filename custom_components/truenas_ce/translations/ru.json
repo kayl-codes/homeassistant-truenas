@@ -144,15 +144,173 @@
             },
             "scrub_run": {
                 "name": "Запустить scrub"
+            },
+            "snapshottask_run": {
+                "name": "Запустить"
+            },
+            "rsync_run": {
+                "name": "Запустить"
+            },
+            "replication_run": {
+                "name": "Запустить"
+            },
+            "cloudsync_run": {
+                "name": "Запустить"
+            },
+            "cronjob_run": {
+                "name": "Запустить"
             }
         },
         "sensor": {
             "alerts": {
+                "name": "Оповещения",
                 "state_attributes": {
                     "uuids": {
                         "name": "Alert UUIDs"
                     }
                 }
+            },
+            "system_smb_connections": {
+                "name": "SMB-подключения"
+            },
+            "system_uptime": {
+                "name": "Время работы"
+            },
+            "system_cpu_temperature": {
+                "name": "Температура"
+            },
+            "system_load_shortterm": {
+                "name": "Загрузка ЦП (кратковременная)"
+            },
+            "system_load_midterm": {
+                "name": "Загрузка ЦП (среднесрочная)"
+            },
+            "system_load_longterm": {
+                "name": "Загрузка ЦП (долгосрочная)"
+            },
+            "system_cpu_usage": {
+                "name": "Загрузка ЦП"
+            },
+            "system_memory_usage": {
+                "name": "Использование памяти"
+            },
+            "system_cache_size-arc_value": {
+                "name": "Размер ARC"
+            },
+            "system_memory_total": {
+                "name": "Память всего"
+            },
+            "system_memory_free": {
+                "name": "Свободная память"
+            },
+            "pool_free": {
+                "name": "Свободно"
+            },
+            "pool_size": {
+                "name": "Размер"
+            },
+            "pool_allocated": {
+                "name": "Занято"
+            },
+            "pool_errors": {
+                "name": "Ошибки"
+            },
+            "pool_fragmentation": {
+                "name": "Фрагментация"
+            },
+            "pool_scrub_start": {
+                "name": "Scrub запущен"
+            },
+            "pool_scrub_end": {
+                "name": "Scrub завершён"
+            },
+            "pool_scrub_state": {
+                "name": "Статус scrub"
+            },
+            "traffic_rx": {
+                "name": "RX"
+            },
+            "traffic_tx": {
+                "name": "TX"
+            },
+            "ups_charge": {
+                "name": "Заряд"
+            },
+            "ups_runtime": {
+                "name": "Время работы"
+            },
+            "ups_load": {
+                "name": "Нагрузка"
+            },
+            "ups_voltage": {
+                "name": "Напряжение"
+            },
+            "ups_current": {
+                "name": "Ток"
+            },
+            "ups_frequency": {
+                "name": "Частота"
+            },
+            "ups_temperature": {
+                "name": "Температура"
+            },
+            "directoryservices": {
+                "name": "Статус"
+            },
+            "certificate_expiry": {
+                "name": "Время до истечения"
+            },
+            "certificate_expiration_time": {
+                "name": "Дата истечения"
+            },
+            "arc_data_hit_percent": {
+                "name": "Процент попаданий (данные)"
+            },
+            "arc_metadata_hit_percent": {
+                "name": "Процент попаданий (метаданные)"
+            },
+            "arc_l2_hit_percent": {
+                "name": "Процент попаданий L2 ARC"
+            },
+            "app_stats_cpu": {
+                "name": "CPU"
+            },
+            "app_stats_memory": {
+                "name": "RAM"
+            },
+            "app_stats_network_rx": {
+                "name": "Сеть RX"
+            },
+            "app_stats_network_tx": {
+                "name": "Сеть TX"
+            },
+            "app_stats_blkio_read": {
+                "name": "Блочный ввод/вывод (чтение)"
+            },
+            "app_stats_blkio_write": {
+                "name": "Блочный ввод/вывод (запись)"
+            }
+        },
+        "binary_sensor": {
+            "disk_issues": {
+                "name": "Проблемы диска/пула"
+            },
+            "pool_healthy": {
+                "name": "Исправен"
+            },
+            "interface": {
+                "name": "Соединение"
+            },
+            "certificate_expired": {
+                "name": "Истёк"
+            }
+        },
+        "switch": {
+            "cloudsync_switch": {
+                "name": "Включено"
+            },
+            "cronjob_switch": {
+                "name": "Включено"
             }
         }
     }

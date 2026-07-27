@@ -226,7 +226,7 @@ class TrueNASSensorEntityDescription(SensorEntityDescription, TrueNASEntityDescr
 SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="alerts",
-        name="Alerts",
+        translation_key="alerts",
         icon="mdi:alert",
         native_unit_of_measurement=None,
         device_class=None,
@@ -243,7 +243,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_smb_connections",
-        name="SMB connections",
+        translation_key="system_smb_connections",
         icon="mdi:folder-network",
         native_unit_of_measurement=None,
         device_class=None,
@@ -258,7 +258,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_uptime",
-        name="Uptime",
+        translation_key="system_uptime",
         icon="mdi:clock-outline",
         native_unit_of_measurement=None,
         device_class=SensorDeviceClass.UPTIME,
@@ -274,7 +274,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_cpu_temperature",
-        name="Temperature",
+        translation_key="system_cpu_temperature",
         icon="mdi:thermometer",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
@@ -291,7 +291,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_load_shortterm",
-        name="CPU load shortterm",
+        translation_key="system_load_shortterm",
         icon=ICON_GAUGE,
         native_unit_of_measurement=None,
         device_class=None,
@@ -306,7 +306,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_load_midterm",
-        name="CPU load midterm",
+        translation_key="system_load_midterm",
         icon=ICON_GAUGE,
         native_unit_of_measurement=None,
         device_class=None,
@@ -321,7 +321,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_load_longterm",
-        name="CPU load longterm",
+        translation_key="system_load_longterm",
         icon=ICON_GAUGE,
         native_unit_of_measurement=None,
         device_class=None,
@@ -336,7 +336,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_cpu_usage",
-        name="CPU usage",
+        translation_key="system_cpu_usage",
         icon="mdi:cpu-64-bit",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -352,7 +352,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_usage",
-        name="Memory usage",
+        translation_key="system_memory_usage",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -368,7 +368,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_cache_size-arc_value",
-        name="ARC size",
+        translation_key="system_cache_size-arc_value",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -385,7 +385,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_total",
-        name="Memory total",
+        translation_key="system_memory_total",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -403,7 +403,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_free",
-        name="Memory free",
+        translation_key="system_memory_free",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -459,7 +459,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_free",
-        name="free",
+        translation_key="pool_free",
         icon=ICON_DATABASE_SETTINGS,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -477,7 +477,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_size",
-        name="size",
+        translation_key="pool_size",
         icon=ICON_DATABASE_SETTINGS,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -495,7 +495,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_allocated",
-        name="allocated",
+        translation_key="pool_allocated",
         icon=ICON_DATABASE_SETTINGS,
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
@@ -513,7 +513,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_errors",
-        name="errors",
+        translation_key="pool_errors",
         icon="mdi:alert-circle-outline",
         native_unit_of_measurement=None,
         device_class=None,
@@ -529,7 +529,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_fragmentation",
-        name="fragmentation",
+        translation_key="pool_fragmentation",
         icon="mdi:chart-pie",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -545,7 +545,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_scrub_start",
-        name="Scrub started",
+        translation_key="pool_scrub_start",
         icon="mdi:broom",
         native_unit_of_measurement=None,
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -560,7 +560,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_scrub_end",
-        name="Scrub finished",
+        translation_key="pool_scrub_end",
         icon="mdi:broom-clock",
         native_unit_of_measurement=None,
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -575,7 +575,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="pool_scrub_state",
-        name="Scrub state",
+        translation_key="pool_scrub_state",
         icon="mdi:broom",
         native_unit_of_measurement=None,
         device_class=None,
@@ -658,7 +658,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="traffic_rx",
-        name="RX",
+        translation_key="traffic_rx",
         icon="mdi:download-network-outline",
         native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.MEGABYTES_PER_SECOND,
@@ -677,7 +677,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="traffic_tx",
-        name="TX",
+        translation_key="traffic_tx",
         icon="mdi:upload-network-outline",
         native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.MEGABYTES_PER_SECOND,
@@ -696,7 +696,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_charge",
-        name="Charge",
+        translation_key="ups_charge",
         icon="mdi:battery-charging",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
@@ -711,7 +711,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_runtime",
-        name="Runtime",
+        translation_key="ups_runtime",
         icon="mdi:timer-outline",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         device_class=SensorDeviceClass.DURATION,
@@ -726,7 +726,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_load",
-        name="Load",
+        translation_key="ups_load",
         icon="mdi:gauge",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -741,7 +741,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_voltage",
-        name="Voltage",
+        translation_key="ups_voltage",
         icon="mdi:sine-wave",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
@@ -756,7 +756,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_current",
-        name="Current",
+        translation_key="ups_current",
         icon="mdi:current-ac",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
@@ -771,7 +771,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_frequency",
-        name="Frequency",
+        translation_key="ups_frequency",
         icon="mdi:sine-wave",
         native_unit_of_measurement=UnitOfFrequency.HERTZ,
         device_class=SensorDeviceClass.FREQUENCY,
@@ -786,7 +786,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="ups_temperature",
-        name="Temperature",
+        translation_key="ups_temperature",
         icon="mdi:thermometer",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -801,7 +801,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="directoryservices",
-        name="Status",
+        translation_key="directoryservices",
         icon="mdi:domain",
         native_unit_of_measurement=None,
         device_class=None,
@@ -817,7 +817,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="certificate_expiry",
-        name="Time until expiry",
+        translation_key="certificate_expiry",
         icon="mdi:certificate",
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
@@ -832,7 +832,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="certificate_expiration_time",
-        name="Expiration time",
+        translation_key="certificate_expiration_time",
         icon="mdi:certificate",
         native_unit_of_measurement=None,
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -847,7 +847,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="arc_data_hit_percent",
-        name="Data hit ratio",
+        translation_key="arc_data_hit_percent",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -862,7 +862,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="arc_metadata_hit_percent",
-        name="Metadata hit ratio",
+        translation_key="arc_metadata_hit_percent",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -877,7 +877,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="arc_l2_hit_percent",
-        name="L2 ARC hit ratio",
+        translation_key="arc_l2_hit_percent",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         device_class=None,
@@ -892,7 +892,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_cpu",
-        name="CPU",
+        translation_key="app_stats_cpu",
         icon="mdi:cpu-64-bit",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         suggested_display_precision=2,
@@ -911,7 +911,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_memory",
-        name="RAM",
+        translation_key="app_stats_memory",
         icon="mdi:memory",
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
@@ -931,7 +931,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_network_rx",
-        name="Network RX",
+        translation_key="app_stats_network_rx",
         icon="mdi:download-network-outline",
         native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
@@ -952,7 +952,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_network_tx",
-        name="Network TX",
+        translation_key="app_stats_network_tx",
         icon="mdi:upload-network-outline",
         native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
@@ -973,7 +973,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_blkio_read",
-        name="Block I/O Read",
+        translation_key="app_stats_blkio_read",
         icon="mdi:database-arrow-right",
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
@@ -993,7 +993,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     ),
     TrueNASSensorEntityDescription(
         key="app_stats_blkio_write",
-        name="Block I/O Write",
+        translation_key="app_stats_blkio_write",
         icon="mdi:database-arrow-left",
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
