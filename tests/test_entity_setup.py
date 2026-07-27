@@ -14,6 +14,7 @@ repo's Windows dev machine).
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,13 +28,13 @@ import custom_components.truenas_ce as init_module
 from custom_components.truenas_ce.const import (
     CONF_MONITORED_GROUPS,
     DOMAIN,
+    GROUP_DATA_PATHS,
     MONITOR_GROUP_SNAPSHOTS,
 )
 from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     format_unique_id,
 )
-from custom_components.truenas_ce.sensor import TrueNASSnapshotTaskSensor
 from custom_components.truenas_ce.sensor_types import SENSOR_TYPES
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -111,7 +112,7 @@ async def test_cleanup_orphaned_entities_noop_after_failed_refresh(
 # ---------------------------
 #   async_add_entities (via a real platform-setup pass)
 # ---------------------------
-def _fake_api(extra_responses: dict[str, object] | None = None) -> SimpleNamespace:
+def _fake_api(extra_responses: dict[str, Any] | None = None) -> SimpleNamespace:
     """A fake TrueNASAPI returning an empty (but present) system.info payload.
 
     Every other query returns None -- matching the coordinator's normal
@@ -121,10 +122,15 @@ def _fake_api(extra_responses: dict[str, object] | None = None) -> SimpleNamespa
     unconditionally every update regardless of monitored groups, so a caller
     only needs to override the one query it actually cares about; this keeps
     the platform-forward pass real while avoiding any actual network I/O.
+
+    ``Any`` mirrors ``TrueNASAPI.query()``'s own return type -- per-method
+    structural types aren't modelled here because production code (see
+    ``apiparser.parse_api``) is deliberately defensive about API response
+    shapes rather than trusting a fixed schema.
     """
     responses = extra_responses or {}
 
-    async def _query(method: str, *args: object, **kwargs: object) -> object:
+    async def _query(method: str, *args: object, **kwargs: object) -> Any:
         if method in responses:
             return responses[method]
         return {} if method == "system.info" else None
@@ -201,8 +207,13 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
+    # Same group -> data_path mapping production code uses for orphan-cleanup
+    # (GROUP_DATA_PATHS), so this targets "the snapshot task description" by
+    # the same identity the rest of the codebase does -- not by which sensor
+    # class currently implements it.
+    (snapshottask_data_path,) = GROUP_DATA_PATHS[MONITOR_GROUP_SNAPSHOTS]
     snapshottask_description = next(
-        d for d in SENSOR_TYPES if d.func == TrueNASSnapshotTaskSensor.__name__
+        d for d in SENSOR_TYPES if d.data_path == snapshottask_data_path
     )
     ent_reg = er.async_get(hass)
     unique_id = format_unique_id("TrueNAS", snapshottask_description.key, 1)
