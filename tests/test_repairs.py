@@ -85,6 +85,9 @@ async def test_statistics_cleanup_init_uses_metadata_only_step() -> None:
     result = await flow.async_step_init()
     assert result["step_id"] == "init_metadata_only"
     assert result["description_placeholders"]["with_data"] == "0"
+    # Metadata-only orphans are still named: the id list is the only thing the
+    # user can act on once the data points are gone.
+    assert result["description_placeholders"]["entities"] == "- `sensor.a`"
 
 
 async def test_statistics_cleanup_init_truncates_long_id_list() -> None:

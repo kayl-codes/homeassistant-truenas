@@ -1708,8 +1708,17 @@ def test_count_statistics_with_data_counts_only_ids_with_rows() -> None:
         coordinator_module,
         "get_last_statistics",
         side_effect=[{"sensor.a": [{"state": 1}]}, {}],
-    ):
+    ) as stats_mock:
         assert _count_statistics_with_data(hass, ["sensor.a", "sensor.b"]) == 1
+
+    # Pinned on purpose: ``get_last_statistics`` takes a single id as a bare
+    # ``str`` and builds ``{statistic_id}`` from it internally. Wrapping it in a
+    # list would raise "unhashable type: 'list'", so this asserts the id is
+    # never "helpfully" turned into a sequence.
+    assert [call.args[2] for call in stats_mock.call_args_list] == [
+        "sensor.a",
+        "sensor.b",
+    ]
 
 
 async def test_async_count_orphans_with_data_returns_zero_without_orphans() -> None:
