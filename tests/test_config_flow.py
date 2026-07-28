@@ -345,6 +345,32 @@ async def test_async_update_rediscovered_entry_skips_unique_id_when_id_unknown()
     assert kwargs["data"][CONF_HOST] == "5.6.7.8"
 
 
+async def test_async_update_rediscovered_entry_skips_mismatched_system_id() -> None:
+    """A different probed system id must not merge two distinct TrueNAS boxes."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {
+        CONF_HOST: "1.2.3.4",
+        CONF_API_KEY: "key",
+        CONF_VERIFY_SSL: True,
+        CONF_SYSTEM_ID: "stored-system-id",
+    }
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value="different-system-id")
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
 # ---------------------------
 #   TrueNASConfigFlow._find_legacy_config
 # ---------------------------

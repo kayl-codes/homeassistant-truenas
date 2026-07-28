@@ -397,7 +397,7 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
 ## Known Limitations
 
 * **Authentication gateways in front of TrueNAS are not supported.** Cloudflare Access, Authelia,
-  HTTP basic-auth and similar SSO/auth proxies intercept the WebSocket handshake before it reaches
+  HTTP basic auth and similar SSO/auth proxies intercept the WebSocket handshake before it reaches
   TrueNAS, so the API key never gets a chance to authenticate. See
   [Remote access, reverse proxies & Cloudflare](#remote-access-reverse-proxies--cloudflare) for
   supported alternatives (local IP/VPN, or a plain TLS-terminating reverse proxy).
