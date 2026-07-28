@@ -26,12 +26,20 @@ def main():
         lock = json.load(f)
     _write_locked_requirements(lock["default"], "requirements.txt")
 
+    # Pin each direct dev-dependency to its Pipfile.lock-resolved version instead of
+    # the loose Pipfile range. Only the direct entries are pinned here (not the full
+    # "develop" section) since that section also carries Windows-only/sdist-only
+    # transitive packages that would break the Linux CI install if forced in.
     parser = configparser.ConfigParser()
     parser.read("Pipfile")
+    develop = lock["develop"]
     with open("requirements_tests.txt", "w") as f:
         for key in parser["dev-packages"]:
-            value = parser["dev-packages"][key]
-            f.write(key + value.replace('"', "") + "\n")
+            if resolved := develop.get(key):
+                value = resolved["version"]
+            else:
+                value = parser["dev-packages"][key].replace('"', "")
+            f.write(key + value + "\n")
 
 
 if __name__ == "__main__":
