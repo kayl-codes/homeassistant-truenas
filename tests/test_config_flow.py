@@ -246,7 +246,7 @@ async def test_probe_is_truenas_true_on_invalid_key() -> None:
     api.disconnect = AsyncMock()
     api.error = ERR_INVALID_KEY
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
     mock_api.assert_called_once_with("1.2.3.4", "-", verify_ssl=False, scheme="wss")
     api.disconnect.assert_awaited_once()
 
@@ -258,7 +258,7 @@ async def test_probe_is_truenas_false_when_not_truenas() -> None:
     api.disconnect = AsyncMock()
     api.error = ERR_CONNECTION_REFUSED
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is False
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
     assert mock_api.call_count == 2
     assert api.disconnect.await_count == 2
 
@@ -278,7 +278,7 @@ async def test_probe_is_truenas_falls_back_from_wss_to_ws() -> None:
     with patch.object(
         config_flow, "TrueNASAPI", side_effect=[wss_api, ws_api]
     ) as mock_api:
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
     assert mock_api.call_count == 2
     mock_api.assert_any_call("1.2.3.4", "-", verify_ssl=False, scheme="ws")
 
@@ -289,7 +289,7 @@ async def test_probe_is_truenas_false_when_connect_raises() -> None:
     api.connect = AsyncMock(side_effect=OSError("connection refused"))
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is False
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
     assert mock_api.call_count == 2
     assert api.disconnect.await_count == 2
 
@@ -301,8 +301,42 @@ async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
     api.disconnect = AsyncMock(side_effect=OSError("already closed"))
     api.error = ERR_INVALID_KEY
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
     api.disconnect.assert_awaited_once()
+
+
+async def test_probe_is_truenas_falls_back_to_advertised_port() -> None:
+    """A box reachable only on its advertised port keeps that port."""
+    default_api = MagicMock()
+    default_api.connect = AsyncMock()
+    default_api.disconnect = AsyncMock()
+    default_api.error = ERR_CONNECTION_REFUSED
+
+    port_api = MagicMock()
+    port_api.connect = AsyncMock()
+    port_api.disconnect = AsyncMock()
+    port_api.error = ERR_INVALID_KEY
+
+    with patch.object(
+        config_flow,
+        "TrueNASAPI",
+        side_effect=[default_api, default_api, port_api],
+    ) as mock_api:
+        probed = await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", 8443)
+    assert probed == "1.2.3.4:8443"
+    mock_api.assert_any_call("1.2.3.4:8443", "-", verify_ssl=False, scheme="wss")
+
+
+@pytest.mark.parametrize("port", [None, 80, 443])
+async def test_probe_is_truenas_ignores_default_ports(port: int | None) -> None:
+    """Default ports add nothing over the bare host, so they are not retried."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_CONNECTION_REFUSED
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", port) is None
+    assert mock_api.call_count == 2  # wss + ws on the bare host only
 
 
 # ---------------------------

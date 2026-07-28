@@ -334,6 +334,55 @@ async def _async_safe_disconnect(api: TrueNASAPI) -> None:
         await api.disconnect()
 
 
+# Ports the ``ws``/``wss`` schemes already default to; an mDNS announcement
+# naming one of them adds nothing over probing the bare host.
+_DEFAULT_WS_PORTS = frozenset({80, 443})
+
+
+# ---------------------------
+#   _probe_candidates
+# ---------------------------
+def _probe_candidates(host: str, port: int | None) -> list[str]:
+    """Return the host strings to probe for ``host``, most likely first.
+
+    TrueNAS only advertises the generic ``_http._tcp`` service, whose port is
+    the web UI's -- normally 80, which ``ws`` already defaults to (as ``wss``
+    does 443). Probing the bare host therefore stays first so a standard box
+    reachable over ``wss`` is not forced onto the advertised plain-HTTP port.
+    A genuinely non-default port is appended as a fallback, so an instance
+    behind a custom port or reverse proxy is no longer misread as "not
+    TrueNAS". ``aiotruenas`` builds its URL from the host verbatim, so
+    ``host:port`` is a valid host string here (see ``_sanitize_host``).
+    """
+    if port is None or port in _DEFAULT_WS_PORTS:
+        return [host]
+    return [host, f"{host}:{port}"]
+
+
+# ---------------------------
+#   _async_probe_candidate
+# ---------------------------
+async def _async_probe_candidate(host: str) -> bool:
+    """Return True only if ``host`` rejects a bogus API key as invalid.
+
+    Only a genuine TrueNAS JSON-RPC endpoint completes the WebSocket
+    handshake and then answers ``ERR_INVALID_KEY``; every other outcome is
+    treated as "not TrueNAS".
+    """
+    for scheme in ("wss", "ws"):
+        api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
+        try:
+            if not await _async_try_connect(
+                api, host, f"probe ({scheme}) is not reachable"
+            ):
+                continue
+            if api.error == ERR_INVALID_KEY:
+                return True
+        finally:
+            await _async_safe_disconnect(api)
+    return False
+
+
 # ---------------------------
 #   _async_get_system_id
 # ---------------------------
@@ -523,36 +572,35 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(host)
         self._abort_if_unique_id_configured()
 
-        if not await self._probe_is_truenas(host):
+        # The probe reports back which endpoint actually answered, so a box
+        # found only on its advertised non-default port is configured with
+        # that port instead of silently falling back to the default one.
+        probed_host = await self._probe_is_truenas(host, discovery_info.port)
+        if probed_host is None:
             return self.async_abort(reason="not_truenas")
 
-        if await self._async_update_rediscovered_entry(host):
+        if await self._async_update_rediscovered_entry(probed_host):
             return self.async_abort(reason="already_configured")
 
-        self.truenas_config[CONF_HOST] = host
-        self.context["title_placeholders"] = {CONF_NAME: host}
+        self.truenas_config[CONF_HOST] = probed_host
+        self.context["title_placeholders"] = {CONF_NAME: probed_host}
         return await self.async_step_zeroconf_confirm()
 
     @staticmethod
-    async def _probe_is_truenas(host: str) -> bool:
-        """Return True only if ``host`` rejects a bogus key as invalid.
+    async def _probe_is_truenas(host: str, port: int | None = None) -> str | None:
+        """Return the ``host[:port]`` that answers as TrueNAS, or None.
 
         Any unexpected connection-level error (refused, DNS, handshake, ...)
         is treated the same as "not TrueNAS" so a misbehaving non-TrueNAS
         device cannot abort zeroconf discovery for the whole flow.
+
+        The returned value is what the entry must be configured with, so a
+        box found only on its advertised non-default port keeps that port.
         """
-        for scheme in ("wss", "ws"):
-            api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
-            try:
-                if not await _async_try_connect(
-                    api, host, f"probe ({scheme}) is not reachable"
-                ):
-                    continue
-                if api.error == ERR_INVALID_KEY:
-                    return True
-            finally:
-                await _async_safe_disconnect(api)
-        return False
+        for candidate in _probe_candidates(host, port):
+            if await _async_probe_candidate(candidate):
+                return candidate
+        return None
 
     async def _async_update_rediscovered_entry(self, host: str) -> bool:
         """Update an existing entry's host if ``host`` is the same box, moved.

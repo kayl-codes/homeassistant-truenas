@@ -239,7 +239,9 @@ def _zeroconf_discovery_info(host: str = "192.168.1.50") -> ZeroconfServiceInfo:
 
 async def test_zeroconf_flow_confirms_and_creates_entry(hass: HomeAssistant) -> None:
     with patch.object(
-        config_flow.TrueNASConfigFlow, "_probe_is_truenas", AsyncMock(return_value=True)
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value="192.168.1.50"),
     ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
@@ -266,11 +268,39 @@ async def test_zeroconf_flow_confirms_and_creates_entry(hass: HomeAssistant) -> 
     assert result["data"][CONF_HOST] == "192.168.1.50"
 
 
+async def test_zeroconf_flow_keeps_advertised_port(hass: HomeAssistant) -> None:
+    """A box found only on its advertised port is configured with that port."""
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value="192.168.1.50:8443"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["description_placeholders"] == {CONF_HOST: "192.168.1.50:8443"}
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value=None)),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input(**{CONF_HOST: "192.168.1.50:8443"})
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOST] == "192.168.1.50:8443"
+
+
 async def test_zeroconf_flow_aborts_when_not_truenas(hass: HomeAssistant) -> None:
     with patch.object(
         config_flow.TrueNASConfigFlow,
         "_probe_is_truenas",
-        AsyncMock(return_value=False),
+        AsyncMock(return_value=None),
     ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
@@ -310,7 +340,7 @@ async def test_zeroconf_flow_updates_rediscovered_entry_host(
         patch.object(
             config_flow.TrueNASConfigFlow,
             "_probe_is_truenas",
-            AsyncMock(return_value=True),
+            AsyncMock(return_value="192.168.1.50"),
         ),
         patch(f"{_API_PATH}.connect", AsyncMock(return_value=True)),
         patch(f"{_API_PATH}.query", AsyncMock(return_value="new-global-id")),
@@ -343,7 +373,7 @@ async def test_zeroconf_flow_ignores_entry_with_mismatched_system_id(
         patch.object(
             config_flow.TrueNASConfigFlow,
             "_probe_is_truenas",
-            AsyncMock(return_value=True),
+            AsyncMock(return_value="192.168.1.50"),
         ),
         patch(f"{_API_PATH}.connect", AsyncMock(return_value=True)),
         patch(f"{_API_PATH}.query", AsyncMock(return_value="different-id")),
