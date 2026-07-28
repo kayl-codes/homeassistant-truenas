@@ -217,6 +217,22 @@ async def test_validate_connection_failure_maps_error() -> None:
     assert errors[CONF_HOST] == ERR_MALFORMED_RESULT
 
 
+async def test_validate_connection_system_id_lookup_failure_does_not_block() -> None:
+    """A broken system.global.id lookup must not fail the whole connection test."""
+    flow = TrueNASConfigFlow()
+    config = {CONF_HOST: "nas.local", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    errors: dict[str, str] = {}
+    api = MagicMock()
+    api.connection_test = AsyncMock(return_value=(True, ""))
+    api.query = AsyncMock(side_effect=RuntimeError("boom"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        await flow._validate_connection(config, errors)
+    assert not errors
+    assert CONF_SYSTEM_ID not in config
+    api.disconnect.assert_awaited_once()
+
+
 # ---------------------------
 #   TrueNASConfigFlow._probe_is_truenas
 # ---------------------------
@@ -262,6 +278,69 @@ async def test_probe_is_truenas_falls_back_from_wss_to_ws() -> None:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
     assert mock_api.call_count == 2
     mock_api.assert_any_call("1.2.3.4", "-", verify_ssl=False, scheme="ws")
+
+
+async def test_probe_is_truenas_false_when_connect_raises() -> None:
+    """An unexpected connect() error is treated as "not TrueNAS", not a crash."""
+    api = MagicMock()
+    api.connect = AsyncMock(side_effect=OSError("connection refused"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is False
+    assert mock_api.call_count == 2
+    assert api.disconnect.await_count == 2
+
+
+# ---------------------------
+#   TrueNASConfigFlow._async_update_rediscovered_entry
+# ---------------------------
+async def test_async_update_rediscovered_entry_migrates_unique_id() -> None:
+    """A confirmed same-box rediscovery also migrates the entry's unique_id."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value="box-guid-123")
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    flow.hass.config_entries.async_update_entry.assert_called_once()
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert kwargs["unique_id"] == "box-guid-123"
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
+    assert kwargs["data"][CONF_SYSTEM_ID] == "box-guid-123"
+    flow.hass.config_entries.async_reload.assert_awaited_once_with(entry.entry_id)
+
+
+async def test_async_update_rediscovered_entry_skips_unique_id_when_id_unknown() -> (
+    None
+):
+    """A backfill without a resolvable system id still migrates the host only."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value=None)
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert "unique_id" not in kwargs
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
 
 
 # ---------------------------

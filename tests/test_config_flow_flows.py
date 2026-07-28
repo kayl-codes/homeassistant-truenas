@@ -128,6 +128,28 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
     assert result["data"][CONF_HOST] == "truenas.example.com"
 
 
+async def test_user_flow_creates_entry_with_system_id_as_unique_id(
+    hass: HomeAssistant,
+) -> None:
+    """Once the box's stable identity is known it becomes the entry's unique_id."""
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input()
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SYSTEM_ID] == "box-guid-123"
+    entry = hass.config_entries.async_get_entry(result["result"].entry_id)
+    assert entry is not None
+    assert entry.unique_id == "box-guid-123"
+
+
 async def test_user_flow_name_already_exists(hass: HomeAssistant) -> None:
     existing = MockConfigEntry(
         domain=DOMAIN, data=_user_input(**{CONF_HOST: "other-host.example.com"})
@@ -272,6 +294,7 @@ async def test_zeroconf_flow_updates_rediscovered_entry_host(
     assert result["reason"] == "already_configured"
     assert entry.data[CONF_HOST] == "192.168.1.50"
     assert entry.data[CONF_SYSTEM_ID] == "new-global-id"
+    assert entry.unique_id == "new-global-id"
 
 
 async def test_zeroconf_flow_ignores_entry_with_mismatched_system_id(

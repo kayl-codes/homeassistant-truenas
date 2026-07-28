@@ -349,9 +349,17 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         conn, errorcode = await api.connection_test()
         if conn:
-            system_id = await api.query("system.global.id")
-            if isinstance(system_id, str) and system_id:
-                config[CONF_SYSTEM_ID] = system_id
+            try:
+                system_id = await api.query("system.global.id")
+            except Exception:
+                # A failed identity lookup must not block configuration.
+                _LOGGER.debug(
+                    "TrueNAS %s: failed to read system.global.id",
+                    config.get(CONF_HOST),
+                )
+            else:
+                if isinstance(system_id, str) and system_id:
+                    config[CONF_SYSTEM_ID] = system_id
         await api.disconnect()
 
         if not conn:
@@ -424,6 +432,13 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if not errors:
             await self._validate_connection(truenas_config, errors)
 
+        # Once the box's stable identity is known, key the entry's unique_id
+        # on it rather than on the (zeroconf-set) host, so rediscovery and
+        # de-duplication survive the host/IP changing later.
+        system_id = truenas_config.get(CONF_SYSTEM_ID)
+        if not errors and isinstance(system_id, str) and system_id:
+            await self.async_set_unique_id(system_id)
+
         # Save instance
         if not errors:
             return self.async_create_entry(
@@ -466,11 +481,22 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     async def _probe_is_truenas(host: str) -> bool:
-        """Return True only if ``host`` rejects a bogus key as invalid."""
+        """Return True only if ``host`` rejects a bogus key as invalid.
+
+        Any unexpected connection-level error (refused, DNS, handshake, ...)
+        is treated the same as "not TrueNAS" so a misbehaving non-TrueNAS
+        device cannot abort zeroconf discovery for the whole flow.
+        """
         for scheme in ("wss", "ws"):
             api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
             try:
-                await api.connect()
+                try:
+                    await api.connect()
+                except Exception:
+                    _LOGGER.debug(
+                        "TrueNAS probe: %s (%s) is not reachable", host, scheme
+                    )
+                    continue
                 if api.error == ERR_INVALID_KEY:
                     return True
             finally:
@@ -510,9 +536,13 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
             new_data = dict(entry.data)
             new_data[CONF_HOST] = host
+            update_kwargs: dict[str, Any] = {"data": new_data}
             if isinstance(system_id, str) and system_id:
                 new_data[CONF_SYSTEM_ID] = system_id
-            self.hass.config_entries.async_update_entry(entry, data=new_data)
+                # Migrate the entry's unique_id onto the stable box identity
+                # too, so future rediscovery keys on it rather than the host.
+                update_kwargs["unique_id"] = system_id
+            self.hass.config_entries.async_update_entry(entry, **update_kwargs)
             await self.hass.config_entries.async_reload(entry.entry_id)
             return True
         return False
