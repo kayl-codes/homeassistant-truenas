@@ -70,12 +70,14 @@ def main():
             if resolved is None:
                 raise ValueError(
                     f"Pipfile.lock has no 'develop' entry for dev-package {key!r}; "
-                    "Pipfile and Pipfile.lock appear to be out of sync."
+                    "Pipfile and Pipfile.lock appear to be out of sync. "
+                    "Run 'pipenv lock' to regenerate Pipfile.lock from Pipfile."
                 )
             if "version" not in resolved:
                 raise ValueError(
                     f"Pipfile.lock's develop entry for {key!r} has no "
-                    f"'version' field: {resolved!r}"
+                    f"'version' field: {resolved!r}. "
+                    "Run 'pipenv lock' to regenerate Pipfile.lock from Pipfile."
                 )
             tests_f.write(key + resolved["version"] + "\n")
 
