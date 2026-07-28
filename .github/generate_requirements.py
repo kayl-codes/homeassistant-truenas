@@ -25,7 +25,8 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
 # lru-dict, ...) to exact versions that don't ship wheels for every release, so
 # `--only-binary` can never be satisfied for it, independent of which homeassistant
 # version is requested. It's written to its own unpinned, --only-binary-exempt
-# requirements file instead (requirements_tests_unpinned.txt).
+# requirements file instead (requirements_tests_only_binary_exempt.txt) - not a
+# general "extra test deps" file, just an escape hatch for this constraint.
 #
 # This is a Pipfile dev-package, so it's handled here. The only other package with
 # the same --only-binary constraint, pytest-homeassistant-custom-component (via its
@@ -49,24 +50,25 @@ def main():
     develop = lock["develop"]
     with (
         open("requirements_tests.txt", "w") as tests_f,
-        open("requirements_tests_unpinned.txt", "w") as unpinned_f,
+        open("requirements_tests_only_binary_exempt.txt", "w") as exempt_f,
     ):
         for key in parser["dev-packages"]:
             if key in _SEPARATE_DEV_PACKAGES:
                 value = parser["dev-packages"][key].replace('"', "")
-                unpinned_f.write(key + value + "\n")
+                exempt_f.write(key + value + "\n")
                 continue
             resolved = develop.get(key)
-            if resolved is not None:
-                if "version" not in resolved:
-                    raise ValueError(
-                        f"Pipfile.lock's develop entry for {key!r} has no "
-                        f"'version' field: {resolved!r}"
-                    )
-                value = resolved["version"]
-            else:
-                value = parser["dev-packages"][key].replace('"', "")
-            tests_f.write(key + value + "\n")
+            if resolved is None:
+                raise ValueError(
+                    f"Pipfile.lock has no 'develop' entry for dev-package {key!r}; "
+                    "Pipfile and Pipfile.lock appear to be out of sync."
+                )
+            if "version" not in resolved:
+                raise ValueError(
+                    f"Pipfile.lock's develop entry for {key!r} has no "
+                    f"'version' field: {resolved!r}"
+                )
+            tests_f.write(key + resolved["version"] + "\n")
 
 
 if __name__ == "__main__":

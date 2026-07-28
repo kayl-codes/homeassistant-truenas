@@ -55,7 +55,7 @@ jobs:
         # release, and pytest-homeassistant-custom-component's mock-open==1.4.0
         # dependency has never published a wheel, only an sdist, on any release.
         run: |
-          pip install -r requirements_tests_unpinned.txt pytest-homeassistant-custom-component==0.13.348
+          pip install -r requirements_tests_only_binary_exempt.txt pytest-homeassistant-custom-component==0.13.348
       - name: Test with pytest
         run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
@@ -79,7 +79,7 @@ jobs:
         # fnv-hash-fast, lru-dict, ...) to versions that don't ship wheels for every
         # release.
         run: |
-          pip install -r requirements_tests_unpinned.txt
+          pip install -r requirements_tests_only_binary_exempt.txt
       - name: Run mypy (strict, per pyproject.toml)
         run: mypy
 

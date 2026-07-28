@@ -6,7 +6,7 @@ runs:
   steps:
     - name: Generate Requirements lists
       shell: bash
-      run: python3 .github/generate_requirements.py
+      run: python .github/generate_requirements.py
     - name: Install dependencies
       shell: bash
       run: |
