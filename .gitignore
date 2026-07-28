@@ -13,6 +13,7 @@ __pycache__/
 # Generated requirements (built in CI from the Pipfile)
 /requirements.txt
 /requirements_tests.txt
+/requirements_tests_unpinned.txt
 
 # Claude Code (personal/local settings — permission rules etc.)
 .claude/
