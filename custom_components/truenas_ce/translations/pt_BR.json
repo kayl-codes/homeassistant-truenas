@@ -98,7 +98,15 @@
                 "step": {
                     "init": {
                         "title": "Limpar estatísticas órfãs do TrueNAS",
-                        "description": "{count} estatística(s) de longo prazo pertencem a entidades do TrueNAS que não existem mais (elas aparecem como «nenhum estado disponível» em Ferramentas de desenvolvedor > Estatísticas). Escolha o que fazer.",
+                        "description": "{count} estatística(s) de longo prazo pertencem a entidades do TrueNAS que não existem mais. {with_data} delas ainda contêm dados registrados, que você pode consultar em Ferramentas de desenvolvedor > Estatísticas antes de excluir.\n\n{entities}\n\nEscolha o que fazer.",
+                        "menu_options": {
+                            "fix": "Excluir as estatísticas órfãs",
+                            "ignore": "Ignorar (não notificar novamente)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Limpar estatísticas órfãs do TrueNAS",
+                        "description": "{count} estatística(s) de longo prazo pertencem a entidades do TrueNAS que não existem mais. Nenhuma delas contém mais dados registrados: seus pontos de dados foram removidos há muito tempo e restam apenas entradas de metadados vazias, por isso você não as encontrará em Ferramentas de desenvolvedor > Estatísticas.\n\n{entities}\n\nEscolha o que fazer.",
                         "menu_options": {
                             "fix": "Excluir as estatísticas órfãs",
                             "ignore": "Ignorar (não notificar novamente)"

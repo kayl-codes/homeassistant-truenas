@@ -50,6 +50,7 @@ from custom_components.truenas_ce.coordinator import (
     _aggregate_topology_errors,
     _arc_value,
     _as_int,
+    _count_statistics_with_data,
     _first_ipv4,
     _is_truenas_sensor_id,
     _median,
@@ -1659,6 +1660,95 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
 
     assert coord.orphaned_statistics == [f"sensor.{slug}_cpu_usage"]
     create_mock.assert_called_once()
+
+
+async def test_async_detect_orphaned_statistics_logs_ids_on_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The full id list is logged once per change, not on every poll."""
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.hass.config.components = {"recorder"}
+    coord.config_entry = MagicMock()
+    coord.config_entry.entry_id = "entry1"
+    coord.config_entry.options = {}
+    slug = slugify(DEFAULT_DEVICE_NAME)
+    stat_ids = [{"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"}]
+    ent_reg = MagicMock()
+    ent_reg.async_get.return_value = None
+    with (
+        patch.object(
+            coordinator_module,
+            "get_instance",
+            return_value=MagicMock(
+                async_add_executor_job=AsyncMock(return_value=stat_ids)
+            ),
+        ),
+        patch.object(coordinator_module.er, "async_get", return_value=ent_reg),
+        patch.object(coordinator_module.ir, "async_create_issue"),
+        caplog.at_level("DEBUG", logger=coordinator_module.__name__),
+    ):
+        await coord.async_detect_orphaned_statistics()
+        assert f"sensor.{slug}_cpu_usage" in caplog.text
+
+        caplog.clear()
+        await coord.async_detect_orphaned_statistics()
+
+    assert "Orphaned TrueNAS statistics" not in caplog.text
+
+
+def test_count_statistics_with_data_counts_only_ids_with_rows() -> None:
+    hass = MagicMock()
+    with patch.object(
+        coordinator_module,
+        "get_last_statistics",
+        side_effect=[{"sensor.a": [{"state": 1}]}, {}],
+    ):
+        assert _count_statistics_with_data(hass, ["sensor.a", "sensor.b"]) == 1
+
+
+async def test_async_count_orphans_with_data_returns_zero_without_orphans() -> None:
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.orphaned_statistics = []
+    assert await coord.async_count_orphans_with_data() == 0
+
+
+async def test_async_count_orphans_with_data_probes_recorder() -> None:
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.hass.config.components = {"recorder"}
+    coord.orphaned_statistics = ["sensor.truenas_a", "sensor.truenas_b"]
+    with patch.object(
+        coordinator_module,
+        "get_instance",
+        return_value=MagicMock(async_add_executor_job=AsyncMock(return_value=1)),
+    ):
+        assert await coord.async_count_orphans_with_data() == 1
+
+
+async def test_async_count_orphans_with_data_assumes_all_without_recorder() -> None:
+    """Without the recorder loaded the probe cannot run: assume the worst case."""
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.hass.config.components = set()
+    coord.orphaned_statistics = ["sensor.truenas_a"]
+    assert await coord.async_count_orphans_with_data() == 1
+
+
+async def test_async_count_orphans_with_data_falls_back_on_error() -> None:
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.hass.config.components = {"recorder"}
+    coord.orphaned_statistics = ["sensor.truenas_a", "sensor.truenas_b"]
+    with patch.object(
+        coordinator_module,
+        "get_instance",
+        return_value=MagicMock(
+            async_add_executor_job=AsyncMock(side_effect=Exception("boom"))
+        ),
+    ):
+        assert await coord.async_count_orphans_with_data() == 2
 
 
 def test_update_statistics_issue_deletes_when_no_orphans() -> None:

@@ -98,7 +98,15 @@
                 "step": {
                     "init": {
                         "title": "Verwaiste TrueNAS-Statistiken bereinigen",
-                        "description": "{count} Langzeitstatistik(en) gehören zu TrueNAS-Entitäten, die nicht mehr existieren (sie werden unter Entwicklerwerkzeuge > Statistiken als „kein Status verfügbar“ angezeigt). Wähle aus, was geschehen soll.",
+                        "description": "{count} Langzeitstatistik(en) gehören zu TrueNAS-Entitäten, die nicht mehr existieren. {with_data} davon enthalten noch aufgezeichnete Daten, die du vor dem Löschen unter Entwicklerwerkzeuge > Statistiken einsehen kannst.\n\n{entities}\n\nWähle aus, was geschehen soll.",
+                        "menu_options": {
+                            "fix": "Verwaiste Statistiken löschen",
+                            "ignore": "Ignorieren (nicht erneut benachrichtigen)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Verwaiste TrueNAS-Statistiken bereinigen",
+                        "description": "{count} Langzeitstatistik(en) gehören zu TrueNAS-Entitäten, die nicht mehr existieren. Keine davon enthält noch aufgezeichnete Daten — die Datenpunkte wurden längst bereinigt, übrig sind nur leere Metadaten-Einträge. Deshalb findest du sie unter Entwicklerwerkzeuge > Statistiken nicht.\n\n{entities}\n\nWähle aus, was geschehen soll.",
                         "menu_options": {
                             "fix": "Verwaiste Statistiken löschen",
                             "ignore": "Ignorieren (nicht erneut benachrichtigen)"

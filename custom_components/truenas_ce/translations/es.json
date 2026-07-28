@@ -98,7 +98,15 @@
                 "step": {
                     "init": {
                         "title": "Limpiar estadísticas huérfanas de TrueNAS",
-                        "description": "{count} estadística(s) de largo plazo pertenecen a entidades de TrueNAS que ya no existen (aparecen como «sin estado disponible» en Herramientas para desarrolladores > Estadísticas). Elija qué hacer.",
+                        "description": "{count} estadística(s) de largo plazo pertenecen a entidades de TrueNAS que ya no existen. {with_data} de ellas todavía contienen datos registrados, que puede consultar en Herramientas para desarrolladores > Estadísticas antes de eliminarlas.\n\n{entities}\n\nElija qué hacer.",
+                        "menu_options": {
+                            "fix": "Eliminar las estadísticas huérfanas",
+                            "ignore": "Ignorar (no volver a notificar)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Limpiar estadísticas huérfanas de TrueNAS",
+                        "description": "{count} estadística(s) de largo plazo pertenecen a entidades de TrueNAS que ya no existen. Ninguna de ellas contiene ya datos registrados: sus puntos de datos se purgaron hace tiempo y solo quedan entradas de metadatos vacías, por eso no las encontrará en Herramientas para desarrolladores > Estadísticas.\n\n{entities}\n\nElija qué hacer.",
                         "menu_options": {
                             "fix": "Eliminar las estadísticas huérfanas",
                             "ignore": "Ignorar (no volver a notificar)"

@@ -79,5 +79,6 @@ def make_coordinator(
         async_run_task=AsyncMock(),
         set_optimistic_running=MagicMock(),
         async_clear_orphaned_statistics=AsyncMock(),
+        async_count_orphans_with_data=AsyncMock(return_value=0),
         raise_migration_rollback_issue=MagicMock(),
     )
