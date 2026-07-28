@@ -52,9 +52,13 @@ async def test_create_fix_flow_routes_migration_rollback_issue() -> None:
 
 
 async def test_statistics_cleanup_init_lists_ids_when_data_remains() -> None:
-    """Orphans that still hold data points get the "look them up" wording."""
+    """Orphans that still hold data points get the "look them up" wording.
+
+    The dialog renders the coordinator's order as-is — the list is already
+    sorted where it is built, in ``async_detect_orphaned_statistics``.
+    """
     coordinator = make_coordinator()
-    coordinator.orphaned_statistics = ["sensor.b", "sensor.a"]
+    coordinator.orphaned_statistics = ["sensor.a", "sensor.b"]
     coordinator.async_count_orphans_with_data = AsyncMock(return_value=2)
     entry = SimpleNamespace(runtime_data=coordinator)
     flow = StatisticsCleanupRepairFlow("entry1")

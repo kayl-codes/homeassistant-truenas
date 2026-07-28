@@ -1631,6 +1631,7 @@ async def test_async_detect_orphaned_statistics_handles_listing_exception() -> N
 
 
 async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
+    """Matching ids are kept, everything else dropped — and the result is sorted."""
     coord = _bare_coordinator()
     coord.hass = MagicMock()
     coord.hass.config.components = {"recorder"}
@@ -1640,6 +1641,7 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
     slug = slugify(DEFAULT_DEVICE_NAME)
     stat_ids = [
         {"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"},
+        {"statistic_id": f"sensor.{slug}_arc_size", "source": "recorder"},
         {"statistic_id": "sensor.unrelated_thing", "source": "recorder"},
         "not-a-dict",
     ]
@@ -1658,7 +1660,10 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
     ):
         await coord.async_detect_orphaned_statistics()
 
-    assert coord.orphaned_statistics == [f"sensor.{slug}_cpu_usage"]
+    assert coord.orphaned_statistics == [
+        f"sensor.{slug}_arc_size",
+        f"sensor.{slug}_cpu_usage",
+    ]
     create_mock.assert_called_once()
 
 

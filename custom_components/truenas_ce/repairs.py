@@ -57,7 +57,9 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
             orphans: list[str] = []
             with_data = 0
         else:
-            orphans = sorted(coordinator.orphaned_statistics)
+            # Already sorted by the coordinator; copied so the dialog keeps the
+            # snapshot it renders even if the next poll rebuilds the list.
+            orphans = list(coordinator.orphaned_statistics)
             with_data = await coordinator.async_count_orphans_with_data()
 
         return self.async_show_menu(

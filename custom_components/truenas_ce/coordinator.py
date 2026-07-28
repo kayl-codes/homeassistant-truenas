@@ -355,8 +355,10 @@ def _count_statistics_with_data(hass: HomeAssistant, statistic_ids: list[str]) -
 
     Runs inside the recorder executor: one indexed ``LIMIT 1`` lookup per id, so
     the cost stays flat even for a large orphan backlog. The requested column
-    types are irrelevant for the mere existence check (the recorder discards
-    impossible columns *in place*, hence a fresh set per call).
+    types are irrelevant for the mere existence check, and the set literal must
+    stay inside the loop rather than becoming a shared constant: every
+    ``get_last_statistics`` call discards impossible columns from the set it is
+    handed, *in place*, so a reused set would erode with each id.
     """
     return sum(
         1
@@ -665,7 +667,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         ent_reg = er.async_get(self.hass)
         previous = self.orphaned_statistics
-        self.orphaned_statistics = [
+        # Sorted once here so log output, the repair dialog and the change check
+        # below all share one order: ``list_statistic_ids`` makes no ordering
+        # promise, so an unsorted list could "change" without any orphan doing so.
+        self.orphaned_statistics = sorted(
             meta["statistic_id"]
             for meta in stat_ids
             if isinstance(meta, dict)
@@ -673,14 +678,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and isinstance(meta.get("statistic_id"), str)
             and _is_truenas_sensor_id(meta["statistic_id"])
             and ent_reg.async_get(meta["statistic_id"]) is None
-        ]
+        )
         # Logged only on change: detection runs every poll, and the full id list
         # is what a user needs for a bug report before deleting anything.
         if self.orphaned_statistics != previous:
             _LOGGER.debug(
                 "Orphaned TrueNAS statistics (%d): %s",
                 len(self.orphaned_statistics),
-                ", ".join(sorted(self.orphaned_statistics)) or "none",
+                ", ".join(self.orphaned_statistics) or "none",
             )
         self._update_statistics_issue()
 
