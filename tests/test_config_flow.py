@@ -232,6 +232,7 @@ async def test_validate_connection_system_id_lookup_failure_does_not_block() -> 
         await flow._validate_connection(config, errors)
     assert not errors
     assert CONF_SYSTEM_ID not in config
+    api.query.assert_awaited_once_with("system.global.id")
     api.disconnect.assert_awaited_once()
 
 
@@ -291,6 +292,17 @@ async def test_probe_is_truenas_false_when_connect_raises() -> None:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is False
     assert mock_api.call_count == 2
     assert api.disconnect.await_count == 2
+
+
+async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
+    """A broken disconnect() must not abort the probe for the whole flow."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock(side_effect=OSError("already closed"))
+    api.error = ERR_INVALID_KEY
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is True
+    api.disconnect.assert_awaited_once()
 
 
 # ---------------------------

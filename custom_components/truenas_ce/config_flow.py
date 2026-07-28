@@ -321,6 +321,20 @@ async def _async_try_connect(api: TrueNASAPI, host: str, context: str) -> bool:
 
 
 # ---------------------------
+#   _async_safe_disconnect
+# ---------------------------
+async def _async_safe_disconnect(api: TrueNASAPI) -> None:
+    """Disconnect ``api``, swallowing any error.
+
+    Mirrors :func:`_async_try_connect`/:func:`_async_get_system_id`: cleanup
+    in a probe/rediscovery ``finally`` block must never raise, or it would
+    abort the whole discovery flow for every remaining candidate.
+    """
+    with contextlib.suppress(Exception):
+        await api.disconnect()
+
+
+# ---------------------------
 #   _async_get_system_id
 # ---------------------------
 async def _async_get_system_id(api: TrueNASAPI, host: str) -> str | None:
@@ -537,7 +551,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 if api.error == ERR_INVALID_KEY:
                     return True
             finally:
-                await api.disconnect()
+                await _async_safe_disconnect(api)
         return False
 
     async def _async_update_rediscovered_entry(self, host: str) -> bool:
@@ -579,7 +593,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 # that predate this check (see docstring).
                 system_id = await _async_get_system_id(api, host)
             finally:
-                await api.disconnect()
+                await _async_safe_disconnect(api)
 
             stored_id = entry.data.get(CONF_SYSTEM_ID)
             if stored_id and system_id != stored_id:
