@@ -226,6 +226,7 @@ async def test_zeroconf_flow_confirms_and_creates_entry(hass: HomeAssistant) -> 
 
     with (
         patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value=None)),
         patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
     ):
         result = await hass.config_entries.flow.async_configure(

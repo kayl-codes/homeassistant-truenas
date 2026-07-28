@@ -351,11 +351,12 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if conn:
             try:
                 system_id = await api.query("system.global.id")
-            except Exception:
+            except Exception as err:
                 # A failed identity lookup must not block configuration.
                 _LOGGER.debug(
-                    "TrueNAS %s: failed to read system.global.id",
+                    "TrueNAS %s: failed to read system.global.id: %s",
                     config.get(CONF_HOST),
+                    err,
                 )
             else:
                 if isinstance(system_id, str) and system_id:
@@ -526,7 +527,18 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 if not await api.connect():
                     continue
-                system_id = await api.query("system.global.id")
+                try:
+                    system_id = await api.query("system.global.id")
+                except Exception as err:
+                    # A failed identity lookup must not abort rediscovery;
+                    # fall back to the same best-effort match used for
+                    # entries that predate this check (see docstring).
+                    _LOGGER.debug(
+                        "TrueNAS %s: failed to read system.global.id: %s",
+                        host,
+                        err,
+                    )
+                    system_id = None
             finally:
                 await api.disconnect()
 

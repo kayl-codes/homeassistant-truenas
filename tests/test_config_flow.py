@@ -211,10 +211,12 @@ async def test_validate_connection_failure_maps_error() -> None:
     errors: dict[str, str] = {}
     api = MagicMock()
     api.connection_test = AsyncMock(return_value=(False, ERR_MALFORMED_RESULT))
+    api.query = AsyncMock()
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
     assert errors[CONF_HOST] == ERR_MALFORMED_RESULT
+    api.query.assert_not_awaited()
 
 
 async def test_validate_connection_system_id_lookup_failure_does_not_block() -> None:
