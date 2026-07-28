@@ -345,6 +345,31 @@ async def test_async_update_rediscovered_entry_skips_unique_id_when_id_unknown()
     assert kwargs["data"][CONF_HOST] == "5.6.7.8"
 
 
+async def test_async_update_rediscovered_entry_skips_id_unknown_when_ambiguous() -> (
+    None
+):
+    """An id-less match is skipped when more than one entry is configured."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    other_entry = MagicMock()
+    other_entry.data = {CONF_HOST: "9.9.9.9", CONF_API_KEY: "other-key"}
+    flow.hass.config_entries.async_entries.return_value = [entry, other_entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value=None)
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
 async def test_async_update_rediscovered_entry_skips_mismatched_system_id() -> None:
     """A different probed system id must not merge two distinct TrueNAS boxes."""
     flow = TrueNASConfigFlow()

@@ -334,7 +334,19 @@ async def _async_get_system_id(api: TrueNASAPI, host: str) -> str | None:
     except Exception as err:
         _LOGGER.debug("TrueNAS %s: failed to read system.global.id: %s", host, err)
         return None
-    return system_id if isinstance(system_id, str) and system_id else None
+
+    if isinstance(system_id, str) and system_id:
+        return system_id
+
+    if not isinstance(system_id, str):
+        _LOGGER.debug(
+            "TrueNAS %s: unexpected system.global.id payload (%s): %r",
+            host,
+            type(system_id).__name__,
+            system_id,
+        )
+
+    return None
 
 
 # ---------------------------
@@ -534,12 +546,16 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         Tries each configured entry's own stored API key against the newly
         discovered (and already-confirmed-TrueNAS) host. A successful login
         whose ``system.global.id`` matches the entry's stored id is proof
-        it's the same physical box under a new IP; a successful login with
-        no stored id yet (entries predating this check) is accepted as
-        best-effort confirmation and backfills the id for next time. Returns
-        True (and updates+reloads the entry) on a match, False otherwise.
+        it's the same physical box under a new IP. A successful login with
+        no stored id yet (entries predating this check) is only accepted as
+        best-effort confirmation when this is the sole configured entry, so
+        there's no other entry it could be confused with; with more than one
+        entry configured, an id-less match is skipped rather than risk
+        migrating the wrong entry. Returns True (and updates+reloads the
+        entry) on a match, False otherwise.
         """
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        for entry in entries:
             if entry.data.get(CONF_HOST) == host:
                 continue
 
@@ -568,6 +584,8 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             stored_id = entry.data.get(CONF_SYSTEM_ID)
             if stored_id and system_id != stored_id:
                 continue  # same key, different box -- not a match
+            if not stored_id and len(entries) > 1:
+                continue  # no id to confirm identity, and ambiguous
 
             new_data = dict(entry.data)
             new_data[CONF_HOST] = host
