@@ -12,5 +12,5 @@ runs:
       run: |
         set -euo pipefail
         python -m pip install --only-binary ":all:" pip==26.1.2
-        pip install --require-hashes --only-binary ":all:" -r requirements.txt
-        pip install --only-binary ":all:" -r requirements_tests.txt
+        python -m pip install --require-hashes --only-binary ":all:" -r requirements.txt
+        python -m pip install --only-binary ":all:" -r requirements_tests.txt

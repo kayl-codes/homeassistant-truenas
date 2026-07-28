@@ -21,27 +21,25 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
             f.write(line + "\n")
 
 
-def _only_binary_exempt_dev_packages() -> set[str]:
-    """Pipfile dev-packages that can never satisfy `pip install --only-binary`.
-
-    homeassistant pins its own transitive dependencies (aiohttp, fnv-hash-fast,
-    lru-dict, ...) to exact versions that don't ship wheels for every release, so
-    `--only-binary` can never be satisfied for it, independent of which homeassistant
-    version is requested. It's written to its own unpinned, --only-binary-exempt
-    requirements file instead (requirements_tests_only_binary_exempt.txt) - not a
-    general "extra test deps" file, just an escape hatch for this constraint.
-
-    This isn't derived from a Pipfile marker: Pipfile's marker syntax expresses
-    platform/interpreter constraints (e.g. `sys_platform`), not build/packaging
-    constraints like wheel availability, so there's no metadata to read it from.
-
-    Only Pipfile dev-packages are tracked here. The only other package with the
-    same --only-binary constraint, pytest-homeassistant-custom-component (via its
-    mock-open dependency), is CI-only tooling that's deliberately not a Pipfile
-    dev-package, and is installed directly alongside this file's output in ci.yml's
-    "Install homeassistant [+ pytest-homeassistant-custom-component]" steps.
-    """
-    return {"homeassistant"}
+# Pipfile dev-packages that can never satisfy `pip install --only-binary`.
+#
+# homeassistant pins its own transitive dependencies (aiohttp, fnv-hash-fast,
+# lru-dict, ...) to exact versions that don't ship wheels for every release, so
+# `--only-binary` can never be satisfied for it, independent of which homeassistant
+# version is requested. It's written to its own unpinned, --only-binary-exempt
+# requirements file instead (requirements_tests_only_binary_exempt.txt) - not a
+# general "extra test deps" file, just an escape hatch for this constraint.
+#
+# This isn't derived from a Pipfile marker: Pipfile's marker syntax expresses
+# platform/interpreter constraints (e.g. `sys_platform`), not build/packaging
+# constraints like wheel availability, so there's no metadata to read it from.
+#
+# Only Pipfile dev-packages are tracked here. The only other package with the
+# same --only-binary constraint, pytest-homeassistant-custom-component (via its
+# mock-open dependency), is CI-only tooling that's deliberately not a Pipfile
+# dev-package, and is installed directly alongside this file's output in ci.yml's
+# "Install homeassistant [+ pytest-homeassistant-custom-component]" steps.
+_ONLY_BINARY_EXEMPT_DEV_PACKAGES: set[str] = {"homeassistant"}
 
 
 def main():
@@ -56,7 +54,7 @@ def main():
     parser = configparser.ConfigParser()
     parser.read("Pipfile")
     develop = lock["develop"]
-    separate_dev_packages = _only_binary_exempt_dev_packages()
+    separate_dev_packages = _ONLY_BINARY_EXEMPT_DEV_PACKAGES
     with (
         open("requirements_tests.txt", "w") as tests_f,
         open("requirements_tests_only_binary_exempt.txt", "w") as exempt_f,

@@ -49,7 +49,7 @@ jobs:
       - name: Install locked dependencies
         uses: ./.github/actions/install-core-deps
       - name: Install homeassistant + pytest-homeassistant-custom-component (CI-only, Linux)
-        # --only-binary omitted: homeassistant (see _only_binary_exempt_dev_packages()
+        # --only-binary omitted: homeassistant (see _ONLY_BINARY_EXEMPT_DEV_PACKAGES
         # in generate_requirements.py) pins its own transitive deps (aiohttp,
         # fnv-hash-fast, lru-dict, ...) to versions that don't ship wheels for every
         # release, and pytest-homeassistant-custom-component's mock-open==1.4.0
@@ -74,7 +74,7 @@ jobs:
       - name: Install locked dependencies
         uses: ./.github/actions/install-core-deps
       - name: Install homeassistant (CI-only, Linux)
-        # --only-binary omitted: homeassistant (see _only_binary_exempt_dev_packages()
+        # --only-binary omitted: homeassistant (see _ONLY_BINARY_EXEMPT_DEV_PACKAGES
         # in generate_requirements.py) pins its own transitive deps (aiohttp,
         # fnv-hash-fast, lru-dict, ...) to versions that don't ship wheels for every
         # release.
