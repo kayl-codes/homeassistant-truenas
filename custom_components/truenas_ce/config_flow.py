@@ -526,7 +526,20 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 entry.data.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
             )
             try:
-                if not await api.connect():
+                try:
+                    if not await api.connect():
+                        continue
+                except Exception as err:
+                    # A connection-level failure (DNS, refused, SSL, ...)
+                    # must not abort rediscovery for the other entries;
+                    # treat it the same as "not a match" and move on, like
+                    # _probe_is_truenas does.
+                    _LOGGER.debug(
+                        "TrueNAS %s: failed to connect while checking for a "
+                        "rediscovery match: %s",
+                        host,
+                        err,
+                    )
                     continue
                 try:
                     system_id = await api.query("system.global.id")

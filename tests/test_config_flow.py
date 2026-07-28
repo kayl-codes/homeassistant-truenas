@@ -371,6 +371,54 @@ async def test_async_update_rediscovered_entry_skips_mismatched_system_id() -> N
     flow.hass.config_entries.async_reload.assert_not_awaited()
 
 
+async def test_async_update_rediscovered_entry_skips_entry_when_connect_raises() -> (
+    None
+):
+    """A connection-level error on one entry must not abort rediscovery."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(side_effect=RuntimeError("boom"))
+    api.query = AsyncMock()
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    api.disconnect.assert_awaited_once()
+    api.query.assert_not_called()
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
+async def test_async_update_rediscovered_entry_updates_host_when_query_raises() -> None:
+    """Host is migrated even if the system id lookup fails for legacy entries."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(side_effect=RuntimeError("boom"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
+    assert CONF_SYSTEM_ID not in kwargs["data"]
+    assert "unique_id" not in kwargs
+
+
 # ---------------------------
 #   TrueNASConfigFlow._find_legacy_config
 # ---------------------------
