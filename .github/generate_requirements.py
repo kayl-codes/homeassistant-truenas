@@ -25,8 +25,13 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
 # lru-dict, ...) to exact versions that don't ship wheels for every release, so
 # `--only-binary` can never be satisfied for it, independent of which homeassistant
 # version is requested. It's written to its own unpinned, --only-binary-exempt
-# requirements file instead, alongside pytest-homeassistant-custom-component (which
-# has the same problem via its mock-open dependency).
+# requirements file instead (requirements_tests_unpinned.txt).
+#
+# This is a Pipfile dev-package, so it's handled here. The only other package with
+# the same --only-binary constraint, pytest-homeassistant-custom-component (via its
+# mock-open dependency), is CI-only tooling that's deliberately not a Pipfile
+# dev-package, and is installed directly alongside this file's output in ci.yml's
+# "Install homeassistant [+ pytest-homeassistant-custom-component]" steps.
 _SEPARATE_DEV_PACKAGES = {"homeassistant"}
 
 
