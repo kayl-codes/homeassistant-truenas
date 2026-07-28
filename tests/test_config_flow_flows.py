@@ -428,6 +428,58 @@ async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     assert entry.data[CONF_API_KEY] == "new-key"
 
 
+async def test_reauth_flow_stores_system_id_on_success(hass: HomeAssistant) -> None:
+    """A successful reauth also picks up system.global.id, if resolvable."""
+    entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
+    entry.add_to_hass(hass)
+
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_REAUTH,
+                "entry_id": entry.entry_id,
+            },
+            data=entry.data,
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_API_KEY: "new-key"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "new-key"
+    assert entry.data[CONF_SYSTEM_ID] == "box-guid-123"
+
+
+@pytest.mark.usefixtures("_mock_connection_ok")
+async def test_reauth_flow_succeeds_without_system_id_when_lookup_fails(
+    hass: HomeAssistant,
+) -> None:
+    """A failed system.global.id lookup must not block reauthentication."""
+    entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=entry.data,
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "new-key"
+    assert CONF_SYSTEM_ID not in entry.data
+
+
 async def test_reauth_flow_shows_error_on_failed_connection(
     hass: HomeAssistant,
 ) -> None:
