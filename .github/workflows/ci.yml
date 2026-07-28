@@ -46,19 +46,16 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
-      - name: Generate Requirements lists
+      - name: Install locked dependencies
+        uses: ./.github/actions/install-core-deps
+      - name: Install homeassistant + pytest-homeassistant-custom-component (CI-only, Linux)
+        # --only-binary omitted: homeassistant (see _ONLY_BINARY_EXEMPT_DEV_PACKAGES
+        # in generate_requirements.py) pins its own transitive deps (aiohttp,
+        # fnv-hash-fast, lru-dict, ...) to versions that don't ship wheels for every
+        # release, and pytest-homeassistant-custom-component's mock-open==1.4.0
+        # dependency has never published a wheel, only an sdist, on any release.
         run: |
-          python3 .github/generate_requirements.py
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install --require-hashes --only-binary ":all:" -r requirements.txt
-          pip install -r requirements_tests.txt
-      - name: Install pytest-homeassistant-custom-component (CI-only, Linux)
-        # --only-binary omitted: its mock-open==1.4.0 dependency has never
-        # published a wheel, only an sdist, on any release.
-        run: |
-          pip install pytest-homeassistant-custom-component==0.13.348
+          pip install -r requirements_tests_only_binary_exempt.txt pytest-homeassistant-custom-component==0.13.348
       - name: Test with pytest
         run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
@@ -74,15 +71,15 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
-      - name: Generate Requirements lists
+      - name: Install locked dependencies
+        uses: ./.github/actions/install-core-deps
+      - name: Install homeassistant (CI-only, Linux)
+        # --only-binary omitted: homeassistant (see _ONLY_BINARY_EXEMPT_DEV_PACKAGES
+        # in generate_requirements.py) pins its own transitive deps (aiohttp,
+        # fnv-hash-fast, lru-dict, ...) to versions that don't ship wheels for every
+        # release.
         run: |
-          python3 .github/generate_requirements.py
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install --require-hashes --only-binary ":all:" -r requirements.txt
-          pip install -r requirements_tests.txt
-          pip install --only-binary ":all:" mypy==2.3.0
+          pip install -r requirements_tests_only_binary_exempt.txt
       - name: Run mypy (strict, per pyproject.toml)
         run: mypy
 

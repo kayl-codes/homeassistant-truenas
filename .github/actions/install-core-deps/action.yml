@@ -1,0 +1,16 @@
+name: Install locked Python dependencies
+description: Generate requirements files and install the hash-locked runtime + pinned dev dependencies
+
+runs:
+  using: composite
+  steps:
+    - name: Generate Requirements lists
+      shell: bash
+      run: python .github/generate_requirements.py
+    - name: Install dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --only-binary ":all:" pip==26.1.2
+        python -m pip install --require-hashes --only-binary ":all:" -r requirements.txt
+        python -m pip install --only-binary ":all:" -r requirements_tests.txt
