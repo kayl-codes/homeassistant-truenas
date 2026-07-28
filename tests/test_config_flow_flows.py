@@ -150,6 +150,36 @@ async def test_user_flow_creates_entry_with_system_id_as_unique_id(
     assert entry.unique_id == "box-guid-123"
 
 
+async def test_user_flow_aborts_on_duplicate_system_id(hass: HomeAssistant) -> None:
+    """A second entry for the same box (different host) must not be created.
+
+    The user-flow host-uniqueness guard alone would miss this, since the new
+    entry uses a different host; the system_id-based unique_id check must
+    catch it instead.
+    """
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        data=_user_input(**{CONF_HOST: "old-host.example.com"}),
+        unique_id="box-guid-123",
+    )
+    existing.add_to_hass(hass)
+
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            _user_input(**{CONF_HOST: "new-host.example.com", CONF_NAME: "New Name"}),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
 async def test_user_flow_name_already_exists(hass: HomeAssistant) -> None:
     existing = MockConfigEntry(
         domain=DOMAIN, data=_user_input(**{CONF_HOST: "other-host.example.com"})

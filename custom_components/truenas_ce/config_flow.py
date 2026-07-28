@@ -439,6 +439,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         system_id = truenas_config.get(CONF_SYSTEM_ID)
         if not errors and isinstance(system_id, str) and system_id:
             await self.async_set_unique_id(system_id)
+            self._abort_if_unique_id_configured()
 
         # Save instance
         if not errors:
