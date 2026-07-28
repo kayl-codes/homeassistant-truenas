@@ -303,6 +303,41 @@ def _guess_ip() -> str:
 
 
 # ---------------------------
+#   _async_try_connect
+# ---------------------------
+async def _async_try_connect(api: TrueNASAPI, host: str, context: str) -> bool:
+    """Attempt ``api.connect()``, returning False (and logging) on any failure.
+
+    Shared by the zeroconf probe and the rediscovery match: both need to try
+    one candidate connection and move on to the next on any problem rather
+    than raising, so an unexpected exception here must not abort the whole
+    discovery/rediscovery flow.
+    """
+    try:
+        return await api.connect()
+    except Exception as err:
+        _LOGGER.debug("TrueNAS %s: %s: %s", host, context, err)
+        return False
+
+
+# ---------------------------
+#   _async_get_system_id
+# ---------------------------
+async def _async_get_system_id(api: TrueNASAPI, host: str) -> str | None:
+    """Fetch ``system.global.id``, returning None (and logging) on failure.
+
+    A failed identity lookup must never block configuration/rediscovery, so
+    any exception here is swallowed and treated the same as "no id yet".
+    """
+    try:
+        system_id = await api.query("system.global.id")
+    except Exception as err:
+        _LOGGER.debug("TrueNAS %s: failed to read system.global.id: %s", host, err)
+        return None
+    return system_id if isinstance(system_id, str) and system_id else None
+
+
+# ---------------------------
 #   TrueNASConfigFlow
 # ---------------------------
 class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -349,18 +384,9 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         conn, errorcode = await api.connection_test()
         if conn:
-            try:
-                system_id = await api.query("system.global.id")
-            except Exception as err:
-                # A failed identity lookup must not block configuration.
-                _LOGGER.debug(
-                    "TrueNAS %s: failed to read system.global.id: %s",
-                    config.get(CONF_HOST),
-                    err,
-                )
-            else:
-                if isinstance(system_id, str) and system_id:
-                    config[CONF_SYSTEM_ID] = system_id
+            system_id = await _async_get_system_id(api, config.get(CONF_HOST, ""))
+            if system_id:
+                config[CONF_SYSTEM_ID] = system_id
         await api.disconnect()
 
         if not conn:
@@ -492,12 +518,9 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         for scheme in ("wss", "ws"):
             api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
             try:
-                try:
-                    await api.connect()
-                except Exception:
-                    _LOGGER.debug(
-                        "TrueNAS probe: %s (%s) is not reachable", host, scheme
-                    )
+                if not await _async_try_connect(
+                    api, host, f"probe ({scheme}) is not reachable"
+                ):
                     continue
                 if api.error == ERR_INVALID_KEY:
                     return True
@@ -526,33 +549,19 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 entry.data.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
             )
             try:
-                try:
-                    if not await api.connect():
-                        continue
-                except Exception as err:
-                    # A connection-level failure (DNS, refused, SSL, ...)
-                    # must not abort rediscovery for the other entries;
-                    # treat it the same as "not a match" and move on, like
-                    # _probe_is_truenas does.
-                    _LOGGER.debug(
-                        "TrueNAS %s: failed to connect while checking for a "
-                        "rediscovery match: %s",
-                        host,
-                        err,
-                    )
+                # A connection-level failure (DNS, refused, SSL, ...) must not
+                # abort rediscovery for the other entries; treat it the same
+                # as "not a match" and move on, like _probe_is_truenas does.
+                if not await _async_try_connect(
+                    api,
+                    host,
+                    "failed to connect while checking for a rediscovery match",
+                ):
                     continue
-                try:
-                    system_id = await api.query("system.global.id")
-                except Exception as err:
-                    # A failed identity lookup must not abort rediscovery;
-                    # fall back to the same best-effort match used for
-                    # entries that predate this check (see docstring).
-                    _LOGGER.debug(
-                        "TrueNAS %s: failed to read system.global.id: %s",
-                        host,
-                        err,
-                    )
-                    system_id = None
+                # A failed identity lookup must not abort rediscovery either;
+                # fall back to the same best-effort match used for entries
+                # that predate this check (see docstring).
+                system_id = await _async_get_system_id(api, host)
             finally:
                 await api.disconnect()
 
