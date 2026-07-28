@@ -12,6 +12,7 @@ from custom_components.truenas_ce.const import (
     MIGRATION_RECORDS,
 )
 from custom_components.truenas_ce.repairs import (
+    MAX_LISTED_ORPHANS,
     MigrationRollbackRepairFlow,
     StatisticsCleanupRepairFlow,
     async_create_fix_flow,
@@ -50,15 +51,59 @@ async def test_create_fix_flow_routes_migration_rollback_issue() -> None:
     assert flow._entry_id == "entry2"
 
 
-async def test_statistics_cleanup_init_shows_menu_with_count() -> None:
+async def test_statistics_cleanup_init_lists_ids_when_data_remains() -> None:
+    """Orphans that still hold data points get the "look them up" wording.
+
+    The dialog renders the coordinator's order as-is — the list is already
+    sorted where it is built, in ``async_detect_orphaned_statistics``.
+    """
     coordinator = make_coordinator()
     coordinator.orphaned_statistics = ["sensor.a", "sensor.b"]
+    coordinator.async_count_orphans_with_data = AsyncMock(return_value=2)
     entry = SimpleNamespace(runtime_data=coordinator)
     flow = StatisticsCleanupRepairFlow("entry1")
     flow.hass = _make_hass(entry)
 
     result = await flow.async_step_init()
-    assert result["description_placeholders"] == {"count": "2"}
+    assert result["step_id"] == "init"
+    assert result["description_placeholders"] == {
+        "count": "2",
+        "with_data": "2",
+        "entities": "- `sensor.a`\n- `sensor.b`",
+    }
+
+
+async def test_statistics_cleanup_init_uses_metadata_only_step() -> None:
+    """Without any data points the dialog must not point at Developer Tools."""
+    coordinator = make_coordinator()
+    coordinator.orphaned_statistics = ["sensor.a"]
+    coordinator.async_count_orphans_with_data = AsyncMock(return_value=0)
+    entry = SimpleNamespace(runtime_data=coordinator)
+    flow = StatisticsCleanupRepairFlow("entry1")
+    flow.hass = _make_hass(entry)
+
+    result = await flow.async_step_init()
+    assert result["step_id"] == "init_metadata_only"
+    assert result["description_placeholders"]["with_data"] == "0"
+    # Metadata-only orphans are still named: the id list is the only thing the
+    # user can act on once the data points are gone.
+    assert result["description_placeholders"]["entities"] == "- `sensor.a`"
+
+
+async def test_statistics_cleanup_init_truncates_long_id_list() -> None:
+    coordinator = make_coordinator()
+    coordinator.orphaned_statistics = [
+        f"sensor.truenas_{index:02d}" for index in range(MAX_LISTED_ORPHANS + 5)
+    ]
+    coordinator.async_count_orphans_with_data = AsyncMock(return_value=1)
+    entry = SimpleNamespace(runtime_data=coordinator)
+    flow = StatisticsCleanupRepairFlow("entry1")
+    flow.hass = _make_hass(entry)
+
+    result = await flow.async_step_init()
+    entities = result["description_placeholders"]["entities"]
+    assert entities.count("\n") == MAX_LISTED_ORPHANS
+    assert entities.endswith("- … (+5)")
 
 
 async def test_statistics_cleanup_init_no_coordinator_zero_count() -> None:
@@ -67,7 +112,11 @@ async def test_statistics_cleanup_init_no_coordinator_zero_count() -> None:
     flow.hass = _make_hass(entry)
 
     result = await flow.async_step_init()
-    assert result["description_placeholders"] == {"count": "0"}
+    assert result["description_placeholders"] == {
+        "count": "0",
+        "with_data": "0",
+        "entities": "",
+    }
 
 
 async def test_statistics_cleanup_fix_clears_statistics() -> None:

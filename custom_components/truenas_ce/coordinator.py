@@ -9,7 +9,10 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 
-from homeassistant.components.recorder.statistics import list_statistic_ids
+from homeassistant.components.recorder.statistics import (
+    get_last_statistics,
+    list_statistic_ids,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_API_KEY,
@@ -347,6 +350,23 @@ def _is_truenas_sensor_id(statistic_id: str) -> bool:
     return any(_DEVICE_NAME_SLUG in token for token in tokens)
 
 
+def _count_statistics_with_data(hass: HomeAssistant, statistic_ids: list[str]) -> int:
+    """Return how many of the given statistic_ids still hold data points.
+
+    Runs inside the recorder executor: one indexed ``LIMIT 1`` lookup per id, so
+    the cost stays flat even for a large orphan backlog. The requested column
+    types are irrelevant for the mere existence check, and the set literal must
+    stay inside the loop rather than becoming a shared constant: every
+    ``get_last_statistics`` call discards impossible columns from the set it is
+    handed, *in place*, so a reused set would erode with each id.
+    """
+    return sum(
+        1
+        for statistic_id in statistic_ids
+        if get_last_statistics(hass, 1, statistic_id, False, {"mean", "state", "sum"})
+    )
+
+
 # Typed alias: a TrueNAS config entry carries its coordinator as runtime_data.
 type TrueNASConfigEntry = ConfigEntry[TrueNASCoordinator]
 
@@ -624,10 +644,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Find recorder statistic_ids of this integration with no live entity.
 
         After an entity-id rename the recorder can leave the old long-term
-        statistics behind when the target name already exists; they then show up
-        as "no state available" in Developer Tools → Statistics. We list the
+        statistics behind when the target name already exists. We list the
         recorder-sourced statistics with this integration's prefix and keep those
         whose entity is no longer in the registry.
+
+        Older leftovers are often *metadata-only* (their data points were purged
+        long ago), which is why they can be reported here without being visible
+        in Developer Tools → Statistics — see ``async_count_orphans_with_data``.
         """
         if "recorder" not in self.hass.config.components:
             return
@@ -643,7 +666,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         ent_reg = er.async_get(self.hass)
-        self.orphaned_statistics = [
+        previous = self.orphaned_statistics
+        # Sorted once here so log output, the repair dialog and the change check
+        # below all share one order: ``list_statistic_ids`` makes no ordering
+        # promise, so an unsorted list could "change" without any orphan doing so.
+        self.orphaned_statistics = sorted(
             meta["statistic_id"]
             for meta in stat_ids
             if isinstance(meta, dict)
@@ -651,8 +678,43 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and isinstance(meta.get("statistic_id"), str)
             and _is_truenas_sensor_id(meta["statistic_id"])
             and ent_reg.async_get(meta["statistic_id"]) is None
-        ]
+        )
+        # Logged only on change: detection runs every poll, and the full id list
+        # is what a user needs for a bug report before deleting anything.
+        if self.orphaned_statistics != previous:
+            _LOGGER.debug(
+                "Orphaned TrueNAS statistics (%d): %s",
+                len(self.orphaned_statistics),
+                ", ".join(self.orphaned_statistics) or "none",
+            )
         self._update_statistics_issue()
+
+    async def async_count_orphans_with_data(self) -> int:
+        """Return how many orphaned statistics still hold recorded data points.
+
+        Long-standing orphans are frequently metadata-only: the recorder purged
+        their data points long ago and only the (invisible) metadata row keeps
+        them listed, so they cannot be found in Developer Tools → Statistics.
+        The Repairs dialog probes this on demand to word its explanation
+        correctly — never per poll, since it queries the database.
+
+        Falls back to "all of them" when the probe fails, which is the
+        conservative assumption the dialog made unconditionally before.
+        """
+        if not self.orphaned_statistics:
+            return 0
+        if "recorder" not in self.hass.config.components:
+            return len(self.orphaned_statistics)
+
+        try:
+            return await get_instance(self.hass).async_add_executor_job(
+                _count_statistics_with_data, self.hass, list(self.orphaned_statistics)
+            )
+        except Exception:  # noqa: BLE001 - the dialog must open regardless
+            _LOGGER.debug(
+                "Could not probe orphaned statistics for data points", exc_info=True
+            )
+            return len(self.orphaned_statistics)
 
     def _update_statistics_issue(self) -> None:
         """Create or clear the Repairs issue based on the current orphan state."""

@@ -98,7 +98,15 @@
                 "step": {
                     "init": {
                         "title": "Clean up orphaned TrueNAS statistics",
-                        "description": "{count} long-term statistic(s) belong to TrueNAS entities that no longer exist (they show as \"no state available\" in Developer Tools > Statistics). Choose what to do.",
+                        "description": "{count} long-term statistic(s) belong to TrueNAS entities that no longer exist. {with_data} of them still hold recorded data, which you can inspect under Developer Tools > Statistics before deleting.\n\n{entities}\n\nChoose what to do.",
+                        "menu_options": {
+                            "fix": "Delete the orphaned statistics",
+                            "ignore": "Ignore (don't notify again)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Clean up orphaned TrueNAS statistics",
+                        "description": "{count} long-term statistic(s) belong to TrueNAS entities that no longer exist. None of them hold recorded data any more — their data points were purged long ago and only empty metadata rows remain, which is why you will not find them under Developer Tools > Statistics.\n\n{entities}\n\nChoose what to do.",
                         "menu_options": {
                             "fix": "Delete the orphaned statistics",
                             "ignore": "Ignore (don't notify again)"

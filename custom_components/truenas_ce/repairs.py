@@ -19,6 +19,21 @@ from .const import (
 from .coordinator import get_truenas_coordinator
 from .migration import async_rollback_to_legacy
 
+# Upper bound on ids rendered into the repair dialog. A chain of renames can
+# leave dozens behind; the remainder is summarised so the dialog stays readable
+# (the full list goes to the debug log during detection).
+MAX_LISTED_ORPHANS = 20
+
+
+def _format_statistic_ids(statistic_ids: list[str]) -> str:
+    """Render statistic ids as a Markdown list for the repair dialog."""
+    shown = statistic_ids[:MAX_LISTED_ORPHANS]
+    lines = [f"- `{statistic_id}`" for statistic_id in shown]
+    if remaining := len(statistic_ids) - len(shown):
+        # Language-neutral on purpose: placeholder content is not translated.
+        lines.append(f"- … (+{remaining})")
+    return "\n".join(lines)
+
 
 class StatisticsCleanupRepairFlow(RepairsFlow):
     """Repair flow for orphaned statistics: delete them or ignore the issue."""
@@ -30,14 +45,31 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Show the fix/ignore menu."""
+        """Show the fix/ignore menu listing the affected statistic ids.
+
+        Metadata-only orphans (no data points left) get their own wording: they
+        cannot be found in Developer Tools → Statistics, so pointing the user
+        there would send them looking for something that isn't displayed.
+        """
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         coordinator = get_truenas_coordinator(entry)
-        count = len(coordinator.orphaned_statistics) if coordinator else 0
+        if coordinator is None:
+            orphans: list[str] = []
+            with_data = 0
+        else:
+            # Already sorted by the coordinator; copied so the dialog keeps the
+            # snapshot it renders even if the next poll rebuilds the list.
+            orphans = list(coordinator.orphaned_statistics)
+            with_data = await coordinator.async_count_orphans_with_data()
+
         return self.async_show_menu(
-            step_id="init",
+            step_id="init" if with_data else "init_metadata_only",
             menu_options=["fix", "ignore"],
-            description_placeholders={"count": str(count)},
+            description_placeholders={
+                "count": str(len(orphans)),
+                "with_data": str(with_data),
+                "entities": _format_statistic_ids(orphans),
+            },
         )
 
     async def async_step_fix(

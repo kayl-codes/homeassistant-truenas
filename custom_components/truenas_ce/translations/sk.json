@@ -98,7 +98,15 @@
                 "step": {
                     "init": {
                         "title": "Vyčistiť osirotené štatistiky TrueNAS",
-                        "description": "{count} dlhodobá(é) štatistika(y) patrí entitám TrueNAS, ktoré už neexistujú (zobrazujú sa ako „žiadny stav k dispozícii“ v Nástroje pre vývojárov > Štatistiky). Vyberte, čo robiť.",
+                        "description": "{count} dlhodobá(é) štatistika(y) patrí entitám TrueNAS, ktoré už neexistujú. {with_data} z nich stále obsahuje zaznamenané údaje, ktoré si pred odstránením môžete pozrieť v Nástroje pre vývojárov > Štatistiky.\n\n{entities}\n\nVyberte, čo robiť.",
+                        "menu_options": {
+                            "fix": "Odstrániť osirotené štatistiky",
+                            "ignore": "Ignorovať (znova neupozorňovať)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Vyčistiť osirotené štatistiky TrueNAS",
+                        "description": "{count} dlhodobá(é) štatistika(y) patrí entitám TrueNAS, ktoré už neexistujú. Žiadna z nich už neobsahuje zaznamenané údaje — dátové body boli dávno vymazané a zostali len prázdne záznamy metadát, preto ich v Nástroje pre vývojárov > Štatistiky nenájdete.\n\n{entities}\n\nVyberte, čo robiť.",
                         "menu_options": {
                             "fix": "Odstrániť osirotené štatistiky",
                             "ignore": "Ignorovať (znova neupozorňovať)"
