@@ -207,6 +207,12 @@ SCHEMA_SERVICE_ALERT_LIST = vol.Schema(
 CONF_CRONJOB_SKIP_DISABLED = "cronjob_skip_disabled"
 CONF_DATA_UNIT = "data_unit"
 
+# Stable per-installation identifier (``system.global.id``, a 128-bit UUID),
+# recorded on every successful connection test. Lets a later zeroconf
+# rediscovery of the same physical box under a new IP be told apart from an
+# unrelated device, without needing any pre-authentication probe for it.
+CONF_SYSTEM_ID = "system_id"
+
 # Orphaned long-term statistics cleanup (Repairs issue + diagnostic button).
 CONF_STATISTICS_CLEANUP_IGNORED = "statistics_cleanup_ignored"
 ISSUE_STATISTICS_ORPHANED = "statistics_orphaned"

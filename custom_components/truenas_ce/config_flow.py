@@ -25,6 +25,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .api import TrueNASAPI
 from .const import (
@@ -37,6 +38,7 @@ from .const import (
     CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
+    CONF_SYSTEM_ID,
     DEFAULT_BEHAVIORS,
     DEFAULT_CRONJOB_SKIP_DISABLED,
     DEFAULT_DATA_UNIT,
@@ -301,6 +303,116 @@ def _guess_ip() -> str:
 
 
 # ---------------------------
+#   _async_try_connect
+# ---------------------------
+async def _async_try_connect(api: TrueNASAPI, host: str, context: str) -> bool:
+    """Attempt ``api.connect()``, returning False (and logging) on any failure.
+
+    Shared by the zeroconf probe and the rediscovery match: both need to try
+    one candidate connection and move on to the next on any problem rather
+    than raising, so an unexpected exception here must not abort the whole
+    discovery/rediscovery flow.
+    """
+    try:
+        return await api.connect()
+    except Exception as err:
+        _LOGGER.debug("TrueNAS %s: %s: %s", host, context, err)
+        return False
+
+
+# ---------------------------
+#   _async_safe_disconnect
+# ---------------------------
+async def _async_safe_disconnect(api: TrueNASAPI) -> None:
+    """Disconnect ``api``, swallowing any error.
+
+    Mirrors :func:`_async_try_connect`/:func:`_async_get_system_id`: cleanup
+    in a probe/rediscovery ``finally`` block must never raise, or it would
+    abort the whole discovery flow for every remaining candidate.
+    """
+    with contextlib.suppress(Exception):
+        await api.disconnect()
+
+
+# Ports the ``ws``/``wss`` schemes already default to; an mDNS announcement
+# naming one of them adds nothing over probing the bare host.
+_DEFAULT_WS_PORTS = frozenset({80, 443})
+
+
+# ---------------------------
+#   _probe_candidates
+# ---------------------------
+def _probe_candidates(host: str, port: int | None) -> list[str]:
+    """Return the host strings to probe for ``host``, most likely first.
+
+    TrueNAS only advertises the generic ``_http._tcp`` service, whose port is
+    the web UI's -- normally 80, which ``ws`` already defaults to (as ``wss``
+    does 443). Probing the bare host therefore stays first so a standard box
+    reachable over ``wss`` is not forced onto the advertised plain-HTTP port.
+    A genuinely non-default port is appended as a fallback, so an instance
+    behind a custom port or reverse proxy is no longer misread as "not
+    TrueNAS". ``aiotruenas`` builds its URL from the host verbatim, so
+    ``host:port`` is a valid host string here (see ``_sanitize_host``).
+    """
+    if port is None or port in _DEFAULT_WS_PORTS:
+        return [host]
+    return [host, f"{host}:{port}"]
+
+
+# ---------------------------
+#   _async_probe_candidate
+# ---------------------------
+async def _async_probe_candidate(host: str) -> bool:
+    """Return True only if ``host`` rejects a bogus API key as invalid.
+
+    Only a genuine TrueNAS JSON-RPC endpoint completes the WebSocket
+    handshake and then answers ``ERR_INVALID_KEY``; every other outcome is
+    treated as "not TrueNAS".
+    """
+    for scheme in ("wss", "ws"):
+        api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
+        try:
+            if not await _async_try_connect(
+                api, host, f"probe ({scheme}) is not reachable"
+            ):
+                continue
+            if api.error == ERR_INVALID_KEY:
+                return True
+        finally:
+            await _async_safe_disconnect(api)
+    return False
+
+
+# ---------------------------
+#   _async_get_system_id
+# ---------------------------
+async def _async_get_system_id(api: TrueNASAPI, host: str) -> str | None:
+    """Fetch ``system.global.id``, returning None (and logging) on failure.
+
+    A failed identity lookup must never block configuration/rediscovery, so
+    any exception here is swallowed and treated the same as "no id yet".
+    """
+    try:
+        system_id = await api.query("system.global.id")
+    except Exception as err:
+        _LOGGER.debug("TrueNAS %s: failed to read system.global.id: %s", host, err)
+        return None
+
+    if isinstance(system_id, str) and system_id:
+        return system_id
+
+    if not isinstance(system_id, str):
+        _LOGGER.debug(
+            "TrueNAS %s: unexpected system.global.id payload (%s): %r",
+            host,
+            type(system_id).__name__,
+            system_id,
+        )
+
+    return None
+
+
+# ---------------------------
 #   TrueNASConfigFlow
 # ---------------------------
 class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -346,6 +458,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             return
 
         conn, errorcode = await api.connection_test()
+        if conn:
+            system_id = await _async_get_system_id(api, config.get(CONF_HOST, ""))
+            if system_id:
+                config[CONF_SYSTEM_ID] = system_id
         await api.disconnect()
 
         if not conn:
@@ -418,6 +534,14 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if not errors:
             await self._validate_connection(truenas_config, errors)
 
+        # Once the box's stable identity is known, key the entry's unique_id
+        # on it rather than on the (zeroconf-set) host, so rediscovery and
+        # de-duplication survive the host/IP changing later.
+        system_id = truenas_config.get(CONF_SYSTEM_ID)
+        if not errors and isinstance(system_id, str) and system_id:
+            await self.async_set_unique_id(system_id)
+            self._abort_if_unique_id_configured()
+
         # Save instance
         if not errors:
             return self.async_create_entry(
@@ -426,6 +550,128 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=self._legacy_options or None,
             )
         return None
+
+    async def async_step_zeroconf(
+        self, discovery_info: ZeroconfServiceInfo
+    ) -> ConfigFlowResult:
+        """Handle a TrueNAS instance discovered over mDNS.
+
+        TrueNAS SCALE only advertises the generic ``_http._tcp`` service
+        type shared by countless unrelated devices (printers, routers,
+        media servers, ...), so the zeroconf type match alone cannot tell
+        TrueNAS apart. Instead, probe the discovered host with a bogus API
+        key: only a genuine TrueNAS JSON-RPC endpoint answers the WebSocket
+        handshake and then rejects it specifically as an invalid key
+        (``ERR_INVALID_KEY``). Any other outcome (connection refused,
+        handshake timeout, ...) means some other device is behind that
+        _http._tcp announcement, so the flow aborts silently without ever
+        showing the user anything.
+        """
+        host = discovery_info.host
+        self._async_abort_entries_match({CONF_HOST: host})
+        await self.async_set_unique_id(host)
+        self._abort_if_unique_id_configured()
+
+        # The probe reports back which endpoint actually answered, so a box
+        # found only on its advertised non-default port is configured with
+        # that port instead of silently falling back to the default one.
+        probed_host = await self._probe_is_truenas(host, discovery_info.port)
+        if probed_host is None:
+            return self.async_abort(reason="not_truenas")
+
+        if await self._async_update_rediscovered_entry(probed_host):
+            return self.async_abort(reason="already_configured")
+
+        self.truenas_config[CONF_HOST] = probed_host
+        self.context["title_placeholders"] = {CONF_NAME: probed_host}
+        return await self.async_step_zeroconf_confirm()
+
+    @staticmethod
+    async def _probe_is_truenas(host: str, port: int | None = None) -> str | None:
+        """Return the ``host[:port]`` that answers as TrueNAS, or None.
+
+        Any unexpected connection-level error (refused, DNS, handshake, ...)
+        is treated the same as "not TrueNAS" so a misbehaving non-TrueNAS
+        device cannot abort zeroconf discovery for the whole flow.
+
+        The returned value is what the entry must be configured with, so a
+        box found only on its advertised non-default port keeps that port.
+        """
+        for candidate in _probe_candidates(host, port):
+            if await _async_probe_candidate(candidate):
+                return candidate
+        return None
+
+    async def _async_update_rediscovered_entry(self, host: str) -> bool:
+        """Update an existing entry's host if ``host`` is the same box, moved.
+
+        Tries each configured entry's own stored API key against the newly
+        discovered (and already-confirmed-TrueNAS) host. A successful login
+        whose ``system.global.id`` matches the entry's stored id is proof
+        it's the same physical box under a new IP. A successful login with
+        no stored id yet (entries predating this check) is only accepted as
+        best-effort confirmation when this is the sole configured entry, so
+        there's no other entry it could be confused with; with more than one
+        entry configured, an id-less match is skipped rather than risk
+        migrating the wrong entry. Returns True (and updates+reloads the
+        entry) on a match, False otherwise.
+        """
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        for entry in entries:
+            if entry.data.get(CONF_HOST) == host:
+                continue
+
+            api = TrueNASAPI(
+                host,
+                entry.data.get(CONF_API_KEY, ""),
+                entry.data.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
+            )
+            try:
+                # A connection-level failure (DNS, refused, SSL, ...) must not
+                # abort rediscovery for the other entries; treat it the same
+                # as "not a match" and move on, like _probe_is_truenas does.
+                if not await _async_try_connect(
+                    api,
+                    host,
+                    "failed to connect while checking for a rediscovery match",
+                ):
+                    continue
+                # A failed identity lookup must not abort rediscovery either;
+                # fall back to the same best-effort match used for entries
+                # that predate this check (see docstring).
+                system_id = await _async_get_system_id(api, host)
+            finally:
+                await _async_safe_disconnect(api)
+
+            stored_id = entry.data.get(CONF_SYSTEM_ID)
+            if stored_id and system_id != stored_id:
+                continue  # same key, different box -- not a match
+            if not stored_id and len(entries) > 1:
+                continue  # no id to confirm identity, and ambiguous
+
+            new_data = dict(entry.data)
+            new_data[CONF_HOST] = host
+            update_kwargs: dict[str, Any] = {"data": new_data}
+            if isinstance(system_id, str) and system_id:
+                new_data[CONF_SYSTEM_ID] = system_id
+                # Migrate the entry's unique_id onto the stable box identity
+                # too, so future rediscovery keys on it rather than the host.
+                update_kwargs["unique_id"] = system_id
+            self.hass.config_entries.async_update_entry(entry, **update_kwargs)
+            await self.hass.config_entries.async_reload(entry.entry_id)
+            return True
+        return False
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask the user to confirm setup of the discovered TrueNAS host."""
+        if user_input is not None:
+            return await self.async_step_user()
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            description_placeholders={CONF_HOST: self.truenas_config[CONF_HOST]},
+        )
 
     def _find_legacy_config(self) -> ConfigEntry | None:
         """Return a legacy ``truenas`` entry to optionally take over, if any.
@@ -561,9 +807,12 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             config[CONF_API_KEY] = user_input[CONF_API_KEY]
             await self._validate_connection(config, errors)
             if not errors:
+                data_updates = {CONF_API_KEY: user_input[CONF_API_KEY]}
+                if CONF_SYSTEM_ID in config:
+                    data_updates[CONF_SYSTEM_ID] = config[CONF_SYSTEM_ID]
                 return self.async_update_reload_and_abort(
                     reauth_entry,
-                    data_updates={CONF_API_KEY: user_input[CONF_API_KEY]},
+                    data_updates=data_updates,
                 )
 
         return self.async_show_form(

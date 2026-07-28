@@ -15,6 +15,7 @@ module when the package is absent, e.g. on the local Windows dev machine.
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -25,8 +26,10 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.truenas_ce import config_flow
 from custom_components.truenas_ce.const import (
     CONF_BEHAVIORS,
     CONF_CRONJOB_SKIP_DISABLED,
@@ -34,6 +37,7 @@ from custom_components.truenas_ce.const import (
     CONF_DATASET_PASSPHRASES,
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
+    CONF_SYSTEM_ID,
     DEFAULT_CRONJOB_SKIP_DISABLED,
     DEFAULT_DATA_UNIT,
     DEFAULT_HOST,
@@ -124,6 +128,58 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
     assert result["data"][CONF_HOST] == "truenas.example.com"
 
 
+async def test_user_flow_creates_entry_with_system_id_as_unique_id(
+    hass: HomeAssistant,
+) -> None:
+    """Once the box's stable identity is known it becomes the entry's unique_id."""
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input()
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SYSTEM_ID] == "box-guid-123"
+    entry = hass.config_entries.async_get_entry(result["result"].entry_id)
+    assert entry is not None
+    assert entry.unique_id == "box-guid-123"
+
+
+async def test_user_flow_aborts_on_duplicate_system_id(hass: HomeAssistant) -> None:
+    """A second entry for the same box (different host) must not be created.
+
+    The user-flow host-uniqueness guard alone would miss this, since the new
+    entry uses a different host; the system_id-based unique_id check must
+    catch it instead.
+    """
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        data=_user_input(**{CONF_HOST: "old-host.example.com"}),
+        unique_id="box-guid-123",
+    )
+    existing.add_to_hass(hass)
+
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            _user_input(**{CONF_HOST: "new-host.example.com", CONF_NAME: "New Name"}),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
 async def test_user_flow_name_already_exists(hass: HomeAssistant) -> None:
     existing = MockConfigEntry(
         domain=DOMAIN, data=_user_input(**{CONF_HOST: "other-host.example.com"})
@@ -164,6 +220,173 @@ async def test_user_flow_connection_error_maps_to_ha_error(hass: HomeAssistant) 
         )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_HOST: ERR_INVALID_KEY}
+
+
+# ---------------------------
+#   zeroconf step
+# ---------------------------
+def _zeroconf_discovery_info(host: str = "192.168.1.50") -> ZeroconfServiceInfo:
+    return ZeroconfServiceInfo(
+        ip_address=ipaddress.ip_address(host),
+        ip_addresses=[ipaddress.ip_address(host)],
+        port=80,
+        hostname="truenas.local.",
+        type="_http._tcp.local.",
+        name="truenas._http._tcp.local.",
+        properties={},
+    )
+
+
+async def test_zeroconf_flow_confirms_and_creates_entry(hass: HomeAssistant) -> None:
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value="192.168.1.50"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "zeroconf_confirm"
+    assert result["description_placeholders"] == {CONF_HOST: "192.168.1.50"}
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value=None)),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input(**{CONF_HOST: "192.168.1.50"})
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOST] == "192.168.1.50"
+
+
+async def test_zeroconf_flow_keeps_advertised_port(hass: HomeAssistant) -> None:
+    """A box found only on its advertised port is configured with that port."""
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value="192.168.1.50:8443"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["description_placeholders"] == {CONF_HOST: "192.168.1.50:8443"}
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value=None)),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input(**{CONF_HOST: "192.168.1.50:8443"})
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOST] == "192.168.1.50:8443"
+
+
+async def test_zeroconf_flow_aborts_when_not_truenas(hass: HomeAssistant) -> None:
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value=None),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_truenas"
+
+
+async def test_zeroconf_flow_aborts_on_already_configured_host(
+    hass: HomeAssistant,
+) -> None:
+    existing = MockConfigEntry(
+        domain=DOMAIN, data=_user_input(**{CONF_HOST: "192.168.1.50"})
+    )
+    existing.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=_zeroconf_discovery_info(),
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_zeroconf_flow_updates_rediscovered_entry_host(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, data=_user_input(**{CONF_HOST: "old-host.example.com"})
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(
+            config_flow.TrueNASConfigFlow,
+            "_probe_is_truenas",
+            AsyncMock(return_value="192.168.1.50"),
+        ),
+        patch(f"{_API_PATH}.connect", AsyncMock(return_value=True)),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="new-global-id")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "192.168.1.50"
+    assert entry.data[CONF_SYSTEM_ID] == "new-global-id"
+    assert entry.unique_id == "new-global-id"
+
+
+async def test_zeroconf_flow_ignores_entry_with_mismatched_system_id(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=_user_input(
+            **{CONF_HOST: "old-host.example.com", CONF_SYSTEM_ID: "old-id"}
+        ),
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(
+            config_flow.TrueNASConfigFlow,
+            "_probe_is_truenas",
+            AsyncMock(return_value="192.168.1.50"),
+        ),
+        patch(f"{_API_PATH}.connect", AsyncMock(return_value=True)),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="different-id")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "zeroconf_confirm"
+    assert entry.data[CONF_HOST] == "old-host.example.com"
 
 
 # ---------------------------
@@ -264,6 +487,58 @@ async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_KEY] == "new-key"
+
+
+async def test_reauth_flow_stores_system_id_on_success(hass: HomeAssistant) -> None:
+    """A successful reauth also picks up system.global.id, if resolvable."""
+    entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
+    entry.add_to_hass(hass)
+
+    with (
+        patch(f"{_API_PATH}.connection_test", AsyncMock(return_value=(True, None))),
+        patch(f"{_API_PATH}.query", AsyncMock(return_value="box-guid-123")),
+        patch(f"{_API_PATH}.disconnect", AsyncMock(return_value=None)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_REAUTH,
+                "entry_id": entry.entry_id,
+            },
+            data=entry.data,
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_API_KEY: "new-key"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "new-key"
+    assert entry.data[CONF_SYSTEM_ID] == "box-guid-123"
+
+
+@pytest.mark.usefixtures("_mock_connection_ok")
+async def test_reauth_flow_succeeds_without_system_id_when_lookup_fails(
+    hass: HomeAssistant,
+) -> None:
+    """A failed system.global.id lookup must not block reauthentication."""
+    entry = MockConfigEntry(domain=DOMAIN, data=_user_input())
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=entry.data,
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "new-key"
+    assert CONF_SYSTEM_ID not in entry.data
 
 
 async def test_reauth_flow_shows_error_on_failed_connection(

@@ -40,6 +40,10 @@
                     "migrate_import": "Adoptar la configuración existente",
                     "migrate_manual": "Configurar desde cero"
                 }
+            },
+            "zeroconf_confirm": {
+                "title": "TrueNAS descubierto",
+                "description": "Se descubrió una instancia de TrueNAS en {host}. ¿Desea configurarla?"
             }
         },
         "error": {
@@ -66,7 +70,8 @@
         "abort": {
             "already_configured": "Este host de TrueNAS ya está configurado.",
             "reconfigure_successful": "Reconfiguración exitosa.",
-            "reauth_successful": "Reautenticación exitosa."
+            "reauth_successful": "Reautenticación exitosa.",
+            "not_truenas": "El dispositivo descubierto no parece ser una instancia de TrueNAS."
         }
     },
     "options": {

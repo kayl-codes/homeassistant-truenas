@@ -40,6 +40,10 @@
                     "migrate_import": "Перенять существующую конфигурацию",
                     "migrate_manual": "Настроить с нуля"
                 }
+            },
+            "zeroconf_confirm": {
+                "title": "Обнаружен TrueNAS",
+                "description": "Обнаружен экземпляр TrueNAS по адресу {host}. Настроить его?"
             }
         },
         "error": {
@@ -66,7 +70,8 @@
         "abort": {
             "already_configured": "Этот хост TrueNAS уже настроен.",
             "reconfigure_successful": "Перенастройка выполнена успешно.",
-            "reauth_successful": "Повторная аутентификация выполнена успешно."
+            "reauth_successful": "Повторная аутентификация выполнена успешно.",
+            "not_truenas": "Обнаруженное устройство не похоже на экземпляр TrueNAS."
         }
     },
     "options": {

@@ -40,6 +40,10 @@
                     "migrate_import": "Prevziať existujúcu konfiguráciu",
                     "migrate_manual": "Nastaviť od začiatku"
                 }
+            },
+            "zeroconf_confirm": {
+                "title": "Objavený TrueNAS",
+                "description": "Na adrese {host} bola objavená inštancia TrueNAS. Chcete ju nastaviť?"
             }
         },
         "error": {
@@ -66,7 +70,8 @@
         "abort": {
             "already_configured": "Tento TrueNAS host je už nakonfigurovaný.",
             "reconfigure_successful": "Rekonfigurácia úspešná.",
-            "reauth_successful": "Opätovná autentifikácia úspešná."
+            "reauth_successful": "Opätovná autentifikácia úspešná.",
+            "not_truenas": "Zdá sa, že objavené zariadenie nie je inštanciou TrueNAS."
         }
     },
     "options": {

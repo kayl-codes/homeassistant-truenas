@@ -25,8 +25,10 @@ from custom_components.truenas_ce.config_flow import (
     configured_instances,
 )
 from custom_components.truenas_ce.const import (
+    CONF_SYSTEM_ID,
     DOMAIN,
     ERR_CERT_VERIFY_FAILED,
+    ERR_CONNECTION_REFUSED,
     ERR_INVALID_KEY,
     ERR_MALFORMED_RESULT,
     LEGACY_DOMAIN,
@@ -193,10 +195,13 @@ async def test_validate_connection_success_sets_no_errors() -> None:
     errors: dict[str, str] = {}
     api = MagicMock()
     api.connection_test = AsyncMock(return_value=(True, ""))
+    api.query = AsyncMock(return_value="test-global-id")
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
     assert not errors
+    assert config[CONF_SYSTEM_ID] == "test-global-id"
+    api.query.assert_awaited_once_with("system.global.id")
     api.disconnect.assert_awaited_once()
 
 
@@ -206,10 +211,283 @@ async def test_validate_connection_failure_maps_error() -> None:
     errors: dict[str, str] = {}
     api = MagicMock()
     api.connection_test = AsyncMock(return_value=(False, ERR_MALFORMED_RESULT))
+    api.query = AsyncMock()
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
     assert errors[CONF_HOST] == ERR_MALFORMED_RESULT
+    api.query.assert_not_awaited()
+
+
+async def test_validate_connection_system_id_lookup_failure_does_not_block() -> None:
+    """A broken system.global.id lookup must not fail the whole connection test."""
+    flow = TrueNASConfigFlow()
+    config = {CONF_HOST: "nas.local", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    errors: dict[str, str] = {}
+    api = MagicMock()
+    api.connection_test = AsyncMock(return_value=(True, ""))
+    api.query = AsyncMock(side_effect=RuntimeError("boom"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        await flow._validate_connection(config, errors)
+    assert not errors
+    assert CONF_SYSTEM_ID not in config
+    api.query.assert_awaited_once_with("system.global.id")
+    api.disconnect.assert_awaited_once()
+
+
+# ---------------------------
+#   TrueNASConfigFlow._probe_is_truenas
+# ---------------------------
+async def test_probe_is_truenas_true_on_invalid_key() -> None:
+    """A bogus-key rejection proves it's a real TrueNAS JSON-RPC endpoint."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_INVALID_KEY
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
+    mock_api.assert_called_once_with("1.2.3.4", "-", verify_ssl=False, scheme="wss")
+    api.disconnect.assert_awaited_once()
+
+
+async def test_probe_is_truenas_false_when_not_truenas() -> None:
+    """Any other error means some unrelated _http._tcp device, not TrueNAS."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_CONNECTION_REFUSED
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
+    assert mock_api.call_count == 2
+    assert api.disconnect.await_count == 2
+
+
+async def test_probe_is_truenas_falls_back_from_wss_to_ws() -> None:
+    """A wss failure still tries plain ws before giving up."""
+    wss_api = MagicMock()
+    wss_api.connect = AsyncMock()
+    wss_api.disconnect = AsyncMock()
+    wss_api.error = ERR_CONNECTION_REFUSED
+
+    ws_api = MagicMock()
+    ws_api.connect = AsyncMock()
+    ws_api.disconnect = AsyncMock()
+    ws_api.error = ERR_INVALID_KEY
+
+    with patch.object(
+        config_flow, "TrueNASAPI", side_effect=[wss_api, ws_api]
+    ) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
+    assert mock_api.call_count == 2
+    mock_api.assert_any_call("1.2.3.4", "-", verify_ssl=False, scheme="ws")
+
+
+async def test_probe_is_truenas_false_when_connect_raises() -> None:
+    """An unexpected connect() error is treated as "not TrueNAS", not a crash."""
+    api = MagicMock()
+    api.connect = AsyncMock(side_effect=OSError("connection refused"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
+    assert mock_api.call_count == 2
+    assert api.disconnect.await_count == 2
+
+
+async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
+    """A broken disconnect() must not abort the probe for the whole flow."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock(side_effect=OSError("already closed"))
+    api.error = ERR_INVALID_KEY
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
+    api.disconnect.assert_awaited_once()
+
+
+async def test_probe_is_truenas_falls_back_to_advertised_port() -> None:
+    """A box reachable only on its advertised port keeps that port."""
+    default_api = MagicMock()
+    default_api.connect = AsyncMock()
+    default_api.disconnect = AsyncMock()
+    default_api.error = ERR_CONNECTION_REFUSED
+
+    port_api = MagicMock()
+    port_api.connect = AsyncMock()
+    port_api.disconnect = AsyncMock()
+    port_api.error = ERR_INVALID_KEY
+
+    with patch.object(
+        config_flow,
+        "TrueNASAPI",
+        side_effect=[default_api, default_api, port_api],
+    ) as mock_api:
+        probed = await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", 8443)
+    assert probed == "1.2.3.4:8443"
+    mock_api.assert_any_call("1.2.3.4:8443", "-", verify_ssl=False, scheme="wss")
+
+
+@pytest.mark.parametrize("port", [None, 80, 443])
+async def test_probe_is_truenas_ignores_default_ports(port: int | None) -> None:
+    """Default ports add nothing over the bare host, so they are not retried."""
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_CONNECTION_REFUSED
+    with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", port) is None
+    assert mock_api.call_count == 2  # wss + ws on the bare host only
+
+
+# ---------------------------
+#   TrueNASConfigFlow._async_update_rediscovered_entry
+# ---------------------------
+async def test_async_update_rediscovered_entry_migrates_unique_id() -> None:
+    """A confirmed same-box rediscovery also migrates the entry's unique_id."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value="box-guid-123")
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    flow.hass.config_entries.async_update_entry.assert_called_once()
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert kwargs["unique_id"] == "box-guid-123"
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
+    assert kwargs["data"][CONF_SYSTEM_ID] == "box-guid-123"
+    flow.hass.config_entries.async_reload.assert_awaited_once_with(entry.entry_id)
+
+
+async def test_async_update_rediscovered_entry_skips_unique_id_when_id_unknown() -> (
+    None
+):
+    """A backfill without a resolvable system id still migrates the host only."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value=None)
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert "unique_id" not in kwargs
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
+
+
+async def test_async_update_rediscovered_entry_skips_id_unknown_when_ambiguous() -> (
+    None
+):
+    """An id-less match is skipped when more than one entry is configured."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    other_entry = MagicMock()
+    other_entry.data = {CONF_HOST: "9.9.9.9", CONF_API_KEY: "other-key"}
+    flow.hass.config_entries.async_entries.return_value = [entry, other_entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value=None)
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
+async def test_async_update_rediscovered_entry_skips_mismatched_system_id() -> None:
+    """A different probed system id must not merge two distinct TrueNAS boxes."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {
+        CONF_HOST: "1.2.3.4",
+        CONF_API_KEY: "key",
+        CONF_VERIFY_SSL: True,
+        CONF_SYSTEM_ID: "stored-system-id",
+    }
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(return_value="different-system-id")
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
+async def test_async_update_rediscovered_entry_skips_entry_when_connect_raises() -> (
+    None
+):
+    """A connection-level error on one entry must not abort rediscovery."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(side_effect=RuntimeError("boom"))
+    api.query = AsyncMock()
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is False
+
+    api.disconnect.assert_awaited_once()
+    api.query.assert_not_called()
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+    flow.hass.config_entries.async_reload.assert_not_awaited()
+
+
+async def test_async_update_rediscovered_entry_updates_host_when_query_raises() -> None:
+    """Host is migrated even if the system id lookup fails for legacy entries."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    entry = MagicMock()
+    entry.data = {CONF_HOST: "1.2.3.4", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    flow.hass.config_entries.async_entries.return_value = [entry]
+    flow.hass.config_entries.async_update_entry = MagicMock()
+    flow.hass.config_entries.async_reload = AsyncMock()
+
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.query = AsyncMock(side_effect=RuntimeError("boom"))
+    api.disconnect = AsyncMock()
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await flow._async_update_rediscovered_entry("5.6.7.8") is True
+
+    _, kwargs = flow.hass.config_entries.async_update_entry.call_args
+    assert kwargs["data"][CONF_HOST] == "5.6.7.8"
+    assert CONF_SYSTEM_ID not in kwargs["data"]
+    assert "unique_id" not in kwargs
 
 
 # ---------------------------

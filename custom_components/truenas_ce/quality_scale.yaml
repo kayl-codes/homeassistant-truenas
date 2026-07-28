@@ -85,20 +85,38 @@ rules:
   devices: done
   diagnostics: done
   discovery:
-    status: todo
+    status: done
     comment: |
-      TrueNAS advertises via mDNS; evaluate zeroconf discovery for the config
-      flow.
+      TrueNAS SCALE only advertises the generic _http._tcp mDNS type shared
+      by countless unrelated devices, with no distinguishing TXT record.
+      async_step_zeroconf therefore probes the discovered host with a
+      deliberately-wrong API key: a TrueNAS JSON-RPC endpoint answers the
+      WebSocket handshake and rejects it specifically as invalid
+      (ERR_INVALID_KEY), while any other _http._tcp device fails earlier
+      (connection refused, handshake timeout, ...). Only a confirmed
+      TrueNAS host reaches the zeroconf_confirm form; everything else
+      aborts silently, so unrelated devices never surface UI.
   discovery-update-info:
-    status: todo
-    comment: Follows the discovery rule.
+    status: done
+    comment: |
+      A rediscovered TrueNAS box (e.g. after a DHCP lease change) auto-updates
+      its config entry's host. Every successful connection test now also
+      records system.global.id (a stable, per-installation 128-bit UUID) on
+      the entry. When zeroconf confirms a host is genuinely TrueNAS, each
+      existing entry's own stored API key is tried against that host; a
+      successful login whose global.id matches (or, for entries predating
+      this check, any successful login) confirms it's the same box under a
+      new IP, so the entry's host is updated and reloaded silently. See
+      TrueNASConfigFlow._async_update_rediscovered_entry in config_flow.py.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations:
-    status: todo
+    status: done
     comment: |
-      Scattered hints exist (reverse-proxy/Cloudflare section); consolidate a
-      dedicated known-limitations section in the README.
+      README has a dedicated "Known Limitations" section consolidating the
+      previously-scattered hints (reverse-proxy/Cloudflare auth gateways,
+      development-branch support, run-button UX, inter-poll sampling gaps,
+      scrub threshold, container-target scoping).
   docs-supported-devices: done
   docs-supported-functions: done
   docs-troubleshooting: done
