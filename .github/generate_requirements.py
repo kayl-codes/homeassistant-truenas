@@ -21,11 +21,13 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
             f.write(line + "\n")
 
 
-# homeassistant's own transitive dependency tree is huge and moves fast (e.g.
-# habluetooth/bluetooth-data-tools). Pinning it to one exact resolved version without
-# also hash-locking its full transitive graph can force pip into a fresh resolve that
-# has no valid solution, even though the loose range resolves fine. Leave it floating.
-_UNPINNED_DEV_PACKAGES = {"homeassistant"}
+# homeassistant pins its own transitive dependencies (aiohttp, fnv-hash-fast,
+# lru-dict, ...) to exact versions that don't ship wheels for every release, so
+# `--only-binary` can never be satisfied for it, independent of which homeassistant
+# version is requested. It's written to its own unpinned, --only-binary-exempt
+# requirements file instead, alongside pytest-homeassistant-custom-component (which
+# has the same problem via its mock-open dependency).
+_SEPARATE_DEV_PACKAGES = {"homeassistant"}
 
 
 def main():
@@ -40,10 +42,17 @@ def main():
     parser = configparser.ConfigParser()
     parser.read("Pipfile")
     develop = lock["develop"]
-    with open("requirements_tests.txt", "w") as f:
+    with (
+        open("requirements_tests.txt", "w") as tests_f,
+        open("requirements_tests_unpinned.txt", "w") as unpinned_f,
+    ):
         for key in parser["dev-packages"]:
+            if key in _SEPARATE_DEV_PACKAGES:
+                value = parser["dev-packages"][key].replace('"', "")
+                unpinned_f.write(key + value + "\n")
+                continue
             resolved = develop.get(key)
-            if key not in _UNPINNED_DEV_PACKAGES and resolved is not None:
+            if resolved is not None:
                 if "version" not in resolved:
                     raise ValueError(
                         f"Pipfile.lock's develop entry for {key!r} has no "
@@ -52,7 +61,7 @@ def main():
                 value = resolved["version"]
             else:
                 value = parser["dev-packages"][key].replace('"', "")
-            f.write(key + value + "\n")
+            tests_f.write(key + value + "\n")
 
 
 if __name__ == "__main__":
