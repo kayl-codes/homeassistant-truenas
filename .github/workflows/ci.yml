@@ -21,6 +21,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PIP_VERSION: "26.1.2"
+
 jobs:
 
   ruff:
@@ -51,7 +54,7 @@ jobs:
           python3 .github/generate_requirements.py
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade --only-binary ":all:" pip==26.1.2
+          python -m pip install --upgrade --only-binary ":all:" "pip==${{ env.PIP_VERSION }}"
           pip install --require-hashes --only-binary ":all:" -r requirements.txt
           pip install --only-binary ":all:" -r requirements_tests.txt
       - name: Install pytest-homeassistant-custom-component (CI-only, Linux)
@@ -79,7 +82,7 @@ jobs:
           python3 .github/generate_requirements.py
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade --only-binary ":all:" pip==26.1.2
+          python -m pip install --upgrade --only-binary ":all:" "pip==${{ env.PIP_VERSION }}"
           pip install --require-hashes --only-binary ":all:" -r requirements.txt
           pip install --only-binary ":all:" -r requirements_tests.txt
           pip install --only-binary ":all:" mypy==2.3.0

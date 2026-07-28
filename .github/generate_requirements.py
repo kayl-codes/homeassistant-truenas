@@ -21,6 +21,13 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
             f.write(line + "\n")
 
 
+# homeassistant's own transitive dependency tree is huge and moves fast (e.g.
+# habluetooth/bluetooth-data-tools). Pinning it to one exact resolved version without
+# also hash-locking its full transitive graph can force pip into a fresh resolve that
+# has no valid solution, even though the loose range resolves fine. Leave it floating.
+_UNPINNED_DEV_PACKAGES = {"homeassistant"}
+
+
 def main():
     with open("Pipfile.lock") as f:
         lock = json.load(f)
@@ -35,7 +42,13 @@ def main():
     develop = lock["develop"]
     with open("requirements_tests.txt", "w") as f:
         for key in parser["dev-packages"]:
-            if resolved := develop.get(key):
+            resolved = develop.get(key)
+            if key not in _UNPINNED_DEV_PACKAGES and resolved is not None:
+                if "version" not in resolved:
+                    raise ValueError(
+                        f"Pipfile.lock's develop entry for {key!r} has no "
+                        f"'version' field: {resolved!r}"
+                    )
                 value = resolved["version"]
             else:
                 value = parser["dev-packages"][key].replace('"', "")
