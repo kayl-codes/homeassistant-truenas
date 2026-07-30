@@ -374,6 +374,10 @@ async def test_query_non_permission_call_error_still_logs_error(
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
+    assert any(
+        "truenas.local" in record.getMessage() and "boom" in record.getMessage()
+        for record in error_records
+    )
 
 
 # ---------------------------
