@@ -106,8 +106,8 @@ def _log_call_error(host: str, exc: TrueNASCallError) -> None:
     A read-only-scoped API key gets an ``EACCES`` response from admin-only
     methods (e.g. ``smb.status``). That is a permanent, expected condition
     for that key -- not an integration bug -- so logging it at ERROR with a
-    full traceback on every poll cycle (see issue #46) would flood the log
-    for no benefit; log it at debug instead.
+    full traceback on every call would flood the log for no benefit; log it
+    at debug instead.
     """
     permission_denied = exc.errname == "EACCES"
     _LOGGER.log(
