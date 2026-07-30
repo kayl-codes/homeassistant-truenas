@@ -1,7 +1,7 @@
 """TrueNAS API."""
 
 import asyncio
-from logging import DEBUG, getLogger
+from logging import DEBUG, ERROR, getLogger
 from typing import Any
 
 from aiotruenas import TrueNASClient
@@ -97,6 +97,25 @@ def _classify_exception(exc: TrueNASError, *, during_call: bool) -> str:
             if isinstance(exc, exc_type)
         ),
         ERR_UNKNOWN,
+    )
+
+
+def _log_call_error(host: str, exc: TrueNASCallError) -> None:
+    """Log a TrueNAS call error, quietly for expected permission errors.
+
+    A read-only-scoped API key gets an ``EACCES`` response from admin-only
+    methods (e.g. ``smb.status``). That is a permanent, expected condition
+    for that key -- not an integration bug -- so logging it at ERROR with a
+    full traceback on every call would flood the log for no benefit; log it
+    at debug instead.
+    """
+    permission_denied = exc.errname == "EACCES"
+    _LOGGER.log(
+        DEBUG if permission_denied else ERROR,
+        ERROR_API_FORMAT,
+        host,
+        exc,
+        exc_info=None if permission_denied else exc,
     )
 
 
@@ -237,7 +256,7 @@ class TrueNASAPI:
             data = await self._client.call(service, params)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
-            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+            _log_call_error(self._host, exc)
             return None
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
@@ -285,7 +304,7 @@ class TrueNASAPI:
             return await self._client.subscribe(event)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
-            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+            _log_call_error(self._host, exc)
             return None, None
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
@@ -364,7 +383,7 @@ class TrueNASAPI:
             return events
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
-            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
+            _log_call_error(self._host, exc)
             return []
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
