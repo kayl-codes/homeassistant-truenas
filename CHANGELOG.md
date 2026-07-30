@@ -14,6 +14,15 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.5.2] — Read-only API key log noise fix
+
+### Fixed
+- **Repeated ERROR-level log spam with a Read-Only Admin API key (#46):** calls like
+  `smb.status` return an `EACCES` permission error under a read-only-scoped key. That's an
+  expected, permanent condition for that key, not an integration bug, so every ~60s poll no
+  longer logs it at ERROR with a full traceback — it's now logged at DEBUG instead. Other call
+  errors are unaffected and still log at ERROR. Thanks to @jkadin for reporting.
+
 ## [2.5.1] — Sensor platform hotfix
 
 ### Fixed
