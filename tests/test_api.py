@@ -341,6 +341,40 @@ async def test_query_logs_summarized_payload_when_debug_enabled(
     assert "dict[1 keys]" in caplog.text
 
 
+async def test_query_permission_denied_logs_debug_not_error(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A read-only API key's EACCES on an admin-only method (issue #46) must
+
+    stay quiet: DEBUG, no traceback -- not an ERROR flooding the log every
+    poll cycle.
+    """
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
+    )
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await connected_api.query("smb.status") is None
+    assert connected_api.error == "[EACCES] Not authorized"
+    assert not any(record.levelname == "ERROR" for record in caplog.records)
+    assert any(
+        record.levelname == "DEBUG" and "API error" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+async def test_query_non_permission_call_error_still_logs_error(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "boom", code=22, errname="EINVAL", reason="bad params"
+    )
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await connected_api.query("system.info") is None
+    assert any(record.levelname == "ERROR" for record in caplog.records)
+
+
 # ---------------------------
 #   error / scheme properties
 # ---------------------------
