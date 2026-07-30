@@ -357,10 +357,9 @@ async def test_query_permission_denied_logs_debug_not_error(
         assert await connected_api.query("smb.status") is None
     assert connected_api.error == "[EACCES] Not authorized"
     assert not any(record.levelname == "ERROR" for record in caplog.records)
-    assert any(
-        record.levelname == "DEBUG" and "API error" in record.getMessage()
-        for record in caplog.records
-    )
+    debug_records = [record for record in caplog.records if record.levelname == "DEBUG"]
+    assert any("API error" in record.getMessage() for record in debug_records)
+    assert all(record.exc_info is None for record in debug_records)
 
 
 async def test_query_non_permission_call_error_still_logs_error(
@@ -372,7 +371,9 @@ async def test_query_non_permission_call_error_still_logs_error(
     )
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         assert await connected_api.query("system.info") is None
-    assert any(record.levelname == "ERROR" for record in caplog.records)
+    error_records = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert error_records
+    assert all(record.exc_info is not None for record in error_records)
 
 
 # ---------------------------
