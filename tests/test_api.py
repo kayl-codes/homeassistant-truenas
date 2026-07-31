@@ -203,6 +203,42 @@ async def test_connect_maps_exception_and_returns_false(api: TrueNASAPI) -> None
     assert api.error == ERR_UNKNOWN_HOSTNAME
 
 
+async def test_connect_failure_logs_error_by_default(
+    api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    api._client.connect.side_effect = TrueNASConnectionRefusedError("refused")
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await api.connect() is False
+    error_records = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert error_records
+    assert all(record.exc_info is not None for record in error_records)
+
+
+async def test_connect_quiet_logs_debug_not_error(
+    api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Zeroconf discovery probes many non-TrueNAS devices (issue #46 follow-
+
+    up): a failed probe connection must stay quiet -- DEBUG, no traceback --
+    instead of flooding the log with an ERROR per candidate.
+    """
+    api._client.connect.side_effect = TrueNASConnectionRefusedError("refused")
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await api.connect(quiet=True) is False
+    assert api.error == ERR_CONNECTION_REFUSED
+    assert not any(record.levelname == "ERROR" for record in caplog.records)
+    connect_debug_records = [
+        record
+        for record in caplog.records
+        if record.levelname == "DEBUG"
+        and "Error while communicating with host" in record.getMessage()
+    ]
+    assert len(connect_debug_records) == 1
+    assert connect_debug_records[0].exc_info is None
+
+
 # ---------------------------
 #   disconnect / close
 # ---------------------------

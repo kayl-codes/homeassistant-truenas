@@ -311,10 +311,12 @@ async def _async_try_connect(api: TrueNASAPI, host: str, context: str) -> bool:
     Shared by the zeroconf probe and the rediscovery match: both need to try
     one candidate connection and move on to the next on any problem rather
     than raising, so an unexpected exception here must not abort the whole
-    discovery/rediscovery flow.
+    discovery/rediscovery flow. ``quiet=True`` keeps ``connect()``'s own
+    failure logging at debug too, since most probed candidates are expected
+    to not be TrueNAS at all.
     """
     try:
-        return await api.connect()
+        return await api.connect(quiet=True)
     except Exception as err:
         _LOGGER.debug("TrueNAS %s: %s: %s", host, context, err)
         return False

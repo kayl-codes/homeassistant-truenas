@@ -251,6 +251,22 @@ async def test_probe_is_truenas_true_on_invalid_key() -> None:
     api.disconnect.assert_awaited_once()
 
 
+async def test_probe_is_truenas_connects_quietly() -> None:
+    """Probing must not flood the log: most _http._tcp devices aren't TrueNAS.
+
+    Regression test for the follow-up to issue #46: zeroconf discovery
+    connecting to every non-TrueNAS device on the LAN was logging a full
+    ERROR traceback per candidate.
+    """
+    api = MagicMock()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    api.error = ERR_INVALID_KEY
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
+    api.connect.assert_awaited_once_with(quiet=True)
+
+
 async def test_probe_is_truenas_false_when_not_truenas() -> None:
     """Any other error means some unrelated _http._tcp device, not TrueNAS."""
     api = MagicMock()
@@ -365,6 +381,7 @@ async def test_async_update_rediscovered_entry_migrates_unique_id() -> None:
     assert kwargs["data"][CONF_HOST] == "5.6.7.8"
     assert kwargs["data"][CONF_SYSTEM_ID] == "box-guid-123"
     flow.hass.config_entries.async_reload.assert_awaited_once_with(entry.entry_id)
+    api.connect.assert_awaited_once_with(quiet=True)
 
 
 async def test_async_update_rediscovered_entry_skips_unique_id_when_id_unknown() -> (

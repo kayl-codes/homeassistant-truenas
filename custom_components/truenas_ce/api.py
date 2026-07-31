@@ -176,8 +176,18 @@ class TrueNASAPI:
     # ---------------------------
     #   connect
     # ---------------------------
-    async def connect(self) -> bool:
-        """Connect and log in. Return connected boolean."""
+    async def connect(self, *, quiet: bool = False) -> bool:
+        """Connect and log in. Return connected boolean.
+
+        Parameters
+        ----------
+        quiet:
+            Log a connection failure at debug instead of error. Used by
+            zeroconf discovery, which probes many non-TrueNAS devices on the
+            network and expects most connection attempts to fail -- logging
+            those at error with a full traceback would flood the log for no
+            benefit.
+        """
         if self._closed:
             self._error = ERR_UNKNOWN
             _LOGGER.error(
@@ -192,11 +202,12 @@ class TrueNASAPI:
             await self._client.connect()
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=False)
-            _LOGGER.error(
+            _LOGGER.log(
+                DEBUG if quiet else ERROR,
                 "Error while communicating with host %s: %s",
                 self._host,
                 exc,
-                exc_info=exc,
+                exc_info=None if quiet else exc,
             )
             return False
 
