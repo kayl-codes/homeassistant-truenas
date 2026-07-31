@@ -36,6 +36,12 @@ _LOGGER = getLogger(__name__)
 
 _UNKNOWN_KEY = "<unknown>"
 
+# Mirrors the strings.json/translations lookup key format Home Assistant's
+# own Entity._name_internal builds for platform translations.
+_NAME_TRANSLATION_KEY_FORMAT = (
+    "component.{platform}.entity.{domain}.{translation_key}.name"
+)
+
 
 # ---------------------------
 #   format_unique_id
@@ -456,11 +462,15 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         translation_key = self.entity_description.translation_key
         platform_data = self.platform_data
         if translation_key and platform_data:
-            name_translation_key = (
-                f"component.{platform_data.platform_name}.entity."
-                f"{platform_data.domain}.{translation_key}.name"
+            name_translation_key = _NAME_TRANSLATION_KEY_FORMAT.format(
+                platform=platform_data.platform_name,
+                domain=platform_data.domain,
+                translation_key=translation_key,
             )
-            translated = platform_data.platform_translations.get(name_translation_key)
+            platform_translations: dict[str, str] = getattr(
+                platform_data, "platform_translations", {}
+            )
+            translated = platform_translations.get(name_translation_key)
             if translated:
                 return translated
 
