@@ -395,7 +395,13 @@ def test_process_dynamic_description_with_composite_references() -> None:
     assert active == {init_module.format_unique_id("TrueNAS", "app_net", "a::eth0")}
 
 
-def test_process_dynamic_description_empty_sub_data_returns_live_base_only() -> None:
+def test_process_dynamic_description_empty_sub_data_reports_no_live_base() -> None:
+    """A momentarily empty domain must not be reported as live.
+
+    "Live base with nothing active" means "every entity below it is an orphan",
+    so returning the base here deleted all app_stats entities from the registry
+    on every restart -- app.stats is simply not populated yet on the first poll.
+    """
     description = _desc(
         key="app_stats",
         data_path="app_stats",
@@ -406,7 +412,22 @@ def test_process_dynamic_description_empty_sub_data_returns_live_base_only() -> 
         "TrueNAS", description, {"app_stats": {}}, False, set()
     )
     assert active == set()
-    assert live_bases == {init_module.format_unique_id("TrueNAS", "app_stats")}
+    assert live_bases == set()
+
+
+def test_process_dynamic_description_missing_data_path_reports_no_live_base() -> None:
+    """Same rule when the domain key is absent altogether, not just empty."""
+    description = _desc(
+        key="app_stats",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+    )
+    active, live_bases = _process_dynamic_description(
+        "TrueNAS", description, {}, False, set()
+    )
+    assert active == set()
+    assert live_bases == set()
 
 
 # ---------------------------
@@ -438,6 +459,33 @@ def test_collect_active_unique_ids_combines_static_and_dynamic(
     assert init_module.format_unique_id("TrueNAS", "uptime") in active
     assert init_module.format_unique_id("TrueNAS", "app_stats", "myapp") in active
     assert init_module.format_unique_id("TrueNAS", "app_stats") in live_bases
+
+
+def test_collect_active_unique_ids_empty_dynamic_domain_yields_no_live_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty dynamic domain leaves cleanup nothing to match against.
+
+    Regression guard for the restart wipe: with an empty ``app_stats`` payload
+    the collected result must contain neither active ids nor a live base, so
+    ``_cleanup_orphaned_entities`` keeps the existing registry entries.
+    """
+    dynamic_desc = _desc(
+        key="app_stats",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+    )
+    monkeypatch.setattr(init_module, "_ALL_DESCRIPTIONS", (dynamic_desc,))
+
+    coordinator = MagicMock()
+    coordinator.config_entry.options = {}
+    coordinator.data = {"app_stats": {}}
+
+    active, live_bases = _collect_active_unique_ids("TrueNAS", coordinator)
+
+    assert active == set()
+    assert live_bases == set()
 
 
 def test_collect_active_unique_ids_honors_behavior_toggle(

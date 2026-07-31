@@ -327,7 +327,12 @@ def _process_dynamic_description(
 
     sub_data = data.get(description.data_path or "")
     if not sub_data:
-        return set(), live_bases
+        # Transient empty fetch of the whole domain: report no live base, so
+        # cleanup leaves the existing entities alone (same rule as
+        # ``_process_static_description``). Reporting the base as live here
+        # wiped every registry entry of the domain on each restart, because
+        # "live but nothing active" means "all of them are orphans".
+        return set(), set()
 
     active: set[str] = set()
     if getattr(description, "data_composite_references", ()):

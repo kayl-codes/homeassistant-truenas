@@ -109,6 +109,38 @@ async def test_cleanup_orphaned_entities_noop_after_failed_refresh(
     assert ent_reg.async_get(stale_entity.entity_id) is not None
 
 
+async def test_cleanup_keeps_entities_when_dynamic_domain_is_empty(
+    hass: HomeAssistant,
+) -> None:
+    """An empty ``app_stats`` payload must not wipe the app-stats entities.
+
+    ``app.stats`` is a subscription-fed domain: right after a restart the
+    coordinator has no sample yet, so the whole domain is legitimately empty
+    for one poll. Running the real ``_collect_active_unique_ids`` here (not a
+    patched one) is the point of this test -- it is the collection step that
+    used to report the base as live and hand cleanup a full set of "orphans".
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "TrueNAS"})
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        last_update_success=True,
+        config_entry=entry,
+        data={"app_stats": {}},
+    )
+
+    ent_reg = er.async_get(hass)
+    app_entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        format_unique_id("TrueNAS", "app_stats_cpu", "myapp"),
+        config_entry=entry,
+    )
+
+    _cleanup_orphaned_entities(hass, entry, coordinator)
+
+    assert ent_reg.async_get(app_entity.entity_id) is not None
+
+
 # ---------------------------
 #   async_add_entities (via a real platform-setup pass)
 # ---------------------------
