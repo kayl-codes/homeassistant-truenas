@@ -36,12 +36,6 @@ _LOGGER = getLogger(__name__)
 
 _UNKNOWN_KEY = "<unknown>"
 
-# Mirrors the strings.json/translations lookup key format Home Assistant's
-# own Entity._name_internal builds for platform translations.
-_NAME_TRANSLATION_KEY_FORMAT = (
-    "component.{platform}.entity.{domain}.{translation_key}.name"
-)
-
 
 # ---------------------------
 #   format_unique_id
@@ -455,22 +449,18 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Resolve the description's name, preferring loaded translations.
 
         This entity builds its own name (below) instead of relying on HA's
-        has_entity_name machinery, so translation_key lookups have to be
-        replicated manually -- mirrors Entity._name_internal's platform-
-        translations lookup (homeassistant.helpers.entity).
+        has_entity_name machinery, so the platform-translations lookup has to
+        be triggered manually -- reuses Entity._name_translation_key (the
+        same cached_property HA core's own Entity._name_internal uses) so the
+        lookup key can't silently diverge from core's format.
         """
-        translation_key = self.entity_description.translation_key
-        platform_data = self.platform_data
-        if translation_key and platform_data:
-            name_translation_key = _NAME_TRANSLATION_KEY_FORMAT.format(
-                platform=platform_data.platform_name,
-                domain=platform_data.domain,
-                translation_key=translation_key,
+        if self.platform_data:
+            name_translation_key = self._name_translation_key
+            translated = (
+                self.platform_data.platform_translations.get(name_translation_key)
+                if name_translation_key
+                else None
             )
-            platform_translations: dict[str, str] = getattr(
-                platform_data, "platform_translations", {}
-            )
-            translated = platform_translations.get(name_translation_key)
             if translated:
                 return translated
 
