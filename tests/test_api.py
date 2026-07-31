@@ -9,6 +9,7 @@ network I/O happens.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -237,6 +238,54 @@ async def test_connect_quiet_logs_debug_not_error(
     ]
     assert len(connect_debug_records) == 1
     assert connect_debug_records[0].exc_info is None
+
+
+async def test_connect_quiet_suppresses_insecure_tls_warning(
+    api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression test for the second issue #46 follow-up.
+
+    aiotruenas's own ``TrueNASClient`` logs a "verify_ssl=False" warning
+    unconditionally, from inside ``connect()`` -- including for every
+    zeroconf-probed candidate, most of which are unrelated devices on the
+    network. During a quiet probe that warning must not leak out either.
+    """
+
+    async def _connect_and_warn() -> None:
+        logging.getLogger("aiotruenas.client").warning(
+            "TrueNASClient configured with verify_ssl=False for '%s'.",
+            "1.2.3.4",
+        )
+
+    api._client.connect.side_effect = _connect_and_warn
+    with caplog.at_level("WARNING", logger="aiotruenas.client"):
+        assert await api.connect(quiet=True) is True
+    assert not caplog.records
+
+
+async def test_connect_non_quiet_keeps_insecure_tls_warning(
+    api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real (non-probing) connection must still surface the warning."""
+
+    async def _connect_and_warn() -> None:
+        logging.getLogger("aiotruenas.client").warning(
+            "TrueNASClient configured with verify_ssl=False for '%s'.",
+            "truenas.local",
+        )
+
+    api._client.connect.side_effect = _connect_and_warn
+    with caplog.at_level("WARNING", logger="aiotruenas.client"):
+        assert await api.connect() is True
+    assert any(
+        record.levelname == "WARNING"
+        and record.getMessage().startswith(
+            "TrueNASClient configured with verify_ssl=False"
+        )
+        for record in caplog.records
+    )
 
 
 # ---------------------------
