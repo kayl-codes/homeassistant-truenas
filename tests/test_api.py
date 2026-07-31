@@ -229,12 +229,14 @@ async def test_connect_quiet_logs_debug_not_error(
         assert await api.connect(quiet=True) is False
     assert api.error == ERR_CONNECTION_REFUSED
     assert not any(record.levelname == "ERROR" for record in caplog.records)
-    debug_records = [record for record in caplog.records if record.levelname == "DEBUG"]
-    assert any(
-        "Error while communicating with host" in record.getMessage()
-        for record in debug_records
-    )
-    assert all(record.exc_info is None for record in debug_records)
+    connect_debug_records = [
+        record
+        for record in caplog.records
+        if record.levelname == "DEBUG"
+        and "Error while communicating with host" in record.getMessage()
+    ]
+    assert len(connect_debug_records) == 1
+    assert connect_debug_records[0].exc_info is None
 
 
 # ---------------------------
