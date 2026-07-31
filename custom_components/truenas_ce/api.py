@@ -1,7 +1,10 @@
 """TrueNAS API."""
 
 import asyncio
-from logging import DEBUG, ERROR, getLogger
+import contextlib
+import contextvars
+from collections.abc import Iterator
+from logging import DEBUG, ERROR, Filter, LogRecord, getLogger
 from typing import Any
 
 from aiotruenas import TrueNASClient
@@ -49,6 +52,55 @@ _LOGGER = getLogger(__name__)
 # Full payloads can be huge (e.g. pool.query with topology or app.query), so
 # they are summarized and truncated to keep debug logs readable.
 _LOG_PAYLOAD_LIMIT = 500
+
+# Set for the duration of a quiet connect() so the filter below can drop
+# aiotruenas's own "verify_ssl=False" warning for that call only. A plain
+# module-level flag would leak across concurrent connects (e.g. a real,
+# non-quiet connection racing a zeroconf probe); a ContextVar stays scoped to
+# the current asyncio task instead.
+_quiet_insecure_tls_warning: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_quiet_insecure_tls_warning", default=False
+)
+
+# Message aiotruenas.client logs at WARNING from its own TrueNASClient
+# whenever verify_ssl=False, unconditionally -- including for every zeroconf
+# probe candidate, most of which are unrelated devices on the network
+# (reported as a second follow-up on issue #46). It is genuinely useful for a
+# user's real, configured connection, so it is only filtered out while
+# _quiet_insecure_tls_warning is set, i.e. during probing.
+_INSECURE_TLS_WARNING_PREFIX = "TrueNASClient configured with verify_ssl=False"
+
+
+class _QuietInsecureTlsWarningFilter(Filter):
+    """Drop aiotruenas's insecure-TLS warning while probing quietly."""
+
+    def filter(self, record: LogRecord) -> bool:
+        return not (
+            _quiet_insecure_tls_warning.get()
+            and record.getMessage().startswith(_INSECURE_TLS_WARNING_PREFIX)
+        )
+
+
+getLogger("aiotruenas.client").addFilter(_QuietInsecureTlsWarningFilter())
+
+
+@contextlib.contextmanager
+def _quiet_insecure_tls_warnings(active: bool) -> Iterator[None]:
+    """Drop aiotruenas's insecure-TLS warning for the duration of the block.
+
+    No-op unless ``active``, so a real (non-probing) connect still sees the
+    warning.
+    """
+    if not active:
+        yield
+        return
+
+    token = _quiet_insecure_tls_warning.set(True)
+    try:
+        yield
+    finally:
+        _quiet_insecure_tls_warning.reset(token)
+
 
 # aiotruenas exception -> ERR_* mapping (see const.py). Order matters: more
 # specific subclasses must be checked before their base classes, so this is
@@ -182,11 +234,13 @@ class TrueNASAPI:
         Parameters
         ----------
         quiet:
-            Log a connection failure at debug instead of error. Used by
-            zeroconf discovery, which probes many non-TrueNAS devices on the
-            network and expects most connection attempts to fail -- logging
-            those at error with a full traceback would flood the log for no
-            benefit.
+            Log a connection failure at debug instead of error, and drop
+            aiotruenas's own "verify_ssl=False" warning too. Used by zeroconf
+            discovery, which probes many non-TrueNAS devices on the network
+            and expects most connection attempts to fail -- logging those at
+            error with a full traceback (or the insecure-TLS warning, which
+            fires before the failure is even known) would flood the log for
+            no benefit.
         """
         if self._closed:
             self._error = ERR_UNKNOWN
@@ -199,7 +253,8 @@ class TrueNASAPI:
             return True
 
         try:
-            await self._client.connect()
+            with _quiet_insecure_tls_warnings(quiet):
+                await self._client.connect()
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=False)
             _LOGGER.log(
