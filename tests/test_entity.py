@@ -339,6 +339,8 @@ def test_name_translation_lookup(
             domain="sensor",
             platform_translations=platform_translations,
         )
+    else:
+        entity.platform_data = None
     assert entity.name == expected_name
 
 
