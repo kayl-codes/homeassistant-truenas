@@ -686,6 +686,26 @@ async def test_dataset_wait_for_job_missing_job_exhausts_retries() -> None:
     }
 
 
+async def test_dataset_wait_for_job_timeout_raises() -> None:
+    sensor = _make_dataset({"encrypted": True, "locked": True})
+    sensor.coordinator.api.query.side_effect = [42, {"state": "RUNNING"}]
+    with (
+        patch(
+            "custom_components.truenas_ce.sensor.asyncio.sleep",
+            new=AsyncMock(side_effect=TimeoutError),
+        ),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "timed out waiting for completion",
+    }
+
+
 async def test_dataset_passphrase_set_stores_in_config_entry() -> None:
     sensor = _make_dataset()
     sensor.hass = sensor.coordinator.hass
