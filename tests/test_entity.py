@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -311,6 +312,55 @@ def test_name_referenced_entity_no_desc_name() -> None:
         uid="d1", data={"devname": "sda", "guid": "g1"}, description=desc
     )
     assert entity.name == "sda"
+
+
+@pytest.mark.parametrize(
+    ("platform_translations", "expected_name"),
+    [
+        pytest.param(
+            {"component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"},
+            "Laufzeit",
+            id="translation_hit",
+        ),
+        pytest.param({}, "Uptime", id="translation_missing"),
+        pytest.param(None, "Uptime", id="no_platform_data"),
+    ],
+)
+def test_name_translation_lookup(
+    platform_translations: dict[str, str] | None, expected_name: str
+) -> None:
+    desc = TrueNASEntityDescription(
+        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    if platform_translations is not None:
+        entity.platform_data = SimpleNamespace(
+            platform_name="truenas_ce",
+            domain="sensor",
+            platform_translations=platform_translations,
+        )
+    else:
+        entity.platform_data = None
+    assert entity.name == expected_name
+
+
+def test_name_translation_lookup_without_literal_name() -> None:
+    """Descriptions that only set translation_key (no literal `name`) must
+    still resolve via platform_translations -- `name` defaults to
+    EntityDescription's UNDEFINED sentinel, not a str or None.
+    """
+    desc = TrueNASEntityDescription(
+        key="uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    entity.platform_data = SimpleNamespace(
+        platform_name="truenas_ce",
+        domain="sensor",
+        platform_translations={
+            "component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"
+        },
+    )
+    assert entity.name == "Laufzeit"
 
 
 def test_unique_id_static_description() -> None:

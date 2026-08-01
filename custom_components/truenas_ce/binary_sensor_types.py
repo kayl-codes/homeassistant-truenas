@@ -123,7 +123,7 @@ class TrueNASBinarySensorEntityDescription(
 SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="disk_issues",
-        name="Disk/Pool issues",
+        translation_key="disk_issues",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
@@ -135,7 +135,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     ),
     TrueNASBinarySensorEntityDescription(
         key="pool_healthy",
-        name="healthy",
+        translation_key="pool_healthy",
         icon_enabled="mdi:database",
         icon_disabled="mdi:database-off",
         device_class=None,
@@ -215,7 +215,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     ),
     TrueNASBinarySensorEntityDescription(
         key="interface",
-        name="Link",
+        translation_key="interface",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="Network",
@@ -243,7 +243,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     ),
     TrueNASBinarySensorEntityDescription(
         key="certificate_expired",
-        name="Expired",
+        translation_key="certificate_expired",
         icon_enabled="mdi:certificate-alert",
         icon_disabled="mdi:certificate-check",
         device_class=BinarySensorDeviceClass.PROBLEM,

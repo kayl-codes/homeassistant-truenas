@@ -144,15 +144,173 @@
             },
             "scrub_run": {
                 "name": "Run scrub"
+            },
+            "snapshottask_run": {
+                "name": "Run"
+            },
+            "rsync_run": {
+                "name": "Run"
+            },
+            "replication_run": {
+                "name": "Run"
+            },
+            "cloudsync_run": {
+                "name": "Run"
+            },
+            "cronjob_run": {
+                "name": "Run"
             }
         },
         "sensor": {
             "alerts": {
+                "name": "Alerts",
                 "state_attributes": {
                     "uuids": {
                         "name": "Alert UUIDs"
                     }
                 }
+            },
+            "system_smb_connections": {
+                "name": "SMB connections"
+            },
+            "system_uptime": {
+                "name": "Uptime"
+            },
+            "system_cpu_temperature": {
+                "name": "Temperature"
+            },
+            "system_load_shortterm": {
+                "name": "CPU load shortterm"
+            },
+            "system_load_midterm": {
+                "name": "CPU load midterm"
+            },
+            "system_load_longterm": {
+                "name": "CPU load longterm"
+            },
+            "system_cpu_usage": {
+                "name": "CPU usage"
+            },
+            "system_memory_usage": {
+                "name": "Memory usage"
+            },
+            "system_cache_size_arc_value": {
+                "name": "ARC size"
+            },
+            "system_memory_total": {
+                "name": "Memory total"
+            },
+            "system_memory_free": {
+                "name": "Memory free"
+            },
+            "pool_free": {
+                "name": "free"
+            },
+            "pool_size": {
+                "name": "size"
+            },
+            "pool_allocated": {
+                "name": "allocated"
+            },
+            "pool_errors": {
+                "name": "errors"
+            },
+            "pool_fragmentation": {
+                "name": "fragmentation"
+            },
+            "pool_scrub_start": {
+                "name": "Scrub started"
+            },
+            "pool_scrub_end": {
+                "name": "Scrub finished"
+            },
+            "pool_scrub_state": {
+                "name": "Scrub state"
+            },
+            "traffic_rx": {
+                "name": "RX"
+            },
+            "traffic_tx": {
+                "name": "TX"
+            },
+            "ups_charge": {
+                "name": "Charge"
+            },
+            "ups_runtime": {
+                "name": "Runtime"
+            },
+            "ups_load": {
+                "name": "Load"
+            },
+            "ups_voltage": {
+                "name": "Voltage"
+            },
+            "ups_current": {
+                "name": "Current"
+            },
+            "ups_frequency": {
+                "name": "Frequency"
+            },
+            "ups_temperature": {
+                "name": "Temperature"
+            },
+            "directoryservices": {
+                "name": "Status"
+            },
+            "certificate_expiry": {
+                "name": "Time until expiry"
+            },
+            "certificate_expiration_time": {
+                "name": "Expiration time"
+            },
+            "arc_data_hit_percent": {
+                "name": "Data hit ratio"
+            },
+            "arc_metadata_hit_percent": {
+                "name": "Metadata hit ratio"
+            },
+            "arc_l2_hit_percent": {
+                "name": "L2 ARC hit ratio"
+            },
+            "app_stats_cpu": {
+                "name": "CPU"
+            },
+            "app_stats_memory": {
+                "name": "RAM"
+            },
+            "app_stats_network_rx": {
+                "name": "Network RX"
+            },
+            "app_stats_network_tx": {
+                "name": "Network TX"
+            },
+            "app_stats_blkio_read": {
+                "name": "Block I/O Read"
+            },
+            "app_stats_blkio_write": {
+                "name": "Block I/O Write"
+            }
+        },
+        "binary_sensor": {
+            "disk_issues": {
+                "name": "Disk/Pool issues"
+            },
+            "pool_healthy": {
+                "name": "healthy"
+            },
+            "interface": {
+                "name": "Link"
+            },
+            "certificate_expired": {
+                "name": "Expired"
+            }
+        },
+        "switch": {
+            "cloudsync_switch": {
+                "name": "Enabled"
+            },
+            "cronjob_switch": {
+                "name": "Enabled"
             }
         }
     }

@@ -144,15 +144,173 @@
             },
             "scrub_run": {
                 "name": "Spustiť scrub"
+            },
+            "snapshottask_run": {
+                "name": "Spustiť"
+            },
+            "rsync_run": {
+                "name": "Spustiť"
+            },
+            "replication_run": {
+                "name": "Spustiť"
+            },
+            "cloudsync_run": {
+                "name": "Spustiť"
+            },
+            "cronjob_run": {
+                "name": "Spustiť"
             }
         },
         "sensor": {
             "alerts": {
+                "name": "Upozornenia",
                 "state_attributes": {
                     "uuids": {
                         "name": "Alert UUIDs"
                     }
                 }
+            },
+            "system_smb_connections": {
+                "name": "SMB pripojenia"
+            },
+            "system_uptime": {
+                "name": "Doba prevádzky"
+            },
+            "system_cpu_temperature": {
+                "name": "Teplota"
+            },
+            "system_load_shortterm": {
+                "name": "Záťaž CPU krátkodobá"
+            },
+            "system_load_midterm": {
+                "name": "Záťaž CPU strednodobá"
+            },
+            "system_load_longterm": {
+                "name": "Záťaž CPU dlhodobá"
+            },
+            "system_cpu_usage": {
+                "name": "Využitie CPU"
+            },
+            "system_memory_usage": {
+                "name": "Využitie pamäte"
+            },
+            "system_cache_size_arc_value": {
+                "name": "Veľkosť ARC"
+            },
+            "system_memory_total": {
+                "name": "Pamäť spolu"
+            },
+            "system_memory_free": {
+                "name": "Voľná pamäť"
+            },
+            "pool_free": {
+                "name": "Voľné"
+            },
+            "pool_size": {
+                "name": "Veľkosť"
+            },
+            "pool_allocated": {
+                "name": "Alokované"
+            },
+            "pool_errors": {
+                "name": "Chyby"
+            },
+            "pool_fragmentation": {
+                "name": "Fragmentácia"
+            },
+            "pool_scrub_start": {
+                "name": "Scrub spustený"
+            },
+            "pool_scrub_end": {
+                "name": "Scrub dokončený"
+            },
+            "pool_scrub_state": {
+                "name": "Stav scrub"
+            },
+            "traffic_rx": {
+                "name": "RX"
+            },
+            "traffic_tx": {
+                "name": "TX"
+            },
+            "ups_charge": {
+                "name": "Nabitie"
+            },
+            "ups_runtime": {
+                "name": "Výdrž"
+            },
+            "ups_load": {
+                "name": "Záťaž"
+            },
+            "ups_voltage": {
+                "name": "Napätie"
+            },
+            "ups_current": {
+                "name": "Prúd"
+            },
+            "ups_frequency": {
+                "name": "Frekvencia"
+            },
+            "ups_temperature": {
+                "name": "Teplota"
+            },
+            "directoryservices": {
+                "name": "Stav"
+            },
+            "certificate_expiry": {
+                "name": "Čas do vypršania"
+            },
+            "certificate_expiration_time": {
+                "name": "Čas vypršania"
+            },
+            "arc_data_hit_percent": {
+                "name": "Podiel zásahov (dáta)"
+            },
+            "arc_metadata_hit_percent": {
+                "name": "Podiel zásahov (metadáta)"
+            },
+            "arc_l2_hit_percent": {
+                "name": "Podiel zásahov L2 ARC"
+            },
+            "app_stats_cpu": {
+                "name": "CPU"
+            },
+            "app_stats_memory": {
+                "name": "RAM"
+            },
+            "app_stats_network_rx": {
+                "name": "Sieť RX"
+            },
+            "app_stats_network_tx": {
+                "name": "Sieť TX"
+            },
+            "app_stats_blkio_read": {
+                "name": "Blokový V/V (čítanie)"
+            },
+            "app_stats_blkio_write": {
+                "name": "Blokový V/V (zápis)"
+            }
+        },
+        "binary_sensor": {
+            "disk_issues": {
+                "name": "Problémy disku/poolu"
+            },
+            "pool_healthy": {
+                "name": "V poriadku"
+            },
+            "interface": {
+                "name": "Spojenie"
+            },
+            "certificate_expired": {
+                "name": "Vypršané"
+            }
+        },
+        "switch": {
+            "cloudsync_switch": {
+                "name": "Povolené"
+            },
+            "cronjob_switch": {
+                "name": "Povolené"
             }
         }
     }

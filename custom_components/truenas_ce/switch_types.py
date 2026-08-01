@@ -34,7 +34,7 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
     ),
     TrueNASSwitchEntityDescription(
         key="cloudsync_switch",
-        name="Enabled",
+        translation_key="cloudsync_switch",
         icon="mdi:calendar-check",
         ha_group="Cloudsync",
         data_path="cloudsync",
@@ -46,7 +46,7 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
     ),
     TrueNASSwitchEntityDescription(
         key="cronjob_switch",
-        name="Enabled",
+        translation_key="cronjob_switch",
         icon="mdi:calendar-check",
         ha_group="Cron Jobs",
         data_path="cronjob",

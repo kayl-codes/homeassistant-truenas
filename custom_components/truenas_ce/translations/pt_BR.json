@@ -144,15 +144,173 @@
             },
             "scrub_run": {
                 "name": "Executar scrub"
+            },
+            "snapshottask_run": {
+                "name": "Executar"
+            },
+            "rsync_run": {
+                "name": "Executar"
+            },
+            "replication_run": {
+                "name": "Executar"
+            },
+            "cloudsync_run": {
+                "name": "Executar"
+            },
+            "cronjob_run": {
+                "name": "Executar"
             }
         },
         "sensor": {
             "alerts": {
+                "name": "Alertas",
                 "state_attributes": {
                     "uuids": {
                         "name": "Alert UUIDs"
                     }
                 }
+            },
+            "system_smb_connections": {
+                "name": "Conexões SMB"
+            },
+            "system_uptime": {
+                "name": "Tempo de atividade"
+            },
+            "system_cpu_temperature": {
+                "name": "Temperatura"
+            },
+            "system_load_shortterm": {
+                "name": "Carga de CPU a curto prazo"
+            },
+            "system_load_midterm": {
+                "name": "Carga de CPU a médio prazo"
+            },
+            "system_load_longterm": {
+                "name": "Carga de CPU a longo prazo"
+            },
+            "system_cpu_usage": {
+                "name": "Uso de CPU"
+            },
+            "system_memory_usage": {
+                "name": "Uso de memória"
+            },
+            "system_cache_size_arc_value": {
+                "name": "Tamanho do ARC"
+            },
+            "system_memory_total": {
+                "name": "Memória total"
+            },
+            "system_memory_free": {
+                "name": "Memória livre"
+            },
+            "pool_free": {
+                "name": "Livre"
+            },
+            "pool_size": {
+                "name": "Tamanho"
+            },
+            "pool_allocated": {
+                "name": "Alocado"
+            },
+            "pool_errors": {
+                "name": "Erros"
+            },
+            "pool_fragmentation": {
+                "name": "Fragmentação"
+            },
+            "pool_scrub_start": {
+                "name": "Scrub iniciado"
+            },
+            "pool_scrub_end": {
+                "name": "Scrub concluído"
+            },
+            "pool_scrub_state": {
+                "name": "Status do scrub"
+            },
+            "traffic_rx": {
+                "name": "RX"
+            },
+            "traffic_tx": {
+                "name": "TX"
+            },
+            "ups_charge": {
+                "name": "Carga"
+            },
+            "ups_runtime": {
+                "name": "Autonomia"
+            },
+            "ups_load": {
+                "name": "Carga"
+            },
+            "ups_voltage": {
+                "name": "Tensão"
+            },
+            "ups_current": {
+                "name": "Corrente"
+            },
+            "ups_frequency": {
+                "name": "Frequência"
+            },
+            "ups_temperature": {
+                "name": "Temperatura"
+            },
+            "directoryservices": {
+                "name": "Status"
+            },
+            "certificate_expiry": {
+                "name": "Tempo até expirar"
+            },
+            "certificate_expiration_time": {
+                "name": "Data de expiração"
+            },
+            "arc_data_hit_percent": {
+                "name": "Taxa de acerto de dados"
+            },
+            "arc_metadata_hit_percent": {
+                "name": "Taxa de acerto de metadados"
+            },
+            "arc_l2_hit_percent": {
+                "name": "Taxa de acerto do L2 ARC"
+            },
+            "app_stats_cpu": {
+                "name": "CPU"
+            },
+            "app_stats_memory": {
+                "name": "RAM"
+            },
+            "app_stats_network_rx": {
+                "name": "Rede RX"
+            },
+            "app_stats_network_tx": {
+                "name": "Rede TX"
+            },
+            "app_stats_blkio_read": {
+                "name": "E/S de bloco (leitura)"
+            },
+            "app_stats_blkio_write": {
+                "name": "E/S de bloco (escrita)"
+            }
+        },
+        "binary_sensor": {
+            "disk_issues": {
+                "name": "Problemas de disco/pool"
+            },
+            "pool_healthy": {
+                "name": "Saudável"
+            },
+            "interface": {
+                "name": "Link"
+            },
+            "certificate_expired": {
+                "name": "Expirado"
+            }
+        },
+        "switch": {
+            "cloudsync_switch": {
+                "name": "Habilitado"
+            },
+            "cronjob_switch": {
+                "name": "Habilitado"
             }
         }
     }

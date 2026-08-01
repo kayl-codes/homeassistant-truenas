@@ -445,15 +445,47 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         self._refresh_data()
         super()._handle_coordinator_update()
 
+    def _core_name_translation_key(self) -> str | None:
+        """Return Entity._name_translation_key, degrading gracefully.
+
+        Isolates the one place this entity touches a private HA-core
+        implementation detail (the same cached_property HA core's own
+        Entity._name_internal uses to build its lookup key), so a future
+        core change that renames or removes it only needs a fix here.
+        """
+        return getattr(self, "_name_translation_key", None)
+
+    def _translated_description_name(self) -> str | None:
+        """Resolve the description's name, preferring loaded translations.
+
+        This entity builds its own name (below) instead of relying on HA's
+        has_entity_name machinery, so the platform-translations lookup has
+        to be triggered manually. Most descriptions only set translation_key
+        and leave `name` at its EntityDescription default (UNDEFINED, not a
+        str), so the translation lookup must run regardless of `name` --
+        `desc_name` is only a fallback for the few statically-named/unnamed
+        descriptions that set `name` explicitly.
+        """
+        platform_translations: dict[str, str] | None = getattr(
+            self.platform_data, "platform_translations", None
+        )
+        if platform_translations:
+            name_translation_key = self._core_name_translation_key()
+            translated = (
+                platform_translations.get(name_translation_key)
+                if name_translation_key
+                else None
+            )
+            if translated:
+                return translated
+
+        desc_name = self.entity_description.name
+        return desc_name if isinstance(desc_name, str) else None
+
     @property
     def name(self) -> str | None:
         """Return the name for this entity."""
-        # Descriptions set name to a str or None (never UNDEFINED); normalize so
-        # an entity without its own name falls back to the device name instead
-        # of showing "None".
-        desc_name = self.entity_description.name
-        if not isinstance(desc_name, str):
-            desc_name = None
+        desc_name = self._translated_description_name()
 
         if not self._uid:
             return desc_name
