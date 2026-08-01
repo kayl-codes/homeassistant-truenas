@@ -194,7 +194,7 @@
             "system_memory_usage": {
                 "name": "Využitie pamäte"
             },
-            "system_cache_size-arc_value": {
+            "system_cache_size_arc_value": {
                 "name": "Veľkosť ARC"
             },
             "system_memory_total": {

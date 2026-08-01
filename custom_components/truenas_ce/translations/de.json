@@ -194,7 +194,7 @@
             "system_memory_usage": {
                 "name": "Speicherauslastung"
             },
-            "system_cache_size-arc_value": {
+            "system_cache_size_arc_value": {
                 "name": "ARC-Größe"
             },
             "system_memory_total": {

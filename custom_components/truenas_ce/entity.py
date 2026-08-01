@@ -455,8 +455,14 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         lookup key can't silently diverge from core's format. That attribute
         is a private HA-core implementation detail, so a future core change
         that renames or removes it must degrade to the literal description
-        name instead of crashing entity setup.
+        name instead of crashing entity setup. A description with no name
+        (`None`/empty) is explicitly unnamed -- skip the translation lookup
+        entirely rather than risk a stray translation_key giving it one.
         """
+        desc_name = self.entity_description.name
+        if not isinstance(desc_name, str) or not desc_name:
+            return None
+
         platform_translations: dict[str, str] | None = getattr(
             self.platform_data, "platform_translations", None
         )
@@ -473,8 +479,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             if translated:
                 return translated
 
-        desc_name = self.entity_description.name
-        return desc_name if isinstance(desc_name, str) else None
+        return desc_name
 
     @property
     def name(self) -> str | None:

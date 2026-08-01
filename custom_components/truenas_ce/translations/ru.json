@@ -194,7 +194,7 @@
             "system_memory_usage": {
                 "name": "Использование памяти"
             },
-            "system_cache_size-arc_value": {
+            "system_cache_size_arc_value": {
                 "name": "Размер ARC"
             },
             "system_memory_total": {
