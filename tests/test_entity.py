@@ -314,38 +314,32 @@ def test_name_referenced_entity_no_desc_name() -> None:
     assert entity.name == "sda"
 
 
-def test_name_prefers_loaded_translation_over_literal_name() -> None:
+@pytest.mark.parametrize(
+    ("platform_translations", "expected_name"),
+    [
+        pytest.param(
+            {"component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"},
+            "Laufzeit",
+            id="translation_hit",
+        ),
+        pytest.param({}, "Uptime", id="translation_missing"),
+        pytest.param(None, "Uptime", id="no_platform_data"),
+    ],
+)
+def test_name_translation_lookup(
+    platform_translations: dict[str, str] | None, expected_name: str
+) -> None:
     desc = TrueNASEntityDescription(
         key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
     )
     entity = _make_entity(description=desc)
-    entity.platform_data = SimpleNamespace(
-        platform_name="truenas_ce",
-        domain="sensor",
-        platform_translations={
-            "component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"
-        },
-    )
-    assert entity.name == "Laufzeit"
-
-
-def test_name_falls_back_to_literal_when_translation_missing() -> None:
-    desc = TrueNASEntityDescription(
-        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
-    )
-    entity = _make_entity(description=desc)
-    entity.platform_data = SimpleNamespace(
-        platform_name="truenas_ce", domain="sensor", platform_translations={}
-    )
-    assert entity.name == "Uptime"
-
-
-def test_name_without_platform_data_uses_literal_name() -> None:
-    desc = TrueNASEntityDescription(
-        key="uptime", name="Uptime", translation_key="uptime", data_path="system_info"
-    )
-    entity = _make_entity(description=desc)
-    assert entity.name == "Uptime"
+    if platform_translations is not None:
+        entity.platform_data = SimpleNamespace(
+            platform_name="truenas_ce",
+            domain="sensor",
+            platform_translations=platform_translations,
+        )
+    assert entity.name == expected_name
 
 
 def test_unique_id_static_description() -> None:
