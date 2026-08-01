@@ -445,19 +445,27 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         self._refresh_data()
         super()._handle_coordinator_update()
 
+    def _core_name_translation_key(self) -> str | None:
+        """Return Entity._name_translation_key, degrading gracefully.
+
+        Isolates the one place this entity touches a private HA-core
+        implementation detail (the same cached_property HA core's own
+        Entity._name_internal uses to build its lookup key), so a future
+        core change that renames or removes it only needs a fix here.
+        """
+        try:
+            return self._name_translation_key
+        except AttributeError:
+            return None
+
     def _translated_description_name(self) -> str | None:
         """Resolve the description's name, preferring loaded translations.
 
         This entity builds its own name (below) instead of relying on HA's
-        has_entity_name machinery, so the platform-translations lookup has to
-        be triggered manually -- reuses Entity._name_translation_key (the
-        same cached_property HA core's own Entity._name_internal uses) so the
-        lookup key can't silently diverge from core's format. That attribute
-        is a private HA-core implementation detail, so a future core change
-        that renames or removes it must degrade to the literal description
-        name instead of crashing entity setup. A description with no name
-        (`None`/empty) is explicitly unnamed -- skip the translation lookup
-        entirely rather than risk a stray translation_key giving it one.
+        has_entity_name machinery, so the platform-translations lookup has
+        to be triggered manually. A description with no name (`None`/empty)
+        is explicitly unnamed -- skip the translation lookup entirely
+        rather than risk a stray translation_key giving it one.
         """
         desc_name = self.entity_description.name
         if not isinstance(desc_name, str) or not desc_name:
@@ -467,10 +475,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             self.platform_data, "platform_translations", None
         )
         if platform_translations:
-            try:
-                name_translation_key = self._name_translation_key
-            except AttributeError:
-                name_translation_key = None
+            name_translation_key = self._core_name_translation_key()
             translated = (
                 platform_translations.get(name_translation_key)
                 if name_translation_key
