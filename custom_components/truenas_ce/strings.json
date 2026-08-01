@@ -133,10 +133,10 @@
     },
     "exceptions": {
         "unsupported_action": {
-            "message": "The '{action}' action is not supported by this TrueNAS entity ({entity_id})"
+            "message": "The {action} action is not supported by this TrueNAS entity ({entity_id})"
         },
         "action_failed": {
-            "message": "TrueNAS action '{action}' failed on {host}: {error}"
+            "message": "TrueNAS action {action} failed on {host}: {error}"
         },
         "run_task_failed": {
             "message": "TrueNAS action failed on {host}: {error}"
@@ -187,7 +187,7 @@
             "message": "dataset_path is required"
         },
         "passphrase_not_found": {
-            "message": "No stored passphrase found for dataset '{dataset}'"
+            "message": "No stored passphrase found for dataset {dataset}"
         }
     },
     "entity": {

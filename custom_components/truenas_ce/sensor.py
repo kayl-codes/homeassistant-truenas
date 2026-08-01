@@ -524,17 +524,10 @@ class TrueNASDatasetSensor(TrueNASSensor):
                     else:
                         missing = 0
                     await asyncio.sleep(JOB_POLL_INTERVAL)
-        except TimeoutError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="dataset_action_failed",
-                translation_placeholders={
-                    "action": action,
-                    "dataset": self._data.get("name", _UNKNOWN_DATASET),
-                    "host": self.coordinator.host,
-                    "reason": "timed out waiting for completion",
-                },
-            ) from err
+        except TimeoutError:
+            self._raise_dataset_action_failed(
+                action, "timed out waiting for completion"
+            )
 
     async def _run_dataset_job(
         self, method: str, payload: list[Any], action: str

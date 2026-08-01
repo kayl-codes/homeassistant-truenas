@@ -133,10 +133,10 @@
     },
     "exceptions": {
         "unsupported_action": {
-            "message": "Действие '{action}' не поддерживается этой сущностью TrueNAS ({entity_id})"
+            "message": "Действие {action} не поддерживается этой сущностью TrueNAS ({entity_id})"
         },
         "action_failed": {
-            "message": "Действие TrueNAS '{action}' завершилось ошибкой на {host}: {error}"
+            "message": "Действие TrueNAS {action} завершилось ошибкой на {host}: {error}"
         },
         "run_task_failed": {
             "message": "Действие TrueNAS завершилось ошибкой на {host}: {error}"
@@ -145,7 +145,7 @@
             "message": "Проверка (scrub) пула {pool} TrueNAS завершилась ошибкой на {host}: {error}"
         },
         "alert_action_failed": {
-            "message": "Действие '{action}' для оповещения {uuid} завершилось ошибкой на {host}: {error}"
+            "message": "Действие {action} для оповещения {uuid} завершилось ошибкой на {host}: {error}"
         },
         "system_update_failed": {
             "message": "Не удалось запустить обновление системы TrueNAS на {host}: {error}"
@@ -157,10 +157,10 @@
             "message": "Отсутствует обязательный параметр: uuid"
         },
         "dataset_action_failed": {
-            "message": "Действие '{action}' для датасета {dataset} завершилось ошибкой на {host}: {reason}"
+            "message": "Действие {action} для датасета {dataset} завершилось ошибкой на {host}: {reason}"
         },
         "dataset_not_encrypted": {
-            "message": "Датасет {dataset} не зашифрован; действие '{action}' невозможно"
+            "message": "Датасет {dataset} не зашифрован; действие {action} невозможно"
         },
         "missing_passphrase": {
             "message": "Для датасета {dataset} не указана и не сохранена парольная фраза. Сначала вызовите passphrase_set или укажите парольную фразу при вызове действия."
@@ -181,13 +181,13 @@
             "message": "Найдено несколько экземпляров TrueNAS ({count}); укажите config_entry"
         },
         "missing_alert_uuid": {
-            "message": "Для действия '{action}' требуется UUID оповещения"
+            "message": "Для действия {action} требуется UUID оповещения"
         },
         "missing_dataset_path": {
             "message": "Требуется dataset_path"
         },
         "passphrase_not_found": {
-            "message": "Сохранённая парольная фраза для датасета '{dataset}' не найдена"
+            "message": "Сохранённая парольная фраза для датасета {dataset} не найдена"
         }
     },
     "entity": {

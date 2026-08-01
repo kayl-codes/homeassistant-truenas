@@ -133,10 +133,10 @@
     },
     "exceptions": {
         "unsupported_action": {
-            "message": "Akcia '{action}' nie je touto entitou TrueNAS podporovaná ({entity_id})"
+            "message": "Akcia {action} nie je touto entitou TrueNAS podporovaná ({entity_id})"
         },
         "action_failed": {
-            "message": "Akcia TrueNAS '{action}' zlyhala na {host}: {error}"
+            "message": "Akcia TrueNAS {action} zlyhala na {host}: {error}"
         },
         "run_task_failed": {
             "message": "Akcia TrueNAS zlyhala na {host}: {error}"
@@ -145,7 +145,7 @@
             "message": "Scrub TrueNAS pre pool {pool} zlyhal na {host}: {error}"
         },
         "alert_action_failed": {
-            "message": "Akcia '{action}' pre upozornenie {uuid} zlyhala na {host}: {error}"
+            "message": "Akcia {action} pre upozornenie {uuid} zlyhala na {host}: {error}"
         },
         "system_update_failed": {
             "message": "Nepodarilo sa spustiť aktualizáciu systému TrueNAS na {host}: {error}"
@@ -157,10 +157,10 @@
             "message": "Chýba povinný parameter: uuid"
         },
         "dataset_action_failed": {
-            "message": "Akcia '{action}' pre dataset {dataset} zlyhala na {host}: {reason}"
+            "message": "Akcia {action} pre dataset {dataset} zlyhala na {host}: {reason}"
         },
         "dataset_not_encrypted": {
-            "message": "Dataset {dataset} nie je zašifrovaný; akcia '{action}' nie je možná"
+            "message": "Dataset {dataset} nie je zašifrovaný; akcia {action} nie je možná"
         },
         "missing_passphrase": {
             "message": "Pre dataset {dataset} nebola zadaná ani uložená prístupová fráza. Najprv zavolajte passphrase_set alebo zadajte prístupovú frázu priamo pri volaní akcie."
@@ -181,13 +181,13 @@
             "message": "Je nakonfigurovaných viacero inštancií TrueNAS ({count}); zadajte config_entry"
         },
         "missing_alert_uuid": {
-            "message": "Pre akciu '{action}' je potrebné UUID upozornenia"
+            "message": "Pre akciu {action} je potrebné UUID upozornenia"
         },
         "missing_dataset_path": {
             "message": "Je vyžadovaný dataset_path"
         },
         "passphrase_not_found": {
-            "message": "Pre dataset '{dataset}' nebola nájdená žiadna uložená prístupová fráza"
+            "message": "Pre dataset {dataset} nebola nájdená žiadna uložená prístupová fráza"
         }
     },
     "entity": {

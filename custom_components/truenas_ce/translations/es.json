@@ -133,10 +133,10 @@
     },
     "exceptions": {
         "unsupported_action": {
-            "message": "La acción '{action}' no es compatible con esta entidad de TrueNAS ({entity_id})"
+            "message": "La acción {action} no es compatible con esta entidad de TrueNAS ({entity_id})"
         },
         "action_failed": {
-            "message": "La acción de TrueNAS '{action}' falló en {host}: {error}"
+            "message": "La acción de TrueNAS {action} falló en {host}: {error}"
         },
         "run_task_failed": {
             "message": "La acción de TrueNAS falló en {host}: {error}"
@@ -145,7 +145,7 @@
             "message": "El scrub de TrueNAS falló para el pool {pool} en {host}: {error}"
         },
         "alert_action_failed": {
-            "message": "La acción '{action}' de la alerta {uuid} falló en {host}: {error}"
+            "message": "La acción {action} de la alerta {uuid} falló en {host}: {error}"
         },
         "system_update_failed": {
             "message": "No se pudo iniciar la actualización del sistema TrueNAS en {host}: {error}"
@@ -157,10 +157,10 @@
             "message": "Falta el parámetro obligatorio: uuid"
         },
         "dataset_action_failed": {
-            "message": "La acción '{action}' del dataset {dataset} falló en {host}: {reason}"
+            "message": "La acción {action} del dataset {dataset} falló en {host}: {reason}"
         },
         "dataset_not_encrypted": {
-            "message": "El dataset {dataset} no está cifrado; la acción '{action}' no es posible"
+            "message": "El dataset {dataset} no está cifrado; la acción {action} no es posible"
         },
         "missing_passphrase": {
             "message": "No se proporcionó ni hay almacenada una frase de contraseña para el dataset {dataset}. Llame primero a passphrase_set o proporcione la frase de contraseña en la llamada de la acción."
@@ -181,13 +181,13 @@
             "message": "Hay varias instancias de TrueNAS ({count}); especifique config_entry"
         },
         "missing_alert_uuid": {
-            "message": "Se requiere un UUID de alerta para la acción '{action}'"
+            "message": "Se requiere un UUID de alerta para la acción {action}"
         },
         "missing_dataset_path": {
             "message": "Se requiere dataset_path"
         },
         "passphrase_not_found": {
-            "message": "No se encontró ninguna frase de contraseña almacenada para el dataset '{dataset}'"
+            "message": "No se encontró ninguna frase de contraseña almacenada para el dataset {dataset}"
         }
     },
     "entity": {
