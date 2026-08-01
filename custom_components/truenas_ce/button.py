@@ -126,9 +126,13 @@ class TrueNASPoolScrubButton(TrueNASButton):
         )
         if result is None:
             raise HomeAssistantError(
-                f"TrueNAS scrub failed for pool {pool_name!r} on "
-                f"{self.coordinator.host}: "
-                f"{self.coordinator.api.error or 'unknown error'}"
+                translation_domain=DOMAIN,
+                translation_key="scrub_failed",
+                translation_placeholders={
+                    "pool": pool_name,
+                    "host": self.coordinator.host,
+                    "error": str(self.coordinator.api.error or "unknown error"),
+                },
             )
         self.coordinator.set_optimistic_running(
             self.entity_description.data_path or "", task_id

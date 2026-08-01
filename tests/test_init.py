@@ -664,8 +664,10 @@ async def test_handle_alert_dismiss_requires_uuid() -> None:
     hass.config_entries.async_entries.return_value = [entry]
     call = SimpleNamespace(data={})
 
-    with pytest.raises(ServiceValidationError, match="UUID is required"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await _handle_alert_dismiss(hass, call)
+    assert exc_info.value.translation_key == "missing_alert_uuid"
+    assert exc_info.value.translation_placeholders == {"action": "dismiss"}
 
 
 async def test_handle_alert_dismiss_calls_alert_action() -> None:
@@ -701,8 +703,10 @@ async def test_handle_alert_restore_requires_uuid() -> None:
     hass.config_entries.async_entries.return_value = [entry]
     call = SimpleNamespace(data={})
 
-    with pytest.raises(ServiceValidationError, match="UUID is required"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await _handle_alert_restore(hass, call)
+    assert exc_info.value.translation_key == "missing_alert_uuid"
+    assert exc_info.value.translation_placeholders == {"action": "restore"}
 
 
 async def test_handle_passphrase_remove_requires_path() -> None:
@@ -711,8 +715,9 @@ async def test_handle_passphrase_remove_requires_path() -> None:
     hass.config_entries.async_entries.return_value = [entry]
     call = SimpleNamespace(data={SERVICE_PASSPHRASE_DATASET_PATH: "  "})
 
-    with pytest.raises(ServiceValidationError, match="dataset_path is required"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await _handle_passphrase_remove(hass, call)
+    assert exc_info.value.translation_key == "missing_dataset_path"
 
 
 async def test_handle_passphrase_remove_requires_existing_entry() -> None:
@@ -721,8 +726,10 @@ async def test_handle_passphrase_remove_requires_existing_entry() -> None:
     hass.config_entries.async_entries.return_value = [entry]
     call = SimpleNamespace(data={SERVICE_PASSPHRASE_DATASET_PATH: "tank/data"})
 
-    with pytest.raises(ServiceValidationError, match="No stored passphrase"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await _handle_passphrase_remove(hass, call)
+    assert exc_info.value.translation_key == "passphrase_not_found"
+    assert exc_info.value.translation_placeholders == {"dataset": "tank/data"}
 
 
 async def test_handle_passphrase_remove_deletes_entry() -> None:

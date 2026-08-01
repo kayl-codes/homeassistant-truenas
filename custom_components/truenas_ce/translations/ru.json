@@ -131,6 +131,65 @@
             }
         }
     },
+    "exceptions": {
+        "unsupported_action": {
+            "message": "Действие '{action}' не поддерживается этой сущностью TrueNAS ({entity_id})"
+        },
+        "action_failed": {
+            "message": "Действие TrueNAS '{action}' завершилось ошибкой на {host}: {error}"
+        },
+        "run_task_failed": {
+            "message": "Действие TrueNAS завершилось ошибкой на {host}: {error}"
+        },
+        "scrub_failed": {
+            "message": "Проверка (scrub) пула {pool} TrueNAS завершилась ошибкой на {host}: {error}"
+        },
+        "alert_action_failed": {
+            "message": "Действие '{action}' для оповещения {uuid} завершилось ошибкой на {host}: {error}"
+        },
+        "system_update_failed": {
+            "message": "Не удалось запустить обновление системы TrueNAS на {host}: {error}"
+        },
+        "app_update_failed": {
+            "message": "Не удалось запустить обновление приложения {app} TrueNAS на {host}: {error}"
+        },
+        "missing_uuid": {
+            "message": "Отсутствует обязательный параметр: uuid"
+        },
+        "dataset_action_failed": {
+            "message": "Действие '{action}' для датасета {dataset} завершилось ошибкой на {host}: {reason}"
+        },
+        "dataset_not_encrypted": {
+            "message": "Датасет {dataset} не зашифрован; действие '{action}' невозможно"
+        },
+        "missing_passphrase": {
+            "message": "Для датасета {dataset} не указана и не сохранена парольная фраза. Сначала вызовите passphrase_set или укажите парольную фразу при вызове действия."
+        },
+        "unknown_dataset_name": {
+            "message": "Невозможно сохранить парольную фразу: имя датасета неизвестно"
+        },
+        "config_entry_not_loaded": {
+            "message": "Экземпляр TrueNAS {entry_id} не загружен (состояние: {state})"
+        },
+        "config_entry_not_found": {
+            "message": "Экземпляр TrueNAS {entry_id} не найден"
+        },
+        "no_config_entries": {
+            "message": "Не настроено ни одного экземпляра TrueNAS"
+        },
+        "multiple_config_entries": {
+            "message": "Найдено несколько экземпляров TrueNAS ({count}); укажите config_entry"
+        },
+        "missing_alert_uuid": {
+            "message": "Для действия '{action}' требуется UUID оповещения"
+        },
+        "missing_dataset_path": {
+            "message": "Требуется dataset_path"
+        },
+        "passphrase_not_found": {
+            "message": "Сохранённая парольная фраза для датасета '{dataset}' не найдена"
+        }
+    },
     "entity": {
         "button": {
             "statistics_cleanup": {

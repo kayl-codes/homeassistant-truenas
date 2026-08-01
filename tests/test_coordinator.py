@@ -315,8 +315,13 @@ async def test_async_run_task_raises_and_skips_optimistic_state_on_failure() -> 
     coord.api.query = AsyncMock(return_value=None)
     coord.api.error = "ERR_LOST_QUERY"
     coord.async_update_listeners = MagicMock()
-    with pytest.raises(HomeAssistantError, match="ERR_LOST_QUERY"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await coord.async_run_task("rsynctask.run", "1", "rsynctask")
+    assert exc_info.value.translation_key == "run_task_failed"
+    assert exc_info.value.translation_placeholders == {
+        "host": "truenas.local",
+        "error": "ERR_LOST_QUERY",
+    }
     assert coord.ds["rsynctask"]["1"]["state"] == "STOPPED"
     coord.async_update_listeners.assert_not_called()
 

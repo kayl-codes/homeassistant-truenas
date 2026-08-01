@@ -83,8 +83,14 @@ async def test_scrub_button_failure_raises() -> None:
     button = _make_scrub_button(data={"pool_name": "tank", "id": 5, "enabled": True})
     button.coordinator.api.query.return_value = None
     button.coordinator.api.error = "middleware down"
-    with pytest.raises(HomeAssistantError, match="middleware down"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await button.async_press()
+    assert exc_info.value.translation_key == "scrub_failed"
+    assert exc_info.value.translation_placeholders == {
+        "pool": "tank",
+        "host": button.coordinator.host,
+        "error": "middleware down",
+    }
 
 
 def test_statistics_cleanup_button_init_and_available() -> None:

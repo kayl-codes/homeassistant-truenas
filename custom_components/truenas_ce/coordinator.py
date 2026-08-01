@@ -535,7 +535,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.api.query(method, [object_id])
         if self.api.error:
             raise HomeAssistantError(
-                f"TrueNAS action failed on {self.host}: {self.api.error}"
+                translation_domain=DOMAIN,
+                translation_key="run_task_failed",
+                translation_placeholders={
+                    "host": self.host,
+                    "error": str(self.api.error),
+                },
             )
         self.set_optimistic_running(data_path, object_id)
 

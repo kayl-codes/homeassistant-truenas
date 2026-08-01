@@ -58,8 +58,13 @@ async def test_system_update_async_install_failure_raises() -> None:
     update = _make_system_update({})
     update.coordinator.api.query.return_value = None
     update.coordinator.api.error = "job rejected"
-    with pytest.raises(HomeAssistantError, match="job rejected"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await update.async_install(version=None, backup=False)
+    assert exc_info.value.translation_key == "system_update_failed"
+    assert exc_info.value.translation_placeholders == {
+        "host": update.coordinator.host,
+        "error": "job rejected",
+    }
 
 
 async def test_system_update_options_updated_is_noop() -> None:
@@ -131,5 +136,11 @@ async def test_app_update_async_install_failure_raises() -> None:
     update.coordinator.data["app"] = {"a1": {"state": "RUNNING"}}
     update.coordinator.api.query.return_value = None
     update.coordinator.api.error = "upgrade failed"
-    with pytest.raises(HomeAssistantError, match="upgrade failed"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await update.async_install(version=None, backup=False)
+    assert exc_info.value.translation_key == "app_update_failed"
+    assert exc_info.value.translation_placeholders == {
+        "app": "a1",
+        "host": update.coordinator.host,
+        "error": "upgrade failed",
+    }

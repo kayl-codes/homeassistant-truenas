@@ -471,8 +471,13 @@ def test_extra_state_attributes_includes_attribution_and_listed_fields() -> None
 
 def test_raise_unsupported_raises_service_validation_error() -> None:
     entity = _make_entity()
-    with pytest.raises(ServiceValidationError, match="not supported"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         entity._raise_unsupported("start")
+    assert exc_info.value.translation_key == "unsupported_action"
+    assert exc_info.value.translation_placeholders == {
+        "action": "start",
+        "entity_id": entity.entity_id,
+    }
 
 
 def test_raise_if_api_error_no_error_is_noop() -> None:
@@ -483,8 +488,14 @@ def test_raise_if_api_error_no_error_is_noop() -> None:
 def test_raise_if_api_error_raises_when_error_set() -> None:
     coordinator = make_coordinator(api_error="boom")
     entity = _make_entity(coordinator=coordinator)
-    with pytest.raises(HomeAssistantError, match="boom"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         entity._raise_if_api_error("start")
+    assert exc_info.value.translation_key == "action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "start",
+        "host": coordinator.host,
+        "error": "boom",
+    }
 
 
 @pytest.mark.parametrize(

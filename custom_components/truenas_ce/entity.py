@@ -582,8 +582,12 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         of an "Unknown error" from a bare NotImplementedError.
         """
         raise ServiceValidationError(
-            f"The '{action}' action is not supported by this TrueNAS entity "
-            f"({self.entity_id})"
+            translation_domain=DOMAIN,
+            translation_key="unsupported_action",
+            translation_placeholders={
+                "action": action,
+                "entity_id": self.entity_id,
+            },
         )
 
     def _raise_if_api_error(self, action: str) -> None:
@@ -597,8 +601,13 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """
         if self.coordinator.api.error:
             raise HomeAssistantError(
-                f"TrueNAS action '{action}' failed on {self.coordinator.host}: "
-                f"{self.coordinator.api.error}"
+                translation_domain=DOMAIN,
+                translation_key="action_failed",
+                translation_placeholders={
+                    "action": action,
+                    "host": self.coordinator.host,
+                    "error": str(self.coordinator.api.error),
+                },
             )
 
     async def start(self) -> None:

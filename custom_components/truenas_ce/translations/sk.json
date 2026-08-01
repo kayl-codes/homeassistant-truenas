@@ -131,6 +131,65 @@
             }
         }
     },
+    "exceptions": {
+        "unsupported_action": {
+            "message": "Akcia '{action}' nie je touto entitou TrueNAS podporovaná ({entity_id})"
+        },
+        "action_failed": {
+            "message": "Akcia TrueNAS '{action}' zlyhala na {host}: {error}"
+        },
+        "run_task_failed": {
+            "message": "Akcia TrueNAS zlyhala na {host}: {error}"
+        },
+        "scrub_failed": {
+            "message": "Scrub TrueNAS pre pool {pool} zlyhal na {host}: {error}"
+        },
+        "alert_action_failed": {
+            "message": "Akcia '{action}' pre upozornenie {uuid} zlyhala na {host}: {error}"
+        },
+        "system_update_failed": {
+            "message": "Nepodarilo sa spustiť aktualizáciu systému TrueNAS na {host}: {error}"
+        },
+        "app_update_failed": {
+            "message": "Nepodarilo sa spustiť aktualizáciu aplikácie {app} TrueNAS na {host}: {error}"
+        },
+        "missing_uuid": {
+            "message": "Chýba povinný parameter: uuid"
+        },
+        "dataset_action_failed": {
+            "message": "Akcia '{action}' pre dataset {dataset} zlyhala na {host}: {reason}"
+        },
+        "dataset_not_encrypted": {
+            "message": "Dataset {dataset} nie je zašifrovaný; akcia '{action}' nie je možná"
+        },
+        "missing_passphrase": {
+            "message": "Pre dataset {dataset} nebola zadaná ani uložená prístupová fráza. Najprv zavolajte passphrase_set alebo zadajte prístupovú frázu priamo pri volaní akcie."
+        },
+        "unknown_dataset_name": {
+            "message": "Prístupovú frázu nie je možné uložiť: názov datasetu je neznámy"
+        },
+        "config_entry_not_loaded": {
+            "message": "Inštancia TrueNAS {entry_id} nie je načítaná (stav: {state})"
+        },
+        "config_entry_not_found": {
+            "message": "Inštancia TrueNAS {entry_id} nebola nájdená"
+        },
+        "no_config_entries": {
+            "message": "Nie je nakonfigurovaná žiadna inštancia TrueNAS"
+        },
+        "multiple_config_entries": {
+            "message": "Je nakonfigurovaných viacero inštancií TrueNAS ({count}); zadajte config_entry"
+        },
+        "missing_alert_uuid": {
+            "message": "Pre akciu '{action}' je potrebné UUID upozornenia"
+        },
+        "missing_dataset_path": {
+            "message": "Je vyžadovaný dataset_path"
+        },
+        "passphrase_not_found": {
+            "message": "Pre dataset '{dataset}' nebola nájdená žiadna uložená prístupová fráza"
+        }
+    },
     "entity": {
         "button": {
             "statistics_cleanup": {
