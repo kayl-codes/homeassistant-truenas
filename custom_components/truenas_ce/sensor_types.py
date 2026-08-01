@@ -367,7 +367,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
     ),
     TrueNASSensorEntityDescription(
-        key="system_cache_size_arc_value",
+        key="system_cache_size-arc_value",
         translation_key="system_cache_size_arc_value",
         icon=ICON_MEMORY,
         native_unit_of_measurement=UnitOfInformation.BYTES,

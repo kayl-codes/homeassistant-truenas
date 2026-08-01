@@ -344,6 +344,25 @@ def test_name_translation_lookup(
     assert entity.name == expected_name
 
 
+def test_name_translation_lookup_without_literal_name() -> None:
+    """Descriptions that only set translation_key (no literal `name`) must
+    still resolve via platform_translations -- `name` defaults to
+    EntityDescription's UNDEFINED sentinel, not a str or None.
+    """
+    desc = TrueNASEntityDescription(
+        key="uptime", translation_key="uptime", data_path="system_info"
+    )
+    entity = _make_entity(description=desc)
+    entity.platform_data = SimpleNamespace(
+        platform_name="truenas_ce",
+        domain="sensor",
+        platform_translations={
+            "component.truenas_ce.entity.sensor.uptime.name": "Laufzeit"
+        },
+    )
+    assert entity.name == "Laufzeit"
+
+
 def test_unique_id_static_description() -> None:
     entity = _make_entity()
     assert entity.unique_id == "truenas-uptime"
