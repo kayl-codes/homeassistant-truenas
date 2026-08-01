@@ -452,13 +452,19 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         has_entity_name machinery, so the platform-translations lookup has to
         be triggered manually -- reuses Entity._name_translation_key (the
         same cached_property HA core's own Entity._name_internal uses) so the
-        lookup key can't silently diverge from core's format.
+        lookup key can't silently diverge from core's format. That attribute
+        is a private HA-core implementation detail, so a future core change
+        that renames or removes it must degrade to the literal description
+        name instead of crashing entity setup.
         """
         platform_translations: dict[str, str] | None = getattr(
             self.platform_data, "platform_translations", None
         )
         if platform_translations:
-            name_translation_key = self._name_translation_key
+            try:
+                name_translation_key = self._name_translation_key
+            except AttributeError:
+                name_translation_key = None
             translated = (
                 platform_translations.get(name_translation_key)
                 if name_translation_key
