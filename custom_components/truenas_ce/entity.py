@@ -454,7 +454,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         same cached_property HA core's own Entity._name_internal uses) so the
         lookup key can't silently diverge from core's format.
         """
-        platform_translations = getattr(
+        platform_translations: dict[str, str] | None = getattr(
             self.platform_data, "platform_translations", None
         )
         if platform_translations:
