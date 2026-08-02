@@ -114,8 +114,6 @@ class TrueNASBinarySensorEntityDescription(
 ):
     """Class describing entities."""
 
-    icon_enabled: str | None = None
-    icon_disabled: str | None = None
     data_is_on: str = "available"
     func: str = "TrueNASBinarySensor"
 
@@ -136,8 +134,6 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="pool_healthy",
         translation_key="pool_healthy",
-        icon_enabled="mdi:database",
-        icon_disabled="mdi:database-off",
         device_class=None,
         entity_category=None,
         ha_group="Pools",
@@ -151,8 +147,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="vm",
         name="",
-        icon_enabled="mdi:server",
-        icon_disabled="mdi:server-off",
+        translation_key="vm",
         device_class=None,
         entity_category=None,
         ha_group="VMs",
@@ -167,8 +162,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="container",
         name="",
-        icon_enabled="mdi:cube-outline",
-        icon_disabled="mdi:cube-off-outline",
+        translation_key="container",
         device_class=None,
         entity_category=None,
         ha_group="Containers",
@@ -183,8 +177,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="service",
         name="",
-        icon_enabled="mdi:cog",
-        icon_disabled="mdi:cog-off",
+        translation_key="service",
         device_class=None,
         entity_category=None,
         entity_registry_enabled_default=False,
@@ -200,8 +193,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="app",
         name="",
-        icon_enabled="mdi:server",
-        icon_disabled="mdi:server-off",
+        translation_key="app",
         device_class=None,
         entity_category=None,
         ha_group="Apps",
@@ -229,8 +221,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="directoryservices",
         name="",
-        icon_enabled="mdi:account-group",
-        icon_disabled="mdi:account-group-outline",
+        translation_key="directoryservices",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="Directory Services",
@@ -244,8 +235,6 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
     TrueNASBinarySensorEntityDescription(
         key="certificate_expired",
         translation_key="certificate_expired",
-        icon_enabled="mdi:certificate-alert",
-        icon_disabled="mdi:certificate-check",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="Certificates",

@@ -327,4 +327,3 @@ SERVICE_APP_STOP = "app_stop"
 SCHEMA_SERVICE_APP_STOP: VolDictType = {}
 
 ERROR_API_FORMAT = "TrueNAS %s API error: %s"
-ICON_GAUGE = "mdi:gauge"

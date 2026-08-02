@@ -19,18 +19,10 @@ from custom_components.truenas_ce.const import VIRT_INSTANCE_STOP_OPTIONS
 _DESC = TrueNASBinarySensorEntityDescription(
     key="k", name="N", data_path="vm", data_is_on="running"
 )
-_ICON_DESC = TrueNASBinarySensorEntityDescription(
-    key="k",
-    name="N",
-    data_path="vm",
-    data_is_on="running",
-    icon_enabled="mdi:on",
-    icon_disabled="mdi:off",
-)
 
 
-def _make(cls, data: dict, path: str = "vm", desc=None):
-    description = desc or TrueNASBinarySensorEntityDescription(
+def _make(cls, data: dict, path: str = "vm"):
+    description = TrueNASBinarySensorEntityDescription(
         key="k", name="N", data_path=path, data_is_on="running"
     )
     coordinator = make_coordinator(data={path: {"o1": data}})
@@ -47,19 +39,10 @@ def test_is_on_none_when_missing() -> None:
     assert sensor.is_on is None
 
 
-def test_icon_none_when_not_configured() -> None:
+def test_icon_always_none() -> None:
+    """Icons are resolved via icons.json translations, not a backend property."""
     sensor = _make(TrueNASBinarySensor, {"running": True})
     assert sensor.icon is None
-
-
-def test_icon_enabled() -> None:
-    sensor = _make(TrueNASBinarySensor, {"running": True}, desc=_ICON_DESC)
-    assert sensor.icon == "mdi:on"
-
-
-def test_icon_disabled() -> None:
-    sensor = _make(TrueNASBinarySensor, {"running": False}, desc=_ICON_DESC)
-    assert sensor.icon == "mdi:off"
 
 
 # ---------------------------

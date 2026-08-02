@@ -159,7 +159,6 @@ class TrueNASStatisticsCleanupButton(
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = BUTTON_STATISTICS_CLEANUP
-    _attr_icon = "mdi:database-remove"
 
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the cleanup button."""
@@ -199,7 +198,6 @@ class TrueNASMigrationRollbackButton(
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = BUTTON_MIGRATION_ROLLBACK
-    _attr_icon = "mdi:backup-restore"
 
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the rollback button."""
@@ -236,7 +234,6 @@ class TrueNASRefreshButton(CoordinatorEntity[TrueNASCoordinator], ButtonEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = BUTTON_SYSTEM_REFRESH
-    _attr_icon = "mdi:refresh"
 
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the refresh button."""
