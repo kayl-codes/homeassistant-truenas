@@ -704,6 +704,7 @@ async def test_dataset_wait_for_job_timeout_raises() -> None:
         "host": sensor.coordinator.host,
         "reason": "timed out waiting for completion",
     }
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 async def test_dataset_passphrase_set_stores_in_config_entry() -> None:

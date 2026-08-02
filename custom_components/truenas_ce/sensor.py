@@ -472,7 +472,9 @@ class TrueNASAlertSensor(TrueNASSensor):
 class TrueNASDatasetSensor(TrueNASSensor):
     """Define an TrueNAS Dataset sensor."""
 
-    def _raise_dataset_action_failed(self, action: str, reason: str) -> NoReturn:
+    def _raise_dataset_action_failed(
+        self, action: str, reason: str, *, cause: BaseException | None = None
+    ) -> NoReturn:
         """Raise a uniform, translated error for a failed dataset action."""
         raise HomeAssistantError(
             translation_domain=DOMAIN,
@@ -483,7 +485,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
                 "host": self.coordinator.host,
                 "reason": str(reason),
             },
-        )
+        ) from cause
 
     async def _poll_job(self, job_id: int) -> dict[str, Any] | None:
         """Fetch a single middleware job by id."""
@@ -524,9 +526,9 @@ class TrueNASDatasetSensor(TrueNASSensor):
                     else:
                         missing = 0
                     await asyncio.sleep(JOB_POLL_INTERVAL)
-        except TimeoutError:
+        except TimeoutError as err:
             self._raise_dataset_action_failed(
-                action, "timed out waiting for completion"
+                action, "timed out waiting for completion", cause=err
             )
 
     async def _run_dataset_job(
