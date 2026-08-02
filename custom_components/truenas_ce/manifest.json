@@ -10,7 +10,7 @@
     "documentation": "https://github.com/kayl-codes/homeassistant-truenas",
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/kayl-codes/homeassistant-truenas/issues",
-    "quality_scale": "silver",
+    "quality_scale": "gold",
     "requirements": [
         "aiotruenas>=1.1.0",
         "websockets>=15.0.1"

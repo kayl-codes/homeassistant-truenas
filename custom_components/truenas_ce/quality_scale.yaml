@@ -158,8 +158,20 @@ rules:
       responses), so _require_config_entry can raise a translated exception
       without touching those non-exception response paths.
   icon-translations:
-    status: todo
-    comment: Icons are set via the entity descriptions; no icons.json yet.
+    status: done
+    comment: |
+      Static icons moved out of the entity descriptions into icons.json,
+      keyed by translation_key (added to the handful of data-driven "unnamed"
+      descriptions -- dataset, cloudsync, replication, rsynctask,
+      snapshottask, and five binary_sensor kinds -- purely for icon lookup,
+      without affecting their existing empty/data-driven names). The
+      binary_sensor on/off icon pairs (icon_enabled/icon_disabled, previously
+      a property override in binary_sensor.py) are now expressed as
+      icons.json's per-state "on"/"off" mapping instead. TrueNASDiskSensor's
+      icon stays a dynamic Python property (HDD/SSD/NVMe is derived from
+      device data, not entity state, so it cannot be expressed as a static
+      or state-keyed icons.json entry) -- its unused static icon= literal in
+      the entity description was dead code and is removed.
   reconfiguration-flow: done
   repair-issues: done
   stale-devices:

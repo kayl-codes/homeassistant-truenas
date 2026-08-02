@@ -64,17 +64,6 @@ class TrueNASBinarySensor(TrueNASEntity, BinarySensorEntity):
         value: bool | None = self._data.get(self.entity_description.data_is_on)
         return value
 
-    @property
-    def icon(self) -> str | None:
-        """Return the icon."""
-        if self.entity_description.icon_enabled:
-            if self._data.get(self.entity_description.data_is_on):
-                return self.entity_description.icon_enabled
-            else:
-                return self.entity_description.icon_disabled
-
-        return None
-
 
 # ---------------------------
 #   TrueNASVMBinarySensor

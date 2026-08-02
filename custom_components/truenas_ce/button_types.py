@@ -28,14 +28,10 @@ class TrueNASButtonEntityDescription(ButtonEntityDescription, TrueNASEntityDescr
     func: str = "TrueNASButton"
 
 
-ICON_RUN = "mdi:play-circle-outline"
-
-
 SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="snapshottask_run",
         translation_key="snapshottask_run",
-        icon=ICON_RUN,
         api_method=API_SNAPSHOTTASK_RUN,
         ha_group="Snapshot tasks",
         data_path="snapshottask",
@@ -46,7 +42,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="rsync_run",
         translation_key="rsync_run",
-        icon=ICON_RUN,
         api_method=API_RSYNCTASK_RUN,
         ha_group="Rsync tasks",
         data_path="rsynctask",
@@ -57,7 +52,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="replication_run",
         translation_key="replication_run",
-        icon=ICON_RUN,
         api_method=API_REPLICATION_RUN,
         ha_group="Replication",
         data_path="replication",
@@ -68,7 +62,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="cloudsync_run",
         translation_key="cloudsync_run",
-        icon=ICON_RUN,
         api_method=API_CLOUDSYNC_SYNC,
         ha_group="Cloudsync",
         data_path="cloudsync",
@@ -79,7 +72,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="cronjob_run",
         translation_key="cronjob_run",
-        icon=ICON_RUN,
         api_method=API_CRONJOB_RUN,
         ha_group="Cron Jobs",
         data_path="cronjob",
@@ -90,7 +82,6 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
     TrueNASButtonEntityDescription(
         key="scrub_run",
         translation_key="scrub_run",
-        icon="mdi:broom",
         ha_group="Pools",
         data_path="scrub",
         data_name="pool_name",
