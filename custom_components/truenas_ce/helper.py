@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 from homeassistant.const import UnitOfInformation
 from homeassistant.exceptions import HomeAssistantError
 
+from .const import DOMAIN
+
 if TYPE_CHECKING:
     from .coordinator import TrueNASCoordinator
 
@@ -77,7 +79,13 @@ async def alert_action(coordinator: TrueNASCoordinator, uuid: str, action: str) 
     await coordinator.api.query(f"alert.{action}", [uuid])
     if coordinator.api.error:
         raise HomeAssistantError(
-            f"Failed to {action} alert {uuid} on {coordinator.host}: "
-            f"{coordinator.api.error}"
+            translation_domain=DOMAIN,
+            translation_key="alert_action_failed",
+            translation_placeholders={
+                "action": action,
+                "uuid": uuid,
+                "host": coordinator.host,
+                "error": str(coordinator.api.error),
+            },
         )
     await coordinator.async_refresh()

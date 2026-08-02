@@ -141,10 +141,22 @@ rules:
       text (name="" or name=None -- the "unnamed" main feature of a device)
       are unaffected since there is nothing to translate.
   exception-translations:
-    status: todo
+    status: done
     comment: |
-      ServiceValidationError/HomeAssistantError are raised with literal
-      English messages instead of translation_domain/translation_key.
+      Every ServiceValidationError/HomeAssistantError raised for a user-facing
+      action failure now sets translation_domain=DOMAIN and a translation_key
+      instead of a literal message, with translation_placeholders carrying the
+      dynamic parts (action, dataset, host, error, ...). The English message
+      templates live in strings.json's exceptions.<key>.message (mirrored in
+      translations/en.json). Dataset actions share a single
+      TrueNASDatasetSensor._raise_dataset_action_failed helper (translation_key
+      dataset_action_failed) since job-failed/not-found/timeout/invalid-job-id/
+      unlock-failure/snapshot-failure all report the same shape. The domain
+      service handlers' shared _resolve_config_entry now returns a
+      translation_key/translation_placeholders pair alongside its existing
+      plain-text "error" (still used, unchanged, by the list-type service
+      responses), so _require_config_entry can raise a translated exception
+      without touching those non-exception response paths.
   icon-translations:
     status: todo
     comment: Icons are set via the entity descriptions; no icons.json yet.

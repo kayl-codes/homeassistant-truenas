@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from logging import getLogger
-from typing import Any
+from typing import Any, NoReturn
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -28,6 +28,7 @@ from .const import (
     CONF_DATA_UNIT,
     CONF_DATASET_PASSPHRASES,
     DEFAULT_DATA_UNIT,
+    DOMAIN,
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator, get_truenas_coordinator
@@ -451,14 +452,18 @@ class TrueNASAlertSensor(TrueNASSensor):
         if uuid := kwargs.get("uuid"):
             await alert_action(self.coordinator, uuid, "dismiss")
         else:
-            raise ServiceValidationError("Missing required parameter: uuid")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="missing_uuid"
+            )
 
     async def restore(self, **kwargs: Any) -> None:
         """Restore (un-dismiss) a previously dismissed TrueNAS alert by UUID."""
         if uuid := kwargs.get("uuid"):
             await alert_action(self.coordinator, uuid, "restore")
         else:
-            raise ServiceValidationError("Missing required parameter: uuid")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="missing_uuid"
+            )
 
 
 # ---------------------------
@@ -467,13 +472,20 @@ class TrueNASAlertSensor(TrueNASSensor):
 class TrueNASDatasetSensor(TrueNASSensor):
     """Define an TrueNAS Dataset sensor."""
 
-    def _action_error(self, action: str, reason: str) -> str:
-        """Build a uniform error message for a dataset action."""
-        dataset_name = self._data.get("name", _UNKNOWN_DATASET)
-        return (
-            f"Failed to {action} dataset {dataset_name} "
-            f"on {self.coordinator.host}: {reason}"
-        )
+    def _raise_dataset_action_failed(
+        self, action: str, reason: str, *, cause: BaseException | None = None
+    ) -> NoReturn:
+        """Raise a uniform, translated error for a failed dataset action."""
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="dataset_action_failed",
+            translation_placeholders={
+                "action": action,
+                "dataset": self._data.get("name", _UNKNOWN_DATASET),
+                "host": self.coordinator.host,
+                "reason": str(reason),
+            },
+        ) from cause
 
     async def _poll_job(self, job_id: int) -> dict[str, Any] | None:
         """Fetch a single middleware job by id."""
@@ -491,7 +503,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             return True
         if state in JOB_STATES_FAILED:
             reason = job.get("error") or job.get("exception") or "unknown error"
-            raise HomeAssistantError(self._action_error(action, reason))
+            self._raise_dataset_action_failed(action, reason)
         return False
 
     async def _wait_for_job(self, job_id: int, action: str) -> dict[str, Any]:
@@ -506,8 +518,8 @@ class TrueNASDatasetSensor(TrueNASSensor):
                     if job is None:
                         missing += 1
                         if missing >= JOB_MAX_MISSING_POLLS:
-                            raise HomeAssistantError(
-                                self._action_error(action, f"job {job_id} not found")
+                            self._raise_dataset_action_failed(
+                                action, f"job {job_id} not found"
                             )
                     elif self._job_finished(job, action):
                         return job
@@ -515,9 +527,9 @@ class TrueNASDatasetSensor(TrueNASSensor):
                         missing = 0
                     await asyncio.sleep(JOB_POLL_INTERVAL)
         except TimeoutError as err:
-            raise HomeAssistantError(
-                self._action_error(action, "timed out waiting for completion")
-            ) from err
+            self._raise_dataset_action_failed(
+                action, "timed out waiting for completion", cause=err
+            )
 
     async def _run_dataset_job(
         self, method: str, payload: list[Any], action: str
@@ -525,7 +537,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
         """Start a dataset middleware job, wait for it, and return its result."""
         job_id = await self.coordinator.api.query(method, payload)
         if not isinstance(job_id, int):
-            raise HomeAssistantError(self._action_error(action, "invalid job id"))
+            self._raise_dataset_action_failed(action, "invalid job id")
         job = await self._wait_for_job(job_id, action)
         return job.get("result")
 
@@ -547,7 +559,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
             else str(name)
             for name, info in failed.items()
         )
-        raise HomeAssistantError(self._action_error(action, reasons))
+        self._raise_dataset_action_failed(action, reasons)
 
     async def snapshot(self) -> None:
         """Create dataset snapshot."""
@@ -557,8 +569,8 @@ class TrueNASDatasetSensor(TrueNASSensor):
         if result is None:
             result = await self.coordinator.api.query("zfs.snapshot.create", payload)
         if result is None and self.coordinator.api.error:
-            raise HomeAssistantError(
-                self._action_error("snapshot", self.coordinator.api.error)
+            self._raise_dataset_action_failed(
+                "snapshot", str(self.coordinator.api.error)
             )
 
     def _raise_if_not_encrypted(self, action: str) -> None:
@@ -568,9 +580,13 @@ class TrueNASDatasetSensor(TrueNASSensor):
         be locked/unlocked, so a non-encrypted target is a user error.
         """
         if not self._data.get("encrypted"):
-            name = self._data.get("name", _UNKNOWN_DATASET)
             raise ServiceValidationError(
-                f"Dataset {name} is not encrypted and cannot be {action}ed"
+                translation_domain=DOMAIN,
+                translation_key="dataset_not_encrypted",
+                translation_placeholders={
+                    "dataset": self._data.get("name", _UNKNOWN_DATASET),
+                    "action": action,
+                },
             )
 
     def _log_already(self, state: str) -> None:
@@ -628,10 +644,12 @@ class TrueNASDatasetSensor(TrueNASSensor):
             passphrase if passphrase is not None else self._stored_passphrase()
         )
         if not effective_passphrase:
-            dataset_name = self._data.get("name", _UNKNOWN_DATASET)
             raise ServiceValidationError(
-                f"No passphrase provided or stored for dataset {dataset_name}. "
-                "Call passphrase_set first or supply the passphrase in the action call."
+                translation_domain=DOMAIN,
+                translation_key="missing_passphrase",
+                translation_placeholders={
+                    "dataset": self._data.get("name", _UNKNOWN_DATASET),
+                },
             )
 
         # See lock(): async_refresh forces fresh data before the idempotency check.
@@ -665,7 +683,7 @@ class TrueNASDatasetSensor(TrueNASSensor):
         dataset_name = self._data.get("name")
         if not dataset_name:
             raise ServiceValidationError(
-                "Cannot store passphrase: dataset name is unknown"
+                translation_domain=DOMAIN, translation_key="unknown_dataset_name"
             )
         existing = self.coordinator.config_entry.data.get(CONF_DATASET_PASSPHRASES, {})
         updated = (

@@ -71,7 +71,6 @@ from .switch_types import SENSOR_TYPES as SWITCH_SENSOR_TYPES
 from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
 
 _LOGGER = getLogger(__name__)
-_UNKNOWN_ERROR = "Unknown error"
 
 # This integration is config-entry only; it has no configuration.yaml schema.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -348,7 +347,7 @@ def _process_dynamic_description(
 # ---------------------------
 def _resolve_config_entry(
     hass: HomeAssistant, entry_id: str | None
-) -> tuple[TrueNASConfigEntry | None, dict[str, str]]:
+) -> tuple[TrueNASConfigEntry | None, dict[str, Any]]:
     """Resolve the target config entry; return (entry, {}) or (None, error_dict).
 
     Services are registered in ``async_setup`` (before any entry exists), so the
@@ -366,13 +365,26 @@ def _resolve_config_entry(
                     "error": (
                         f"TrueNAS instance {entry_id} is not loaded "
                         f"(state: {entry.state.value})"
-                    )
+                    ),
+                    "translation_key": "config_entry_not_loaded",
+                    "translation_placeholders": {
+                        "entry_id": entry_id,
+                        "state": entry.state.value,
+                    },
                 }
             return entry, {}
-        return None, {"error": f"TrueNAS instance {entry_id} not found"}
+        return None, {
+            "error": f"TrueNAS instance {entry_id} not found",
+            "translation_key": "config_entry_not_found",
+            "translation_placeholders": {"entry_id": entry_id},
+        }
 
     if not loaded:
-        return None, {"error": "No TrueNAS instances configured"}
+        return None, {
+            "error": "No TrueNAS instances configured",
+            "translation_key": "no_config_entries",
+            "translation_placeholders": {},
+        }
     if len(loaded) != 1:
         return (
             None,
@@ -380,7 +392,9 @@ def _resolve_config_entry(
                 "error": (
                     f"Multiple TrueNAS instances ({len(loaded)}); "
                     "please specify config_entry"
-                )
+                ),
+                "translation_key": "multiple_config_entries",
+                "translation_placeholders": {"count": str(len(loaded))},
             },
         )
     return loaded[0], {}
@@ -396,7 +410,11 @@ def _require_config_entry(
     """
     entry, error = _resolve_config_entry(hass, entry_id)
     if error or entry is None:
-        raise ServiceValidationError(error.get("error", _UNKNOWN_ERROR))
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=error["translation_key"],
+            translation_placeholders=error["translation_placeholders"],
+        )
     return entry
 
 
@@ -406,7 +424,7 @@ async def _handle_alert_list(hass: HomeAssistant, call: ServiceCall) -> dict[str
         hass, call.data.get(SERVICE_ALERT_CONFIG_ENTRY)
     )
     if error or entry is None:
-        return {"alerts": [], **error}
+        return {"alerts": [], "error": error["error"]}
 
     alerts = await entry.runtime_data.api.query("alert.list")
     if not isinstance(alerts, list):
@@ -429,7 +447,11 @@ async def _handle_alert_dismiss(hass: HomeAssistant, call: ServiceCall) -> None:
     if uuid := call.data.get(SERVICE_ALERT_UUID):
         await alert_action(entry.runtime_data, uuid, "dismiss")
     else:
-        raise ServiceValidationError("Alert UUID is required for dismiss action")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="missing_alert_uuid",
+            translation_placeholders={"action": "dismiss"},
+        )
 
 
 async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -439,7 +461,11 @@ async def _handle_alert_restore(hass: HomeAssistant, call: ServiceCall) -> None:
     if uuid := call.data.get(SERVICE_ALERT_UUID):
         await alert_action(entry.runtime_data, uuid, "restore")
     else:
-        raise ServiceValidationError("Alert UUID is required for restore action")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="missing_alert_uuid",
+            translation_placeholders={"action": "restore"},
+        )
 
 
 async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -448,12 +474,16 @@ async def _handle_passphrase_remove(hass: HomeAssistant, call: ServiceCall) -> N
 
     dataset_path = call.data.get(SERVICE_PASSPHRASE_DATASET_PATH, "").strip()
     if not dataset_path:
-        raise ServiceValidationError("dataset_path is required")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="missing_dataset_path"
+        )
 
     existing = entry.data.get(CONF_DATASET_PASSPHRASES, {})
     if not isinstance(existing, dict) or dataset_path not in existing:
         raise ServiceValidationError(
-            f"No stored passphrase found for dataset '{dataset_path}'"
+            translation_domain=DOMAIN,
+            translation_key="passphrase_not_found",
+            translation_placeholders={"dataset": dataset_path},
         )
     updated = {k: v for k, v in existing.items() if k != dataset_path}
     hass.config_entries.async_update_entry(
@@ -468,7 +498,7 @@ async def _handle_passphrase_list(
     """Return the dataset names that have a stored passphrase (no values)."""
     entry, error = _resolve_config_entry(hass, call.data.get(SERVICE_CONFIG_ENTRY))
     if error or entry is None:
-        return {"datasets": [], **error}
+        return {"datasets": [], "error": error["error"]}
 
     stored = entry.data.get(CONF_DATASET_PASSPHRASES, {})
     datasets = sorted(stored.keys()) if isinstance(stored, dict) else []

@@ -384,8 +384,9 @@ async def test_uptime_refresh_calls_coordinator_refresh() -> None:
 # ---------------------------
 async def test_alert_dismiss_without_uuid_raises() -> None:
     sensor = _make_sensor(TrueNASAlertSensor, {})
-    with pytest.raises(ServiceValidationError, match="uuid"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.dismiss()
+    assert exc_info.value.translation_key == "missing_uuid"
 
 
 async def test_alert_dismiss_with_uuid_calls_query_and_refreshes() -> None:
@@ -397,8 +398,9 @@ async def test_alert_dismiss_with_uuid_calls_query_and_refreshes() -> None:
 
 async def test_alert_restore_without_uuid_raises() -> None:
     sensor = _make_sensor(TrueNASAlertSensor, {})
-    with pytest.raises(ServiceValidationError, match="uuid"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.restore()
+    assert exc_info.value.translation_key == "missing_uuid"
 
 
 async def test_alert_restore_with_uuid_calls_query_and_refreshes() -> None:
@@ -539,14 +541,26 @@ async def test_dataset_snapshot_both_fail_raises() -> None:
     sensor = _make_dataset()
     sensor.coordinator.api.query.side_effect = [None, None]
     sensor.coordinator.api.error = "no permission"
-    with pytest.raises(HomeAssistantError, match="no permission"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await sensor.snapshot()
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "snapshot",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "no permission",
+    }
 
 
 async def test_dataset_lock_rejects_unencrypted() -> None:
     sensor = _make_dataset({"encrypted": False})
-    with pytest.raises(ServiceValidationError, match="not encrypted"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.lock()
+    assert exc_info.value.translation_key == "dataset_not_encrypted"
+    assert exc_info.value.translation_placeholders == {
+        "dataset": "tank/data",
+        "action": "lock",
+    }
 
 
 async def test_dataset_lock_already_locked_returns_early() -> None:
@@ -568,15 +582,22 @@ async def test_dataset_lock_runs_job_to_success() -> None:
 
 async def test_dataset_unlock_rejects_unencrypted() -> None:
     sensor = _make_dataset({"encrypted": False})
-    with pytest.raises(ServiceValidationError, match="not encrypted"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_not_encrypted"
+    assert exc_info.value.translation_placeholders == {
+        "dataset": "tank/data",
+        "action": "unlock",
+    }
 
 
 async def test_dataset_unlock_no_passphrase_raises() -> None:
     sensor = _make_dataset({"encrypted": True})
     sensor.coordinator.config_entry.data.pop("dataset_passphrases", None)
-    with pytest.raises(ServiceValidationError, match="No passphrase"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.unlock()
+    assert exc_info.value.translation_key == "missing_passphrase"
+    assert exc_info.value.translation_placeholders == {"dataset": "tank/data"}
 
 
 async def test_dataset_unlock_already_unlocked_returns_early() -> None:
@@ -606,8 +627,15 @@ async def test_dataset_unlock_job_success_with_failed_entries_raises() -> None:
             "result": {"failed": {"tank/data": {"error": "bad passphrase"}}},
         },
     ]
-    with pytest.raises(HomeAssistantError, match="bad passphrase"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await sensor.unlock(passphrase="wrong")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "tank/data: bad passphrase",
+    }
 
 
 async def test_dataset_unlock_job_failed_state_raises() -> None:
@@ -616,15 +644,29 @@ async def test_dataset_unlock_job_failed_state_raises() -> None:
         42,
         {"state": "FAILED", "error": "disk error"},
     ]
-    with pytest.raises(HomeAssistantError, match="disk error"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "disk error",
+    }
 
 
 async def test_dataset_run_job_invalid_job_id_raises() -> None:
     sensor = _make_dataset({"encrypted": True, "locked": True})
     sensor.coordinator.api.query.return_value = None
-    with pytest.raises(HomeAssistantError, match="invalid job id"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "invalid job id",
+    }
 
 
 async def test_dataset_wait_for_job_missing_job_exhausts_retries() -> None:
@@ -632,9 +674,37 @@ async def test_dataset_wait_for_job_missing_job_exhausts_retries() -> None:
     sensor.coordinator.api.query.side_effect = [42, None, None, None, None, None]
     with (
         patch("custom_components.truenas_ce.sensor.asyncio.sleep", new=AsyncMock()),
-        pytest.raises(HomeAssistantError, match="not found"),
+        pytest.raises(HomeAssistantError) as exc_info,
     ):
         await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "job 42 not found",
+    }
+
+
+async def test_dataset_wait_for_job_timeout_raises() -> None:
+    sensor = _make_dataset({"encrypted": True, "locked": True})
+    sensor.coordinator.api.query.side_effect = [42, {"state": "RUNNING"}]
+    with (
+        patch(
+            "custom_components.truenas_ce.sensor.asyncio.sleep",
+            new=AsyncMock(side_effect=TimeoutError),
+        ),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await sensor.unlock(passphrase="secret")
+    assert exc_info.value.translation_key == "dataset_action_failed"
+    assert exc_info.value.translation_placeholders == {
+        "action": "unlock",
+        "dataset": "tank/data",
+        "host": sensor.coordinator.host,
+        "reason": "timed out waiting for completion",
+    }
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 async def test_dataset_passphrase_set_stores_in_config_entry() -> None:
@@ -647,8 +717,9 @@ async def test_dataset_passphrase_set_stores_in_config_entry() -> None:
 async def test_dataset_passphrase_set_no_name_raises() -> None:
     sensor = _make_dataset({"name": None})
     sensor._data["name"] = None
-    with pytest.raises(ServiceValidationError, match="unknown"):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await sensor.passphrase_set("secret")
+    assert exc_info.value.translation_key == "unknown_dataset_name"
 
 
 # ---------------------------

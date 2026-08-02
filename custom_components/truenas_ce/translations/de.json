@@ -131,6 +131,65 @@
             }
         }
     },
+    "exceptions": {
+        "unsupported_action": {
+            "message": "Die Aktion {action} wird von dieser TrueNAS-Entität nicht unterstützt ({entity_id})"
+        },
+        "action_failed": {
+            "message": "TrueNAS-Aktion {action} ist auf {host} fehlgeschlagen: {error}"
+        },
+        "run_task_failed": {
+            "message": "TrueNAS-Aktion ist auf {host} fehlgeschlagen: {error}"
+        },
+        "scrub_failed": {
+            "message": "TrueNAS-Scrub für Pool {pool} ist auf {host} fehlgeschlagen: {error}"
+        },
+        "alert_action_failed": {
+            "message": "Aktion {action} für Alert {uuid} ist auf {host} fehlgeschlagen: {error}"
+        },
+        "system_update_failed": {
+            "message": "Start des TrueNAS-System-Updates auf {host} fehlgeschlagen: {error}"
+        },
+        "app_update_failed": {
+            "message": "Start des TrueNAS-App-Updates für {app} auf {host} fehlgeschlagen: {error}"
+        },
+        "missing_uuid": {
+            "message": "Fehlender Pflichtparameter: uuid"
+        },
+        "dataset_action_failed": {
+            "message": "Aktion {action} für Dataset {dataset} auf {host} fehlgeschlagen: {reason}"
+        },
+        "dataset_not_encrypted": {
+            "message": "Dataset {dataset} ist nicht verschlüsselt; Aktion {action} nicht möglich"
+        },
+        "missing_passphrase": {
+            "message": "Keine Passphrase für Dataset {dataset} angegeben oder gespeichert. Rufen Sie zuerst passphrase_set auf oder geben Sie die Passphrase im Aktionsaufruf an."
+        },
+        "unknown_dataset_name": {
+            "message": "Passphrase kann nicht gespeichert werden: Dataset-Name unbekannt"
+        },
+        "config_entry_not_loaded": {
+            "message": "TrueNAS-Instanz {entry_id} ist nicht geladen (Status: {state})"
+        },
+        "config_entry_not_found": {
+            "message": "TrueNAS-Instanz {entry_id} nicht gefunden"
+        },
+        "no_config_entries": {
+            "message": "Keine TrueNAS-Instanzen konfiguriert"
+        },
+        "multiple_config_entries": {
+            "message": "Mehrere TrueNAS-Instanzen ({count}); bitte config_entry angeben"
+        },
+        "missing_alert_uuid": {
+            "message": "Für die Aktion {action} ist eine Alert-UUID erforderlich"
+        },
+        "missing_dataset_path": {
+            "message": "dataset_path ist erforderlich"
+        },
+        "passphrase_not_found": {
+            "message": "Keine gespeicherte Passphrase für Dataset {dataset} gefunden"
+        }
+    },
     "entity": {
         "button": {
             "statistics_cleanup": {

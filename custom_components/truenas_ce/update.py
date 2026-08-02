@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .coordinator import TrueNASCoordinator
 from .entity import TrueNASEntity, async_add_entities
 from .update_types import (  # noqa: F401
@@ -93,8 +94,12 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
         job_id = await self.coordinator.api.query("update.update", {"reboot": True})
         if job_id is None:
             raise HomeAssistantError(
-                f"Failed to start TrueNAS system update on {self.coordinator.host}: "
-                f"{self.coordinator.api.error or 'unknown error'}"
+                translation_domain=DOMAIN,
+                translation_key="system_update_failed",
+                translation_placeholders={
+                    "host": self.coordinator.host,
+                    "error": str(self.coordinator.api.error or "unknown error"),
+                },
             )
 
         self._data["update_jobid"] = job_id
@@ -171,9 +176,13 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         job_id = await self.coordinator.api.query("app.upgrade", [self._data["id"]])
         if job_id is None:
             raise HomeAssistantError(
-                f"Failed to start TrueNAS app update for {self._data['id']} on "
-                f"{self.coordinator.host}: "
-                f"{self.coordinator.api.error or 'unknown error'}"
+                translation_domain=DOMAIN,
+                translation_key="app_update_failed",
+                translation_placeholders={
+                    "app": self._data["id"],
+                    "host": self.coordinator.host,
+                    "error": str(self.coordinator.api.error or "unknown error"),
+                },
             )
 
         self._data["update_jobid"] = job_id
