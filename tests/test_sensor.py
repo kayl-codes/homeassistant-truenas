@@ -455,6 +455,36 @@ async def test_snapshottask_start_runs_task() -> None:
     )
 
 
+_SNAPSHOTTASK_DESC = TrueNASSensorEntityDescription(
+    key="snapshottask",
+    name="",
+    data_path="snapshottask",
+    data_attribute="state",
+    data_name="dataset",
+)
+
+
+@pytest.mark.parametrize(
+    ("naming_schema", "expected_name"),
+    [
+        ("auto-%Y-%m-%d_%H-%M_daily", "tank/data daily"),
+        ("auto-%Y-%m-%d_%H-%M-weekly", "tank/data weekly"),
+        ("auto-%Y-%m-%d_%H-%M", "tank/data"),
+        ("unknown", "tank/data"),
+    ],
+)
+def test_snapshottask_name_uses_naming_schema_suffix(
+    naming_schema: str, expected_name: str
+) -> None:
+    sensor = _make_sensor(
+        TrueNASSnapshotTaskSensor,
+        {"id": 3, "dataset": "tank/data", "naming_schema": naming_schema},
+        path="snapshottask",
+        desc=_SNAPSHOTTASK_DESC,
+    )
+    assert sensor.name == expected_name
+
+
 # ---------------------------
 #   TrueNASCloudsyncSensor
 # ---------------------------
