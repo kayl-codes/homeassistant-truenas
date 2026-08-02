@@ -30,6 +30,7 @@ from custom_components.truenas_ce.const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
     DEFAULT_DEVICE_NAME,
     DEFAULT_POLL_INTERVAL,
+    DOMAIN,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
@@ -317,6 +318,7 @@ async def test_async_run_task_raises_and_skips_optimistic_state_on_failure() -> 
     coord.async_update_listeners = MagicMock()
     with pytest.raises(HomeAssistantError) as exc_info:
         await coord.async_run_task("rsynctask.run", "1", "rsynctask")
+    assert exc_info.value.translation_domain == DOMAIN
     assert exc_info.value.translation_key == "run_task_failed"
     assert exc_info.value.translation_placeholders == {
         "host": "truenas.local",
