@@ -10,6 +10,7 @@ from _fakes import make_coordinator
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from custom_components.truenas_ce.const import DOMAIN
 from custom_components.truenas_ce.entity import (
     TrueNASEntity,
     TrueNASEntityDescription,
@@ -473,6 +474,7 @@ def test_raise_unsupported_raises_service_validation_error() -> None:
     entity = _make_entity()
     with pytest.raises(ServiceValidationError) as exc_info:
         entity._raise_unsupported("start")
+    assert exc_info.value.translation_domain == DOMAIN
     assert exc_info.value.translation_key == "unsupported_action"
     assert exc_info.value.translation_placeholders == {
         "action": "start",

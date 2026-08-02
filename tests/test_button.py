@@ -14,7 +14,7 @@ from custom_components.truenas_ce.button import (
     TrueNASStatisticsCleanupButton,
 )
 from custom_components.truenas_ce.button_types import TrueNASButtonEntityDescription
-from custom_components.truenas_ce.const import MIGRATION_LEGACY_ENTRY_ID
+from custom_components.truenas_ce.const import DOMAIN, MIGRATION_LEGACY_ENTRY_ID
 
 _RUN_DESC = TrueNASButtonEntityDescription(
     key="rsynctask_run", name="Run", data_path="rsynctask", api_method="rsynctask.run"
@@ -85,6 +85,7 @@ async def test_scrub_button_failure_raises() -> None:
     button.coordinator.api.error = "middleware down"
     with pytest.raises(HomeAssistantError) as exc_info:
         await button.async_press()
+    assert exc_info.value.translation_domain == DOMAIN
     assert exc_info.value.translation_key == "scrub_failed"
     assert exc_info.value.translation_placeholders == {
         "pool": "tank",
