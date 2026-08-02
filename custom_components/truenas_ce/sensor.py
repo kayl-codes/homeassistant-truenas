@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
@@ -746,8 +747,37 @@ class TrueNASReplicationSensor(TrueNASSensor):
 # ---------------------------
 #   TrueNASSnapshotTaskSensor
 # ---------------------------
+_SNAPSHOT_SCHEMA_TOKEN_RE = re.compile(r"%[A-Za-z]")
+
+
 class TrueNASSnapshotTaskSensor(TrueNASSensor):
     """Define a TrueNAS periodic snapshot task sensor."""
+
+    @property
+    def name(self) -> str | None:
+        """Disambiguate same-dataset tasks using naming_schema's suffix.
+
+        Several snapshot tasks (hourly/daily/weekly, ...) commonly share one
+        dataset, so the dataset-only name collides and HA appends
+        non-deterministic _2/_3 to the generated entity id (issue #55). When
+        naming_schema carries literal text after its last strftime token
+        (e.g. "auto-%Y-%m-%d_%H-%M_daily" -> "daily"), append it. Tasks left
+        at the plain default schema keep today's dataset-only name, so
+        single-task-per-dataset setups aren't force-renamed.
+        """
+        base_name = super().name
+        suffix = self._naming_schema_suffix()
+        return f"{base_name} {suffix}" if base_name and suffix else base_name
+
+    def _naming_schema_suffix(self) -> str | None:
+        """Return the literal text trailing naming_schema's last %-token."""
+        schema = self._data.get("naming_schema") if self._data else None
+        if not isinstance(schema, str):
+            return None
+        matches = list(_SNAPSHOT_SCHEMA_TOKEN_RE.finditer(schema))
+        if not matches:
+            return None
+        return schema[matches[-1].end() :].strip("-_ ") or None
 
     async def start(self) -> None:
         """Run a periodic snapshot task on demand."""
