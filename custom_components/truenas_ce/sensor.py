@@ -749,24 +749,38 @@ class TrueNASReplicationSensor(TrueNASSensor):
 # ---------------------------
 _SNAPSHOT_SCHEMA_TOKEN_RE = re.compile(r"%[A-Za-z]")
 
+# Best-effort cadence labels guessed from TrueNAS's cron `schedule` field,
+# matching its known periodic-snapshot-task presets (dom set -> monthly, dow
+# set -> weekly, hour set -> daily, else hourly). This is unverified against
+# real daily/weekly/monthly schedules (issue #55) -- HA debug logs of
+# pool.snapshottask.query were truncated when this was written, so only an
+# hourly example was available. Only used as a fallback when naming_schema
+# carries no literal suffix of its own.
+_SCHEDULE_LABEL_HOURLY = "Hourly"
+_SCHEDULE_LABEL_DAILY = "Daily"
+_SCHEDULE_LABEL_WEEKLY = "Weekly"
+_SCHEDULE_LABEL_MONTHLY = "Monthly"
+
 
 class TrueNASSnapshotTaskSensor(TrueNASSensor):
     """Define a TrueNAS periodic snapshot task sensor."""
 
     @property
     def name(self) -> str | None:
-        """Disambiguate same-dataset tasks using naming_schema's suffix.
+        """Disambiguate same-dataset tasks via naming_schema or schedule.
 
         Several snapshot tasks (hourly/daily/weekly, ...) commonly share one
         dataset, so the dataset-only name collides and HA appends
         non-deterministic _2/_3 to the generated entity id (issue #55). When
         naming_schema carries literal text after its last strftime token
-        (e.g. "auto-%Y-%m-%d_%H-%M_daily" -> "daily"), append it. Tasks left
-        at the plain default schema keep today's dataset-only name, so
-        single-task-per-dataset setups aren't force-renamed.
+        (e.g. "auto-%Y-%m-%d_%H-%M_daily" -> "daily"), append it. Otherwise
+        fall back to a cadence label guessed from the task's cron `schedule`
+        (see _schedule_suffix). Tasks matching neither keep today's
+        dataset-only name, so single-task-per-dataset setups aren't
+        force-renamed.
         """
         base_name = super().name
-        suffix = self._naming_schema_suffix()
+        suffix = self._naming_schema_suffix() or self._schedule_suffix()
         return f"{base_name} {suffix}" if base_name and suffix else base_name
 
     def _naming_schema_suffix(self) -> str | None:
@@ -778,6 +792,26 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
         if not matches:
             return None
         return schema[matches[-1].end() :].strip("-_ ") or None
+
+    def _schedule_suffix(self) -> str | None:
+        """Return a best-effort Hourly/Daily/Weekly/Monthly label.
+
+        Derived from the task's cron `schedule` dict (minute/hour/dom/month/
+        dow) using TrueNAS's known periodic-snapshot-task presets.
+        """
+        schedule = self._data.get("schedule") if self._data else None
+        if not isinstance(schedule, dict):
+            return None
+        dom, dow, hour = (schedule.get(field) for field in ("dom", "dow", "hour"))
+        if dom not in ("*", None):
+            return _SCHEDULE_LABEL_MONTHLY
+        if dow not in ("*", None):
+            return _SCHEDULE_LABEL_WEEKLY
+        if hour not in ("*", None):
+            return _SCHEDULE_LABEL_DAILY
+        if hour == "*":
+            return _SCHEDULE_LABEL_HOURLY
+        return None
 
     async def start(self) -> None:
         """Run a periodic snapshot task on demand."""

@@ -485,6 +485,67 @@ def test_snapshottask_name_uses_naming_schema_suffix(
     assert sensor.name == expected_name
 
 
+@pytest.mark.parametrize(
+    ("schedule", "expected_name"),
+    [
+        (
+            {"minute": "0", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Hourly",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Daily",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "1"},
+            "tank/data Weekly",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"},
+            "tank/data Monthly",
+        ),
+        ({}, "tank/data"),
+        ("not-a-dict", "tank/data"),
+    ],
+)
+def test_snapshottask_name_falls_back_to_schedule(
+    schedule: dict | str, expected_name: str
+) -> None:
+    sensor = _make_sensor(
+        TrueNASSnapshotTaskSensor,
+        {
+            "id": 3,
+            "dataset": "tank/data",
+            "naming_schema": "auto-%Y-%m-%d_%H-%M",
+            "schedule": schedule,
+        },
+        path="snapshottask",
+        desc=_SNAPSHOTTASK_DESC,
+    )
+    assert sensor.name == expected_name
+
+
+def test_snapshottask_name_naming_schema_suffix_wins_over_schedule() -> None:
+    sensor = _make_sensor(
+        TrueNASSnapshotTaskSensor,
+        {
+            "id": 3,
+            "dataset": "tank/data",
+            "naming_schema": "auto-%Y-%m-%d_%H-%M_daily",
+            "schedule": {
+                "minute": "0",
+                "hour": "*",
+                "dom": "*",
+                "month": "*",
+                "dow": "*",
+            },
+        },
+        path="snapshottask",
+        desc=_SNAPSHOTTASK_DESC,
+    )
+    assert sensor.name == "tank/data daily"
+
+
 # ---------------------------
 #   TrueNASCloudsyncSensor
 # ---------------------------

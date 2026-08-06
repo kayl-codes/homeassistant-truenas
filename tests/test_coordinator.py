@@ -3050,9 +3050,13 @@ async def test_get_snapshottask_parses_when_monitored() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_SNAPSHOTS]}
     coord.api = MagicMock()
-    coord.api.query = AsyncMock(return_value=[{"id": 1, "dataset": "tank/data"}])
+    schedule = {"minute": "0", "hour": "*", "dom": "*", "month": "*", "dow": "*"}
+    coord.api.query = AsyncMock(
+        return_value=[{"id": 1, "dataset": "tank/data", "schedule": schedule}]
+    )
     await coord.get_snapshottask()
     assert 1 in coord.ds["snapshottask"]
+    assert coord.ds["snapshottask"][1]["schedule"] == schedule
 
 
 async def test_get_scrub_parses_response() -> None:
