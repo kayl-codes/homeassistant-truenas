@@ -504,6 +504,18 @@ def test_snapshottask_name_uses_naming_schema_suffix(
             {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"},
             "tank/data Monthly",
         ),
+        (
+            # Contrary to any known TrueNAS preset (both dom and dow pinned);
+            # dom is checked first, so this resolves to Monthly.
+            {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "1"},
+            "tank/data Monthly",
+        ),
+        (
+            # No known preset matches (custom "every 2 hours" schedule) ->
+            # no suffix, plain dataset-only name.
+            {"minute": "0", "hour": "*/2", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
         ({}, "tank/data"),
         ("not-a-dict", "tank/data"),
     ],

@@ -762,6 +762,15 @@ _SCHEDULE_LABEL_WEEKLY = "Weekly"
 _SCHEDULE_LABEL_MONTHLY = "Monthly"
 
 
+def _is_pinned_schedule_field(value: Any) -> bool:
+    """Return True if a cron schedule field is a fixed, non-wildcard value.
+
+    "*" means "every unit" and "*/2" etc. means "every Nth unit" -- neither
+    pins the field to a specific value, so both are treated as unset.
+    """
+    return isinstance(value, str) and "*" not in value
+
+
 class TrueNASSnapshotTaskSensor(TrueNASSensor):
     """Define a TrueNAS periodic snapshot task sensor."""
 
@@ -797,17 +806,24 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
         """Return a best-effort Hourly/Daily/Weekly/Monthly label.
 
         Derived from the task's cron `schedule` dict (minute/hour/dom/month/
-        dow) using TrueNAS's known periodic-snapshot-task presets.
+        dow) using TrueNAS's known periodic-snapshot-task presets, which pin
+        exactly one of dom/dow/hour to a fixed value and leave the rest at
+        "*". The presets are checked in dom -> dow -> hour order, so a
+        schedule that (contrary to any known preset) has both dom and dow
+        pinned is labeled Monthly. A schedule matching no preset at all --
+        e.g. a custom "every 2 hours" (`hour: "*/2"`) schedule, which is
+        wildcarded but not the literal "*" -- yields no label, leaving the
+        plain dataset-only name rather than a misleading guess.
         """
         schedule = self._data.get("schedule") if self._data else None
         if not isinstance(schedule, dict):
             return None
         dom, dow, hour = (schedule.get(field) for field in ("dom", "dow", "hour"))
-        if dom not in ("*", None):
+        if _is_pinned_schedule_field(dom):
             return _SCHEDULE_LABEL_MONTHLY
-        if dow not in ("*", None):
+        if _is_pinned_schedule_field(dow):
             return _SCHEDULE_LABEL_WEEKLY
-        if hour not in ("*", None):
+        if _is_pinned_schedule_field(hour):
             return _SCHEDULE_LABEL_DAILY
         if hour == "*":
             return _SCHEDULE_LABEL_HOURLY
