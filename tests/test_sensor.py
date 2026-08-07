@@ -552,6 +552,13 @@ def test_snapshottask_name_uses_naming_schema_suffix(
             {"minute": "0", "hour": None, "dom": "*", "month": "*", "dow": "*"},
             "tank/data Hourly",
         ),
+        (
+            # A fully wildcard schedule (minute included) means "every
+            # minute", not hourly -- Hourly requires minute to be pinned to
+            # the run time within the hour, so this stays unclassified.
+            {"minute": "*", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
         ({}, "tank/data"),
         ("not-a-dict", "tank/data"),
     ],
