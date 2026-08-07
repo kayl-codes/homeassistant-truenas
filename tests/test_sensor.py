@@ -533,6 +533,25 @@ def test_snapshottask_name_uses_naming_schema_suffix(
             {"minute": "0", "hour": "0", "dom": "1", "month": "1", "dow": "*"},
             "tank/data",
         ),
+        (
+            # A step on `minute` ("every 5 minutes") isn't a single fixed
+            # value either, even though hour/dom/dow/month otherwise look
+            # like the Hourly preset -> no suffix.
+            {"minute": "*/5", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # Plain ints are accepted as pinned values too, not just
+            # digit-only strings.
+            {"minute": 0, "hour": 0, "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Daily",
+        ),
+        (
+            # A missing `hour` key (None) is treated as wildcard, same as
+            # an explicit "*".
+            {"minute": "0", "hour": None, "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Hourly",
+        ),
         ({}, "tank/data"),
         ("not-a-dict", "tank/data"),
     ],
