@@ -749,24 +749,64 @@ class TrueNASReplicationSensor(TrueNASSensor):
 # ---------------------------
 _SNAPSHOT_SCHEMA_TOKEN_RE = re.compile(r"%[A-Za-z]")
 
+# Best-effort cadence labels guessed from TrueNAS's cron `schedule` field,
+# matching its known periodic-snapshot-task presets (dom set -> monthly, dow
+# set -> weekly, hour set -> daily, else hourly). This is unverified against
+# real daily/weekly/monthly schedules (issue #55) -- HA debug logs of
+# pool.snapshottask.query were truncated when this was written, so only an
+# hourly example was available. Only used as a fallback when naming_schema
+# carries no literal suffix of its own.
+_SCHEDULE_LABEL_HOURLY = "Hourly"
+_SCHEDULE_LABEL_DAILY = "Daily"
+_SCHEDULE_LABEL_WEEKLY = "Weekly"
+_SCHEDULE_LABEL_MONTHLY = "Monthly"
+
+# The cron fields read off a snapshot task's `schedule` dict, centralised
+# here so the field names are typed once rather than repeated at each call
+# site that inspects the dict.
+_SCHEDULE_FIELDS = ("minute", "dom", "dow", "hour", "month")
+
+
+def _is_pinned_schedule_field(value: Any) -> bool:
+    """Return True if a cron schedule field is a single fixed number.
+
+    TrueNAS's simple Hourly/Daily/Weekly/Monthly presets only ever pin a
+    field to one plain number. The API is expected to send these as
+    digit-only strings, but plain ints are accepted too in case a future
+    or unexpected response shape uses them (bools are excluded since
+    `isinstance(True, int)` is True in Python).
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, str) and value.isdigit()
+
+
+def _is_wildcard_schedule_field(value: Any) -> bool:
+    """Return True if a cron schedule field is unset ("*" or absent)."""
+    return value in ("*", None)
+
 
 class TrueNASSnapshotTaskSensor(TrueNASSensor):
     """Define a TrueNAS periodic snapshot task sensor."""
 
     @property
     def name(self) -> str | None:
-        """Disambiguate same-dataset tasks using naming_schema's suffix.
+        """Disambiguate same-dataset tasks via naming_schema or schedule.
 
         Several snapshot tasks (hourly/daily/weekly, ...) commonly share one
         dataset, so the dataset-only name collides and HA appends
         non-deterministic _2/_3 to the generated entity id (issue #55). When
         naming_schema carries literal text after its last strftime token
-        (e.g. "auto-%Y-%m-%d_%H-%M_daily" -> "daily"), append it. Tasks left
-        at the plain default schema keep today's dataset-only name, so
-        single-task-per-dataset setups aren't force-renamed.
+        (e.g. "auto-%Y-%m-%d_%H-%M_daily" -> "daily"), append it. Otherwise
+        fall back to a cadence label guessed from the task's cron `schedule`
+        (see _schedule_suffix). Tasks matching neither keep today's
+        dataset-only name, so single-task-per-dataset setups aren't
+        force-renamed.
         """
         base_name = super().name
-        suffix = self._naming_schema_suffix()
+        suffix = self._naming_schema_suffix() or self._schedule_suffix()
         return f"{base_name} {suffix}" if base_name and suffix else base_name
 
     def _naming_schema_suffix(self) -> str | None:
@@ -778,6 +818,62 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
         if not matches:
             return None
         return schema[matches[-1].end() :].strip("-_ ") or None
+
+    def _schedule_suffix(self) -> str | None:
+        """Return a best-effort Hourly/Daily/Weekly/Monthly label.
+
+        Derived from the task's cron `schedule` dict (minute/hour/dom/month/
+        dow) using TrueNAS's known periodic-snapshot-task presets, which pin
+        exactly one of dom/dow/hour to a single fixed number, pin `minute`
+        to a single fixed number too (the run time within that hour/day),
+        and leave `month` plus the remaining fields at "*". If any field is
+        neither wildcarded nor a single fixed number -- a step ("*/2" on
+        `minute` or `hour`), range ("1-5") or list ("1,15") -- or if `month`
+        is pinned (which never occurs in any of the four presets), the
+        schedule doesn't match a known preset at all, so it's left
+        unclassified rather than guessed at from whichever field happens to
+        still look pinned. `minute` itself never distinguishes between
+        presets (every preset pins it), so it's only used for this shape
+        check, not for the dom -> dow -> hour classification below, which
+        means a schedule that (contrary to any known preset) has both dom
+        and dow pinned is labeled Monthly. An empty `schedule` dict (no
+        fields at all) is rejected up front rather than falling through to
+        "every field is missing, so every field is wildcard" -> Hourly, and
+        a fully wildcard schedule (minute included) is likewise left
+        unclassified rather than labeled Hourly, since a genuine Hourly
+        preset always pins `minute` to the run time within the hour --
+        minute *also* being "*" would mean "every minute", not hourly.
+        Tasks matching no preset keep the plain dataset-only name rather
+        than risk a misleading guess.
+        """
+        schedule = self._data.get("schedule") if self._data else None
+        if not isinstance(schedule, dict) or not schedule:
+            return None
+        minute, dom, dow, hour, month = (
+            schedule.get(field) for field in _SCHEDULE_FIELDS
+        )
+        fields = (minute, dom, dow, hour, month)
+        if any(
+            not (_is_pinned_schedule_field(f) or _is_wildcard_schedule_field(f))
+            for f in fields
+        ):
+            return None
+        if _is_pinned_schedule_field(month):
+            return None
+        if _is_pinned_schedule_field(dom):
+            return _SCHEDULE_LABEL_MONTHLY
+        if _is_pinned_schedule_field(dow):
+            return _SCHEDULE_LABEL_WEEKLY
+        if _is_pinned_schedule_field(hour):
+            return _SCHEDULE_LABEL_DAILY
+        # The `any(...)` guard above guarantees every field is pinned or
+        # wildcard, and hour didn't match the pinned branch above, so hour
+        # is wildcard here -- no need to re-check it. Hourly still requires
+        # `minute` to be pinned; see the docstring note on fully wildcard
+        # schedules above.
+        if _is_pinned_schedule_field(minute):
+            return _SCHEDULE_LABEL_HOURLY
+        return None
 
     async def start(self) -> None:
         """Run a periodic snapshot task on demand."""

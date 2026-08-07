@@ -51,7 +51,7 @@ _LOGGER = getLogger(__name__)
 # Maximum number of characters of an API payload to include in debug logs.
 # Full payloads can be huge (e.g. pool.query with topology or app.query), so
 # they are summarized and truncated to keep debug logs readable.
-_LOG_PAYLOAD_LIMIT = 500
+_LOG_PAYLOAD_LIMIT = 5000
 
 # Set for the duration of a quiet connect() so the filter below can drop
 # aiotruenas's own "verify_ssl=False" warning for that call only. A plain

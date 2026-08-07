@@ -2324,6 +2324,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 {"name": "naming_schema", "default": "unknown"},
                 {"name": "allow_empty", "type": "bool", "default": False},
                 {"name": "vmware_sync", "type": "bool", "default": False},
+                {"name": "schedule", "default": {}},
                 {"name": "state", "source": "state/state", "default": "unknown"},
                 {
                     "name": "datetime",

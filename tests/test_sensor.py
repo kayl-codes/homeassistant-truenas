@@ -485,6 +485,122 @@ def test_snapshottask_name_uses_naming_schema_suffix(
     assert sensor.name == expected_name
 
 
+@pytest.mark.parametrize(
+    ("schedule", "expected_name"),
+    [
+        (
+            {"minute": "0", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Hourly",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Daily",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "1"},
+            "tank/data Weekly",
+        ),
+        (
+            {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"},
+            "tank/data Monthly",
+        ),
+        (
+            # Contrary to any known TrueNAS preset (both dom and dow pinned);
+            # dom is checked first, so this resolves to Monthly.
+            {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "1"},
+            "tank/data Monthly",
+        ),
+        (
+            # No known preset matches (custom "every 2 hours" schedule) ->
+            # no suffix, plain dataset-only name.
+            {"minute": "0", "hour": "*/2", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # A weekday range isn't a single fixed value -> not treated as
+            # a pinned dow, so no suffix.
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "1-5"},
+            "tank/data",
+        ),
+        (
+            # A day-of-month list isn't a single fixed value either.
+            {"minute": "0", "hour": "0", "dom": "1,15", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # A pinned month never occurs in any of the four presets, so the
+            # whole schedule is left unclassified even though dom is pinned.
+            {"minute": "0", "hour": "0", "dom": "1", "month": "1", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # A step on `minute` ("every 5 minutes") isn't a single fixed
+            # value either, even though hour/dom/dow/month otherwise look
+            # like the Hourly preset -> no suffix.
+            {"minute": "*/5", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # Plain ints are accepted as pinned values too, not just
+            # digit-only strings.
+            {"minute": 0, "hour": 0, "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Daily",
+        ),
+        (
+            # A missing `hour` key (None) is treated as wildcard, same as
+            # an explicit "*".
+            {"minute": "0", "hour": None, "dom": "*", "month": "*", "dow": "*"},
+            "tank/data Hourly",
+        ),
+        (
+            # A fully wildcard schedule (minute included) means "every
+            # minute", not hourly -- Hourly requires minute to be pinned to
+            # the run time within the hour, so this stays unclassified.
+            {"minute": "*", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        ({}, "tank/data"),
+        ("not-a-dict", "tank/data"),
+    ],
+)
+def test_snapshottask_name_falls_back_to_schedule(
+    schedule: dict | str, expected_name: str
+) -> None:
+    sensor = _make_sensor(
+        TrueNASSnapshotTaskSensor,
+        {
+            "id": 3,
+            "dataset": "tank/data",
+            "naming_schema": "auto-%Y-%m-%d_%H-%M",
+            "schedule": schedule,
+        },
+        path="snapshottask",
+        desc=_SNAPSHOTTASK_DESC,
+    )
+    assert sensor.name == expected_name
+
+
+def test_snapshottask_name_naming_schema_suffix_wins_over_schedule() -> None:
+    sensor = _make_sensor(
+        TrueNASSnapshotTaskSensor,
+        {
+            "id": 3,
+            "dataset": "tank/data",
+            "naming_schema": "auto-%Y-%m-%d_%H-%M_daily",
+            "schedule": {
+                "minute": "0",
+                "hour": "*",
+                "dom": "*",
+                "month": "*",
+                "dow": "*",
+            },
+        },
+        path="snapshottask",
+        desc=_SNAPSHOTTASK_DESC,
+    )
+    assert sensor.name == "tank/data daily"
+
+
 # ---------------------------
 #   TrueNASCloudsyncSensor
 # ---------------------------
