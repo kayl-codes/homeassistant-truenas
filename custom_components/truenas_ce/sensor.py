@@ -763,12 +763,17 @@ _SCHEDULE_LABEL_MONTHLY = "Monthly"
 
 
 def _is_pinned_schedule_field(value: Any) -> bool:
-    """Return True if a cron schedule field is a fixed, non-wildcard value.
+    """Return True if a cron schedule field is a single fixed number.
 
-    "*" means "every unit" and "*/2" etc. means "every Nth unit" -- neither
-    pins the field to a specific value, so both are treated as unset.
+    TrueNAS's simple Hourly/Daily/Weekly/Monthly presets only ever pin a
+    field to one plain number.
     """
-    return isinstance(value, str) and "*" not in value
+    return isinstance(value, str) and value.isdigit()
+
+
+def _is_wildcard_schedule_field(value: Any) -> bool:
+    """Return True if a cron schedule field is unset ("*" or absent)."""
+    return value in ("*", None)
 
 
 class TrueNASSnapshotTaskSensor(TrueNASSensor):
@@ -807,18 +812,32 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
 
         Derived from the task's cron `schedule` dict (minute/hour/dom/month/
         dow) using TrueNAS's known periodic-snapshot-task presets, which pin
-        exactly one of dom/dow/hour to a fixed value and leave the rest at
-        "*". The presets are checked in dom -> dow -> hour order, so a
-        schedule that (contrary to any known preset) has both dom and dow
-        pinned is labeled Monthly. A schedule matching no preset at all --
-        e.g. a custom "every 2 hours" (`hour: "*/2"`) schedule, which is
-        wildcarded but not the literal "*" -- yields no label, leaving the
-        plain dataset-only name rather than a misleading guess.
+        exactly one of dom/dow/hour to a single fixed number, leave `month`
+        at "*", and leave the rest at "*" too. If any field is neither
+        wildcarded nor a single fixed number -- a step ("*/2"), range
+        ("1-5") or list ("1,15") -- or if `month` is pinned (which never
+        occurs in any of the four presets), the schedule doesn't match a
+        known preset at all, so it's left unclassified rather than guessed
+        at from whichever field happens to still look pinned. Otherwise the
+        presets are checked in dom -> dow -> hour order, so a schedule that
+        (contrary to any known preset) has both dom and dow pinned is
+        labeled Monthly. Tasks matching no preset keep the plain
+        dataset-only name rather than risk a misleading guess.
         """
         schedule = self._data.get("schedule") if self._data else None
         if not isinstance(schedule, dict):
             return None
-        dom, dow, hour = (schedule.get(field) for field in ("dom", "dow", "hour"))
+        dom, dow, hour, month = (
+            schedule.get(field) for field in ("dom", "dow", "hour", "month")
+        )
+        fields = (dom, dow, hour, month)
+        if any(
+            not (_is_pinned_schedule_field(f) or _is_wildcard_schedule_field(f))
+            for f in fields
+        ):
+            return None
+        if _is_pinned_schedule_field(month):
+            return None
         if _is_pinned_schedule_field(dom):
             return _SCHEDULE_LABEL_MONTHLY
         if _is_pinned_schedule_field(dow):

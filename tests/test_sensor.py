@@ -516,6 +516,23 @@ def test_snapshottask_name_uses_naming_schema_suffix(
             {"minute": "0", "hour": "*/2", "dom": "*", "month": "*", "dow": "*"},
             "tank/data",
         ),
+        (
+            # A weekday range isn't a single fixed value -> not treated as
+            # a pinned dow, so no suffix.
+            {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "1-5"},
+            "tank/data",
+        ),
+        (
+            # A day-of-month list isn't a single fixed value either.
+            {"minute": "0", "hour": "0", "dom": "1,15", "month": "*", "dow": "*"},
+            "tank/data",
+        ),
+        (
+            # A pinned month never occurs in any of the four presets, so the
+            # whole schedule is left unclassified even though dom is pinned.
+            {"minute": "0", "hour": "0", "dom": "1", "month": "1", "dow": "*"},
+            "tank/data",
+        ),
         ({}, "tank/data"),
         ("not-a-dict", "tank/data"),
     ],
