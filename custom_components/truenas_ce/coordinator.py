@@ -2099,12 +2099,19 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   get_certificates
     # ---------------------------
     async def get_certificates(self) -> None:
-        """Get TrueNAS certificates."""
+        """Get TrueNAS certificates.
+
+        Keyed by ``name`` (DB-unique in TrueNAS) rather than the raw ``id``:
+        replacing a certificate's content (e.g. a manual renewal/reissue, as
+        opposed to TrueNAS's own in-place scheduled auto-renewal) deletes the
+        old database row and creates a new one with a fresh ``id`` but the
+        same ``name``, which otherwise made the sensor look orphaned (#61).
+        """
         certificates = await self.api.query("certificate.query")
         self.ds["certificate"] = parse_api(
             data={},
             source=certificates,
-            key="id",
+            key="name",
             vals=_CERTIFICATE_VALS,
         )
         now = dt_util.utcnow()

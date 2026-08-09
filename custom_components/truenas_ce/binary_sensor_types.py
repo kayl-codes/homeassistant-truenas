@@ -242,7 +242,7 @@ SENSOR_TYPES: tuple[TrueNASBinarySensorEntityDescription, ...] = (
         data_is_on="expired",
         data_name="name",
         data_uid=None,
-        data_reference="id",
+        data_reference="name",
     ),
 )
 

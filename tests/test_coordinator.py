@@ -2844,7 +2844,7 @@ async def test_get_certificates_computes_days_until_expiry() -> None:
         ]
     )
     await coord.get_certificates()
-    assert coord.ds["certificate"][1]["days_until_expiry"] in (9, 10)
+    assert coord.ds["certificate"]["cert1"]["days_until_expiry"] in (9, 10)
 
 
 async def test_get_certificates_none_expiry_when_until_missing() -> None:
@@ -2853,7 +2853,7 @@ async def test_get_certificates_none_expiry_when_until_missing() -> None:
     coord.api = MagicMock()
     coord.api.query = AsyncMock(return_value=[{"id": 1, "name": "cert1"}])
     await coord.get_certificates()
-    assert coord.ds["certificate"][1]["days_until_expiry"] is None
+    assert coord.ds["certificate"]["cert1"]["days_until_expiry"] is None
 
 
 # ---------------------------
