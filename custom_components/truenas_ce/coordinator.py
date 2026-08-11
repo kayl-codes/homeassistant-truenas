@@ -337,9 +337,10 @@ def _is_truenas_sensor_id(statistic_id: str, device_slug: str) -> bool:
     every *other* entry's orphaned statistics too, since all of them contain
     the same "truenas" substring -- producing one duplicate Repairs issue per
     config entry for the same global orphan list on multi-entry installs
-    (#61).
+    (#61). An empty ``device_slug`` (e.g. a blank device name) is rejected
+    outright, since an empty string would otherwise match every id.
     """
-    if not statistic_id.startswith("sensor."):
+    if not device_slug or not statistic_id.startswith("sensor."):
         return False
     return device_slug in statistic_id[len("sensor.") :]
 
@@ -412,6 +413,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.name = config_entry.data[CONF_NAME]
         self.host = config_entry.data[CONF_HOST]
+        # Computed once: a config-entry rename goes through a full entry
+        # reload (new coordinator instance), so this never goes stale.
+        self._device_slug = slugify(self.name)
 
         self.ds: dict[str, dict[str, Any]] = {
             "interface": {},
@@ -670,7 +674,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         ent_reg = er.async_get(self.hass)
         previous = self.orphaned_statistics
-        device_slug = slugify(self.config_entry.data[CONF_NAME])
         # Sorted once here so log output, the repair dialog and the change check
         # below all share one order: ``list_statistic_ids`` makes no ordering
         # promise, so an unsorted list could "change" without any orphan doing so.
@@ -680,7 +683,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(meta, dict)
             and meta.get("source") == "recorder"
             and isinstance(meta.get("statistic_id"), str)
-            and _is_truenas_sensor_id(meta["statistic_id"], device_slug)
+            and _is_truenas_sensor_id(meta["statistic_id"], self._device_slug)
             and ent_reg.async_get(meta["statistic_id"]) is None
         )
         # Logged only on change: detection runs every poll, and the full id list

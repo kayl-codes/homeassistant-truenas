@@ -18,7 +18,6 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.const import CONF_NAME
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
 
@@ -269,6 +268,11 @@ def test_is_truenas_sensor_id_scoped_to_this_entrys_device_slug() -> None:
         _is_truenas_sensor_id("sensor.truenas_x11dpu_cpu_usage", "truenas_nuc13")
         is False
     )
+
+
+def test_is_truenas_sensor_id_rejects_empty_device_slug() -> None:
+    """An empty slug (e.g. a blank device name) must never match every id."""
+    assert _is_truenas_sensor_id("sensor.truenas_nuc13_cpu_usage", "") is False
 
 
 # ---------------------------
@@ -1660,8 +1664,8 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.entry_id = "entry1"
     coord.config_entry.options = {}
-    coord.config_entry.data = {CONF_NAME: DEFAULT_DEVICE_NAME}
     slug = slugify(DEFAULT_DEVICE_NAME)
+    coord._device_slug = slug
     stat_ids = [
         {"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"},
         {"statistic_id": f"sensor.{slug}_arc_size", "source": "recorder"},
@@ -1703,7 +1707,7 @@ async def test_async_detect_orphaned_statistics_ignores_other_entrys_device() ->
     coord.config_entry = MagicMock()
     coord.config_entry.entry_id = "entry1"
     coord.config_entry.options = {}
-    coord.config_entry.data = {CONF_NAME: "TrueNAS nuc13"}
+    coord._device_slug = slugify("TrueNAS nuc13")
     stat_ids = [
         {
             "statistic_id": "sensor.truenas_nuc13_certificates_cert_time_until_expiry",
@@ -1744,8 +1748,8 @@ async def test_async_detect_orphaned_statistics_logs_ids_on_change(
     coord.config_entry = MagicMock()
     coord.config_entry.entry_id = "entry1"
     coord.config_entry.options = {}
-    coord.config_entry.data = {CONF_NAME: DEFAULT_DEVICE_NAME}
     slug = slugify(DEFAULT_DEVICE_NAME)
+    coord._device_slug = slug
     stat_ids = [{"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"}]
     ent_reg = MagicMock()
     ent_reg.async_get.return_value = None
