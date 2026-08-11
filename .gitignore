@@ -30,3 +30,7 @@ venv/
 # Local secrets (e.g. examples/verify_live.py credentials, .env.sonar token)
 .env
 .env.*
+
+# SonarScanner local cache / JVM crash dumps
+.scannerwork/
+hs_err_pid*.log
