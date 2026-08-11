@@ -226,18 +226,19 @@ def test_first_ipv4_returns_unknown_when_no_inet() -> None:
 # ---------------------------
 def test_is_truenas_sensor_id_matches_device_slug_token() -> None:
     slug = slugify(DEFAULT_DEVICE_NAME)
-    assert _is_truenas_sensor_id(f"sensor.{slug}_cpu_usage") is True
-    assert _is_truenas_sensor_id(f"sensor.system_{slug}_uptime") is True
-    assert _is_truenas_sensor_id(f"sensor.{slug}viacfnoauth_cpu") is True
+    assert _is_truenas_sensor_id(f"sensor.{slug}_cpu_usage", slug) is True
+    assert _is_truenas_sensor_id(f"sensor.system_{slug}_uptime", slug) is True
+    assert _is_truenas_sensor_id(f"sensor.{slug}viacfnoauth_cpu", slug) is True
 
 
 def test_is_truenas_sensor_id_rejects_other_domains() -> None:
-    assert _is_truenas_sensor_id("sensor.unrelated_integration_temp") is False
+    slug = slugify(DEFAULT_DEVICE_NAME)
+    assert _is_truenas_sensor_id("sensor.unrelated_integration_temp", slug) is False
 
 
 def test_is_truenas_sensor_id_rejects_non_sensor_entities() -> None:
     slug = slugify(DEFAULT_DEVICE_NAME)
-    assert _is_truenas_sensor_id(f"binary_sensor.{slug}_online") is False
+    assert _is_truenas_sensor_id(f"binary_sensor.{slug}_online", slug) is False
 
 
 def test_is_truenas_sensor_id_unaffected_by_domain_changes(
@@ -246,14 +247,32 @@ def test_is_truenas_sensor_id_unaffected_by_domain_changes(
     """Regression: matching used to depend on DOMAIN/LEGACY_DOMAIN, which broke
     since the 2.0.0 CE rename because DOMAIN ("truenas_ce") contains an
     underscore and can never appear whole inside an underscore-split token.
-    The fix matches ``slugify(DEFAULT_DEVICE_NAME)`` instead -- the same
-    string real entity ids are slugged from -- so behavior no longer depends
-    on DOMAIN/LEGACY_DOMAIN at all, even if both constants are ever renamed or
+    The fix matches the device-name slug instead -- the same string real
+    entity ids are slugged from -- so behavior no longer depends on
+    DOMAIN/LEGACY_DOMAIN at all, even if both constants are ever renamed or
     removed (e.g. a future HA Core submission dropping the "_ce" suffix).
     """
     monkeypatch.setattr(coordinator_module, "DOMAIN", "something_else_entirely")
     monkeypatch.setattr(coordinator_module, "LEGACY_DOMAIN", "unrelated")
-    assert _is_truenas_sensor_id("sensor.truenas_cpu_usage") is True
+    assert _is_truenas_sensor_id("sensor.truenas_cpu_usage", "truenas") is True
+
+
+def test_is_truenas_sensor_id_scoped_to_this_entrys_device_slug() -> None:
+    """Regression (#61): a global slug match flagged every entry's orphans on
+    multi-entry installs. Each entry must only match its own device slug.
+    """
+    assert (
+        _is_truenas_sensor_id("sensor.truenas_nuc13_cpu_usage", "truenas_nuc13") is True
+    )
+    assert (
+        _is_truenas_sensor_id("sensor.truenas_x11dpu_cpu_usage", "truenas_nuc13")
+        is False
+    )
+
+
+def test_is_truenas_sensor_id_rejects_empty_device_slug() -> None:
+    """An empty slug (e.g. a blank device name) must never match every id."""
+    assert _is_truenas_sensor_id("sensor.truenas_nuc13_cpu_usage", "") is False
 
 
 # ---------------------------
@@ -1646,6 +1665,7 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
     coord.config_entry.entry_id = "entry1"
     coord.config_entry.options = {}
     slug = slugify(DEFAULT_DEVICE_NAME)
+    coord._device_slug = slug
     stat_ids = [
         {"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"},
         {"statistic_id": f"sensor.{slug}_arc_size", "source": "recorder"},
@@ -1674,6 +1694,50 @@ async def test_async_detect_orphaned_statistics_filters_matching_ids() -> None:
     create_mock.assert_called_once()
 
 
+async def test_async_detect_orphaned_statistics_ignores_other_entrys_device() -> None:
+    """Regression (#61): with two TrueNAS config entries, detection used to
+    match a fixed global slug, so each entry's coordinator flagged the *other*
+    entry's orphaned statistics too and both raised their own duplicate
+    Repairs issue for the same global list. Each entry must only see
+    statistics whose id matches its own device-name slug.
+    """
+    coord = _bare_coordinator()
+    coord.hass = MagicMock()
+    coord.hass.config.components = {"recorder"}
+    coord.config_entry = MagicMock()
+    coord.config_entry.entry_id = "entry1"
+    coord.config_entry.options = {}
+    coord._device_slug = slugify("TrueNAS nuc13")
+    stat_ids = [
+        {
+            "statistic_id": "sensor.truenas_nuc13_certificates_cert_time_until_expiry",
+            "source": "recorder",
+        },
+        {
+            "statistic_id": "sensor.truenas_x11dpu_certificates_cert_time_until_expiry",
+            "source": "recorder",
+        },
+    ]
+    ent_reg = MagicMock()
+    ent_reg.async_get.return_value = None
+    with (
+        patch.object(
+            coordinator_module,
+            "get_instance",
+            return_value=MagicMock(
+                async_add_executor_job=AsyncMock(return_value=stat_ids)
+            ),
+        ),
+        patch.object(coordinator_module.er, "async_get", return_value=ent_reg),
+        patch.object(coordinator_module.ir, "async_create_issue"),
+    ):
+        await coord.async_detect_orphaned_statistics()
+
+    assert coord.orphaned_statistics == [
+        "sensor.truenas_nuc13_certificates_cert_time_until_expiry"
+    ]
+
+
 async def test_async_detect_orphaned_statistics_logs_ids_on_change(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1685,6 +1749,7 @@ async def test_async_detect_orphaned_statistics_logs_ids_on_change(
     coord.config_entry.entry_id = "entry1"
     coord.config_entry.options = {}
     slug = slugify(DEFAULT_DEVICE_NAME)
+    coord._device_slug = slug
     stat_ids = [{"statistic_id": f"sensor.{slug}_cpu_usage", "source": "recorder"}]
     ent_reg = MagicMock()
     ent_reg.async_get.return_value = None

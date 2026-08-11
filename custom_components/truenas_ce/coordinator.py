@@ -37,7 +37,6 @@ from .const import (
     CONF_MONITORED_GROUPS,
     CONF_POLL_INTERVAL,
     CONF_STATISTICS_CLEANUP_IGNORED,
-    DEFAULT_DEVICE_NAME,
     DEFAULT_MONITORED_GROUPS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
@@ -320,34 +319,30 @@ def _first_ipv4(aliases: Any) -> str:
     return "unknown"
 
 
-# Computed once at import time: _is_truenas_sensor_id runs for every recorder
-# statistic id during each statistics-cleanup pass.
-_DEVICE_NAME_SLUG = slugify(DEFAULT_DEVICE_NAME)
-
-
-def _is_truenas_sensor_id(statistic_id: str) -> bool:
-    """Return True if a recorder statistic_id looks like a TrueNAS sensor.
+def _is_truenas_sensor_id(statistic_id: str, device_slug: str) -> bool:
+    """Return True if a recorder statistic_id looks like *this entry's* sensor.
 
     Entity ids vary across versions and instance names (``sensor.truenas_...``,
     ``sensor.system_truenas_...`` and custom names whose slug merges the domain
     into a longer token, e.g. ``sensor.truenasviacfnoauth_...``). Match the
-    device-name slug as a substring of any underscore-separated token rather
-    than as an exact token or fixed prefix, so every orphaned variant is caught.
+    per-entry device-name slug as a substring of the id's remainder after
+    ``sensor.`` rather than as an exact token or fixed prefix, so every
+    orphaned variant is caught.
 
-    Deliberately matches against ``slugify(DEFAULT_DEVICE_NAME)`` ("truenas"),
-    not ``DOMAIN`` ("truenas_ce"): entity ids are slugged from the device name,
-    never from the integration domain, and ``DOMAIN`` itself contains an
-    underscore so it can never appear whole inside an underscore-split token
-    (this silently broke orphan detection from the 2.0.0 CE rename until found
-    while adding this module's test suite). Tying the match to the device name
-    instead of ``LEGACY_DOMAIN`` means this keeps working unchanged even if the
-    legacy-migration code/domain is ever removed (e.g. a future HA Core
-    submission dropping the "_ce" suffix).
+    ``device_slug`` must be ``slugify(config_entry.data[CONF_NAME])`` for the
+    entry doing the detection, not a fixed constant: entity ids are slugged
+    from the *device* name, which is user-chosen per entry (e.g. "TrueNAS
+    nuc13" vs "TrueNAS x11dpu" to tell multiple instances apart). Matching a
+    single global slug instead used to make every entry's coordinator flag
+    every *other* entry's orphaned statistics too, since all of them contain
+    the same "truenas" substring -- producing one duplicate Repairs issue per
+    config entry for the same global orphan list on multi-entry installs
+    (#61). An empty ``device_slug`` (e.g. a blank device name) is rejected
+    outright, since an empty string would otherwise match every id.
     """
-    if not statistic_id.startswith("sensor."):
+    if not device_slug or not statistic_id.startswith("sensor."):
         return False
-    tokens = statistic_id[len("sensor.") :].split("_")
-    return any(_DEVICE_NAME_SLUG in token for token in tokens)
+    return device_slug in statistic_id[len("sensor.") :]
 
 
 def _count_statistics_with_data(hass: HomeAssistant, statistic_ids: list[str]) -> int:
@@ -418,6 +413,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.name = config_entry.data[CONF_NAME]
         self.host = config_entry.data[CONF_HOST]
+        # Computed once: a config-entry rename goes through a full entry
+        # reload (new coordinator instance), so this never goes stale.
+        self._device_slug = slugify(self.name)
 
         self.ds: dict[str, dict[str, Any]] = {
             "interface": {},
@@ -646,12 +644,16 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return f"{ISSUE_STATISTICS_ORPHANED}_{self.config_entry.entry_id}"
 
     async def async_detect_orphaned_statistics(self) -> None:
-        """Find recorder statistic_ids of this integration with no live entity.
+        """Find recorder statistic_ids of this config entry with no live entity.
 
         After an entity-id rename the recorder can leave the old long-term
         statistics behind when the target name already exists. We list the
-        recorder-sourced statistics with this integration's prefix and keep those
-        whose entity is no longer in the registry.
+        recorder-sourced statistics matching this entry's device-name slug and
+        keep those whose entity is no longer in the registry. Scoping by this
+        entry's own slug (not a fixed integration-wide one) matters on
+        multi-entry installs: without it, every entry's coordinator would flag
+        every other entry's orphans too, each raising its own duplicate
+        Repairs issue for the same statistics (#61).
 
         Older leftovers are often *metadata-only* (their data points were purged
         long ago), which is why they can be reported here without being visible
@@ -681,7 +683,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(meta, dict)
             and meta.get("source") == "recorder"
             and isinstance(meta.get("statistic_id"), str)
-            and _is_truenas_sensor_id(meta["statistic_id"])
+            and _is_truenas_sensor_id(meta["statistic_id"], self._device_slug)
             and ent_reg.async_get(meta["statistic_id"]) is None
         )
         # Logged only on change: detection runs every poll, and the full id list
