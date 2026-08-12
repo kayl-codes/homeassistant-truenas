@@ -15,6 +15,9 @@ __pycache__/
 /requirements_tests.txt
 /requirements_tests_only_binary_exempt.txt
 
+# Generated Core-PR draft (built on demand by core_integrations/build_core_copy.py)
+/core_integrations/homeassistant-core-draft/
+
 # Claude Code (personal/local settings — permission rules etc.)
 .claude/
 .mcp.json
