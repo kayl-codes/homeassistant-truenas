@@ -1009,6 +1009,7 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
     @property
     def name(self) -> str | None:
         """Return the dynamic friendly name for the entity."""
+        desc_name = self._translated_description_name() or self.entity_description.key
         if self.entity_description.key in (
             "app_stats_network_rx",
             "app_stats_network_tx",
@@ -1021,13 +1022,13 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
                     return (
                         f"{resolved.get('app_name', self._uid)} "
                         f"{resolved.get('interface_name')} "
-                        f"{self.entity_description.name}"
+                        f"{desc_name}"
                     )
-                return f"{base_uid} {self.entity_description.name}"
+                return f"{base_uid} {desc_name}"
             return None
 
         app_name = self._data.get("app_name", self._uid)
-        return f"{app_name} {self.entity_description.name}"
+        return f"{app_name} {desc_name}"
 
     @property
     def native_value(self) -> Any:
