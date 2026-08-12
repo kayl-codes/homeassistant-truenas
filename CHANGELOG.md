@@ -14,6 +14,21 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.6.1] — Certificate orphaned-statistics & app-stats name fix
+
+### Fixed
+- **Orphaned statistics after a certificate update (#61):** certificate entities
+  (`certificate_expiry`, `certificate_expiration_time`, `certificate_expired`) are now keyed by
+  the certificate's stable `name` instead of TrueNAS's internal `id`, which changes on a
+  content-replacing renew/reissue (as opposed to TrueNAS's own passive scheduled auto-renewal).
+  Detection is also now scoped to each config entry's own device, so installs with multiple
+  TrueNAS instances no longer raise a duplicate Repairs issue for another entry's orphaned
+  statistics. Thanks to @janusn for reporting and verifying both release candidates.
+- **`UndefinedType._singleton` leaking into app-stats sensor names (#66):** app CPU/memory/
+  network/block-I/O sensors could briefly show a literal `UndefinedType._singleton` fragment in
+  their name before translations loaded, because a custom `name` override bypassed the safe
+  translation-lookup helper used by every other entity. Thanks to @testuser7 for the fix.
+
 ## [2.5.2] — Read-only API key log noise fix
 
 ### Fixed
