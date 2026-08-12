@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from asyncio import Lock
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from logging import getLogger
 from typing import Any
 
@@ -59,6 +61,52 @@ def format_device_identifier(inst: str, hostname: str) -> str:
     associate with the existing device instead of duplicating the format.
     """
     return f"{inst}_{hostname}"
+
+
+@lru_cache(maxsize=1)
+def _supports_via_device_id() -> bool:
+    """Whether the running HA Core's device registry accepts via_device_id.
+
+    ``via_device_id`` was only added to ``DeviceRegistry.async_get_or_create``
+    in HA Core 2026.8 -- passing it as a kwarg on an older Core raises
+    TypeError there, so it can only be used once detected as supported.
+    ``via_device`` (the older identifiers-tuple form) keeps working
+    everywhere until it is removed in 2027.8.0, so older installs fall back
+    to it. Cached: this cannot change while the process is running.
+    """
+    return (
+        "via_device_id"
+        in inspect.signature(dr.DeviceRegistry.async_get_or_create).parameters
+    )
+
+
+def register_system_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, coordinator: TrueNASCoordinator
+) -> str:
+    """Register (or fetch) the "System" device and return its registry id.
+
+    Called once from ``async_setup_entry`` after the coordinator's first
+    refresh, before platforms create entities. Every other device links to
+    it via ``coordinator.system_device_id`` (``via_device_id``) instead of
+    resolving it itself -- ``via_device`` (an identifiers tuple) is
+    deprecated as of HA Core 2027.8.0 because identifiers are no longer
+    unique across config entries.
+    """
+    inst = coordinator.config_entry.data[CONF_NAME]
+    system_info = coordinator.data["system_info"]
+    identifier = format_device_identifier(inst, system_info["hostname"])
+    http_scheme = "https" if coordinator.api.scheme == "wss" else "http"
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        connections={(DOMAIN, identifier)},
+        identifiers={(DOMAIN, identifier)},
+        name=inst,
+        model=f"{system_info['system_product']}",
+        manufacturer=f"{system_info['system_manufacturer']}",
+        sw_version=f"{system_info['version']}",
+        configuration_url=f"{http_scheme}://{config_entry.data[CONF_HOST]}",
+    )
+    return device.id
 
 
 # ---------------------------
@@ -550,18 +598,26 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                 configuration_url=f"{http_scheme}://{self.coordinator.config_entry.data[CONF_HOST]}",
             )
 
-        return DeviceInfo(
-            connections={(dev_connection, f"{dev_connection_value}")},
-            default_name=f"{self._inst} {dev_group}",
-            default_model=f"{self.coordinator.data['system_info']['system_product']}",
-            default_manufacturer=f"{self.coordinator.data['system_info']['system_manufacturer']}",
-            via_device=(
+        system_info = self.coordinator.data["system_info"]
+        device_info: DeviceInfo = {
+            "connections": {(dev_connection, f"{dev_connection_value}")},
+            "default_name": f"{self._inst} {dev_group}",
+            "default_model": f"{system_info['system_product']}",
+            "default_manufacturer": f"{system_info['system_manufacturer']}",
+        }
+        if _supports_via_device_id():
+            # Not yet in the DeviceInfo stub this project's pinned homeassistant
+            # dev-dependency ships (added upstream in HA Core 2026.8); guarded by
+            # _supports_via_device_id() at runtime regardless.
+            device_info["via_device_id"] = self.coordinator.system_device_id  # type: ignore[typeddict-unknown-key]
+        else:
+            device_info["via_device"] = (
                 DOMAIN,
                 format_device_identifier(
                     self._inst, self.coordinator.data["system_info"]["hostname"]
                 ),
-            ),
-        )
+            )
+        return device_info
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
