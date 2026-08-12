@@ -888,6 +888,46 @@ def test_app_stats_standard_native_value_and_name() -> None:
     assert sensor.available is True
 
 
+def test_app_stats_name_without_literal_name_no_translations() -> None:
+    """Descriptions that only set translation_key (no literal `name`) must not
+    leak HA's UNDEFINED sentinel into the name when no translations are loaded --
+    regression test for the fix in PR #66.
+    """
+    desc = TrueNASSensorEntityDescription(
+        key="app_stats_cpu",
+        translation_key="app_stats_cpu",
+        data_path="app_stats",
+        data_attribute="cpu",
+    )
+    coordinator = make_coordinator(
+        data={"app_stats": {"plex": {"app_name": "Plex", "cpu": 12.5}}}
+    )
+    sensor = TrueNASAppStatsSensor(coordinator, desc, "plex")
+    sensor.platform_data = None
+    assert sensor.name == "Plex app_stats_cpu"
+
+
+def test_app_stats_name_without_literal_name_translated() -> None:
+    desc = TrueNASSensorEntityDescription(
+        key="app_stats_cpu",
+        translation_key="app_stats_cpu",
+        data_path="app_stats",
+        data_attribute="cpu",
+    )
+    coordinator = make_coordinator(
+        data={"app_stats": {"plex": {"app_name": "Plex", "cpu": 12.5}}}
+    )
+    sensor = TrueNASAppStatsSensor(coordinator, desc, "plex")
+    sensor.platform_data = SimpleNamespace(
+        platform_name="truenas_ce",
+        domain="sensor",
+        platform_translations={
+            "component.truenas_ce.entity.sensor.app_stats_cpu.name": "CPU"
+        },
+    )
+    assert sensor.name == "Plex CPU"
+
+
 def test_app_stats_native_value_none_when_no_data() -> None:
     coordinator = make_coordinator(data={"app_stats": {}})
     sensor = TrueNASAppStatsSensor(coordinator, _app_stats_desc(), "plex")
