@@ -10,6 +10,14 @@
                     "verify_ssl": "SSL-Zertifikat überprüfen",
                     "cronjob_skip_disabled": "Deaktivierte Cronjobs bei manueller Ausführung überspringen",
                     "data_unit": "Einheit der Datengröße (GB oder GiB)"
+                },
+                "data_description": {
+                    "name": "Ein aussagekräftiger Name, um diese TrueNAS-Instanz von anderen zu unterscheiden, falls du mehrere einrichtest.",
+                    "host": "Der Hostname oder die IP-Adresse deiner TrueNAS-Instanz, ohne \"https://\", Pfad oder abschließenden Schrägstrich.",
+                    "api_key": "Ein API-Schlüssel, erzeugt in TrueNAS unter Credentials > API Keys.",
+                    "verify_ssl": "Das SSL-Zertifikat der TrueNAS-Instanz überprüfen. Nur deaktivieren, wenn du ein selbstsigniertes Zertifikat verwendest, das sich sonst nicht validieren lässt.",
+                    "cronjob_skip_disabled": "In TrueNAS deaktivierte Cronjobs beim manuellen Ausführen überspringen.",
+                    "data_unit": "Wähle, ob Datengrößen in dezimalen (GB) oder binären (GiB) Einheiten angezeigt werden."
                 }
             },
             "reconfigure": {
@@ -23,6 +31,11 @@
                     "dataset_passphrases": "Dataset-Passphrasen hinzufügen/aktualisieren"
                 },
                 "data_description": {
+                    "host": "Der Hostname oder die IP-Adresse deiner TrueNAS-Instanz, ohne \"https://\", Pfad oder abschließenden Schrägstrich.",
+                    "api_key": "Ein API-Schlüssel, erzeugt in TrueNAS unter Credentials > API Keys.",
+                    "verify_ssl": "Das SSL-Zertifikat der TrueNAS-Instanz überprüfen. Nur deaktivieren, wenn du ein selbstsigniertes Zertifikat verwendest, das sich sonst nicht validieren lässt.",
+                    "cronjob_skip_disabled": "In TrueNAS deaktivierte Cronjobs beim manuellen Ausführen überspringen.",
+                    "data_unit": "Wähle, ob Datengrößen in dezimalen (GB) oder binären (GiB) Einheiten angezeigt werden.",
                     "dataset_passphrases": "DatasetName#Passphrase-Paare (eine pro Zeile, z. B. tank/encrypted#MeinGeheimnis) eingeben, um Passphrasen zu speichern oder zu aktualisieren. Leer lassen, um bestehende Passphrasen unverändert zu behalten. Zum Löschen einer gespeicherten Passphrase die Aktion passphrase_remove mit dem Dataset-Pfad verwenden."
                 }
             },
@@ -31,6 +44,9 @@
                 "description": "Der API-Schlüssel für \"{name}\" ist nicht mehr gültig. Gib einen neuen API-Schlüssel ein, um die Verbindung wiederherzustellen.",
                 "data": {
                     "api_key": "API-Schlüssel"
+                },
+                "data_description": {
+                    "api_key": "Der neue API-Schlüssel, erzeugt in TrueNAS unter Credentials > API Keys."
                 }
             },
             "migrate": {
@@ -85,6 +101,8 @@
                     "monitored_groups": "Überwachte Gruppen"
                 },
                 "data_description": {
+                    "poll_interval": "Wie oft, in Sekunden, die TrueNAS-Instanz nach aktuellen Daten abgefragt wird.",
+                    "data_unit": "Wähle, ob Datengrößen in dezimalen (GB) oder binären (GiB) Einheiten angezeigt werden.",
                     "behaviors": "Wähle aus, welche Verhaltensweisen aktiv sind",
                     "monitored_groups": "Wähle Gruppen ab, die du nicht nutzt, um die Anzahl der Sensoren zu reduzieren"
                 }
