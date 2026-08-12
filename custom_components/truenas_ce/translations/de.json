@@ -390,5 +390,201 @@
                 "name": "Aktiviert"
             }
         }
+    },
+    "services": {
+        "cloudsync_run": {
+            "name": "Cloudsync ausführen",
+            "description": "Startet einen Cloudsync-Job (Cloudsync-Sensor als Ziel)."
+        },
+        "cloudsync_abort": {
+            "name": "Cloudsync abbrechen",
+            "description": "Bricht einen laufenden Cloudsync-Job ab (Cloudsync-Sensor als Ziel)."
+        },
+        "rsync_run": {
+            "name": "Rsync ausführen",
+            "description": "Startet eine Rsync-Aufgabe auf Anforderung (Rsync-Aufgaben-Sensor als Ziel)."
+        },
+        "replication_run": {
+            "name": "Replikation ausführen",
+            "description": "Startet eine Replikationsaufgabe auf Anforderung (Replikations-Sensor als Ziel)."
+        },
+        "snapshottask_run": {
+            "name": "Snapshot-Aufgabe ausführen",
+            "description": "Führt eine periodische Snapshot-Aufgabe sofort aus (Snapshot-Aufgaben-Sensor als Ziel). Hinweis: Hat das Namensschema der Aufgabe nur Minutenauflösung (z. B. auto-%Y-%m-%d_%H-%M), schlägt eine zweite Ausführung innerhalb derselben Minute auf TrueNAS fehl, weil der Snapshot-Name bereits existiert."
+        },
+        "dataset_snapshot": {
+            "name": "Dataset-Snapshot erstellen",
+            "description": "Erstellt einen sofortigen ZFS-Snapshot des angesteuerten Datasets. Der Snapshot wird unmittelbar erstellt und custom-<timestamp> genannt, unabhängig von einer periodischen Snapshot-Aufgabe (Dataset-Sensor als Ziel)."
+        },
+        "system_reboot": {
+            "name": "TrueNAS neu starten",
+            "description": "Startet das TrueNAS-System neu (Uptime-Sensor als Ziel)."
+        },
+        "system_shutdown": {
+            "name": "TrueNAS herunterfahren",
+            "description": "Fährt das TrueNAS-System herunter (Uptime-Sensor als Ziel)."
+        },
+        "system_refresh": {
+            "name": "TrueNAS-Daten aktualisieren",
+            "description": "Erzwingt eine sofortige erneute Abfrage von TrueNAS, damit Automatisierungen mit aktuellen Daten arbeiten können, ohne auf die nächste Abfrage zu warten (Uptime-Sensor als Ziel)."
+        },
+        "service_start": {
+            "name": "Dienst starten",
+            "description": "Startet einen TrueNAS-Dienst (Dienst-Binärsensor als Ziel)."
+        },
+        "service_stop": {
+            "name": "Dienst stoppen",
+            "description": "Stoppt einen TrueNAS-Dienst (Dienst-Binärsensor als Ziel)."
+        },
+        "service_restart": {
+            "name": "Dienst neu starten",
+            "description": "Startet einen TrueNAS-Dienst neu (Dienst-Binärsensor als Ziel)."
+        },
+        "service_reload": {
+            "name": "Dienst neu laden",
+            "description": "Lädt einen TrueNAS-Dienst neu (Dienst-Binärsensor als Ziel)."
+        },
+        "vm_start": {
+            "name": "VM starten",
+            "description": "Startet eine virtuelle Maschine (VM-Binärsensor als Ziel).",
+            "fields": {
+                "overcommit": {
+                    "name": "Speicher überbuchen",
+                    "description": "Erlaubt den Start der VM auch bei unzureichendem freiem Speicher."
+                }
+            }
+        },
+        "vm_stop": {
+            "name": "VM stoppen",
+            "description": "Stoppt eine virtuelle Maschine (VM-Binärsensor als Ziel)."
+        },
+        "vm_restart": {
+            "name": "VM neu starten",
+            "description": "Startet eine virtuelle Maschine neu (VM-Binärsensor als Ziel)."
+        },
+        "container_start": {
+            "name": "Container starten",
+            "description": "Startet einen Container (Incus-Instanz; Container-Binärsensor als Ziel)."
+        },
+        "container_stop": {
+            "name": "Container stoppen",
+            "description": "Stoppt einen Container (Incus-Instanz; Container-Binärsensor als Ziel)."
+        },
+        "container_restart": {
+            "name": "Container neu starten",
+            "description": "Startet einen Container neu (Incus-Instanz; Container-Binärsensor als Ziel)."
+        },
+        "app_start": {
+            "name": "App starten",
+            "description": "Startet eine App (App-Binärsensor als Ziel)."
+        },
+        "app_stop": {
+            "name": "App stoppen",
+            "description": "Stoppt eine App (App-Binärsensor als Ziel)."
+        },
+        "dataset_lock": {
+            "name": "Dataset sperren",
+            "description": "Sperrt ein verschlüsseltes Dataset (Dataset-Sensor als Ziel).",
+            "fields": {
+                "force_umount": {
+                    "name": "Umount erzwingen",
+                    "description": "Erzwingt das Aushängen des Datasets vor dem Sperren."
+                }
+            }
+        },
+        "dataset_unlock": {
+            "name": "Dataset entsperren",
+            "description": "Entsperrt ein verschlüsseltes Dataset (Dataset-Sensor als Ziel). Wird passphrase weggelassen, wird die über passphrase_set (oder den Reconfigure-Flow) gespeicherte Passphrase verwendet. Löst einen Fehler aus, wenn keine der beiden verfügbar ist.",
+            "fields": {
+                "passphrase": {
+                    "name": "Passphrase",
+                    "description": "Passphrase für dieses Dataset. Leer lassen, um auf die gespeicherte Passphrase zurückzugreifen. Hinweis: Wird sie hier angegeben, erscheint der Wert einmalig in Debug-Logs und Automatisierungs-Traces."
+                },
+                "recursive": {
+                    "name": "Rekursiv",
+                    "description": "Wendet den Schlüssel oder die Passphrase auf alle verschlüsselten Kind-Datasets an."
+                },
+                "force": {
+                    "name": "Erzwingen",
+                    "description": "Erzwingt das Entsperren auch dann, wenn der Mount-Pfad bereits existiert und nicht leer ist."
+                }
+            }
+        },
+        "passphrase_set": {
+            "name": "Dataset-Passphrase speichern",
+            "description": "Speichert dauerhaft eine Passphrase für das angesteuerte Dataset im Config Entry, damit dataset_unlock aufgerufen werden kann, ohne die Passphrase jedes Mal anzugeben. Die Passphrase wird im Klartext zusammen mit dem API-Schlüssel im Konfigurationsspeicher von HA abgelegt. Hinweis: Der Passphrase-Wert erscheint beim Aufruf dieser Aktion einmalig in Debug-Logs.",
+            "fields": {
+                "passphrase": {
+                    "name": "Passphrase",
+                    "description": "Die für dieses Dataset zu speichernde Passphrase."
+                }
+            }
+        },
+        "passphrase_remove": {
+            "name": "Gespeicherte Dataset-Passphrase entfernen",
+            "description": "Löscht eine gespeicherte Dataset-Passphrase anhand ihres vollständigen Dataset-Pfads. Funktioniert sowohl für aktive Datasets als auch für verwaiste Einträge durch einen Tippfehler. Danach benötigt dataset_unlock für dieses Dataset wieder das passphrase-Feld.",
+            "fields": {
+                "dataset_path": {
+                    "name": "Dataset-Pfad",
+                    "description": "Vollständiger, wie gespeichert angegebener Dataset-Pfad, z. B. tank/encrypted oder Backup/PP-Test. Muss mit dem beim Speichern der Passphrase verwendeten Schlüssel übereinstimmen."
+                },
+                "config_entry": {
+                    "name": "TrueNAS-Instanz",
+                    "description": "TrueNAS-Instanz (optional, Standard ist die einzige/erste Instanz)."
+                }
+            }
+        },
+        "passphrase_list": {
+            "name": "Gespeicherte Dataset-Passphrasen auflisten",
+            "description": "Gibt die Namen der Datasets zurück, für die eine Passphrase gespeichert ist. Die Passphrasen selbst sind nie in der Antwort enthalten.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS-Instanz",
+                    "description": "TrueNAS-Instanz (optional, Standard ist die einzige/erste Instanz)."
+                }
+            }
+        },
+        "alert_dismiss": {
+            "name": "Alarm verwerfen",
+            "description": "Verwirft einen TrueNAS-Alarm anhand seiner UUID.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS-Instanz",
+                    "description": "TrueNAS-Instanz (optional, Standard ist die einzige/erste Instanz)."
+                },
+                "uuid": {
+                    "name": "Alarm-UUID",
+                    "description": "UUID des zu verwerfenden Alarms (sichtbar in der Antwort von alert_list)."
+                }
+            }
+        },
+        "alert_restore": {
+            "name": "Alarm wiederherstellen",
+            "description": "Stellt einen zuvor verworfenen TrueNAS-Alarm anhand seiner UUID wieder her.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS-Instanz",
+                    "description": "TrueNAS-Instanz (optional, Standard ist die einzige/erste Instanz)."
+                },
+                "uuid": {
+                    "name": "Alarm-UUID",
+                    "description": "UUID des zuvor verworfenen, wiederherzustellenden Alarms."
+                }
+            }
+        },
+        "alert_list": {
+            "name": "Alarme auflisten",
+            "description": "Listet alle TrueNAS-Alarme mit UUIDs und formatierten Meldungen auf.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS-Instanz",
+                    "description": "TrueNAS-Instanz (optional, Standard ist die einzige/erste Instanz)."
+                },
+                "properties": {
+                    "name": "Einzuschließende Eigenschaften",
+                    "description": "Kommagetrennte Liste von Eigenschaften (z. B. \"uuid,formatted,level\"). \"*\" für alle Eigenschaften verwenden."
+                }
+            }
+        }
     }
 }
