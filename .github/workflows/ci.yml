@@ -5,6 +5,7 @@ on:
     paths:
       - 'custom_components/**'
       - 'tests/**'
+      - 'core_integrations/**'
       - '.github/**'
       - '**.md'
       - 'docs/**'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'custom_components/**'
       - 'tests/**'
+      - 'core_integrations/**'
       - '.github/**'
       - '**.md'
       - 'docs/**'
