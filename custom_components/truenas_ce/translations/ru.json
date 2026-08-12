@@ -10,6 +10,14 @@
                     "verify_ssl": "Проверка SSL-сертификата",
                     "cronjob_skip_disabled": "Пропускать отключённые cron-задачи при ручном запуске",
                     "data_unit": "Единица размера данных (GB или GiB)"
+                },
+                "data_description": {
+                    "name": "Понятное имя, чтобы отличать этот экземпляр TrueNAS от других, если вы настраиваете несколько.",
+                    "host": "Имя хоста или IP-адрес вашего экземпляра TrueNAS, без «https://», пути и завершающей косой черты.",
+                    "api_key": "Ключ API, созданный в TrueNAS в разделе Credentials > API Keys.",
+                    "verify_ssl": "Проверять SSL-сертификат экземпляра TrueNAS. Отключайте только при использовании самоподписанного сертификата, который иначе нельзя проверить.",
+                    "cronjob_skip_disabled": "Пропускать cron-задачи, отключённые в TrueNAS, при ручном запуске действия.",
+                    "data_unit": "Выберите, отображаются ли размеры данных в десятичных (GB) или двоичных (GiB) единицах."
                 }
             },
             "reconfigure": {
@@ -23,6 +31,11 @@
                     "dataset_passphrases": "Add/update dataset passphrases"
                 },
                 "data_description": {
+                    "host": "Имя хоста или IP-адрес вашего экземпляра TrueNAS, без «https://», пути и завершающей косой черты.",
+                    "api_key": "Ключ API, созданный в TrueNAS в разделе Credentials > API Keys.",
+                    "verify_ssl": "Проверять SSL-сертификат экземпляра TrueNAS. Отключайте только при использовании самоподписанного сертификата, который иначе нельзя проверить.",
+                    "cronjob_skip_disabled": "Пропускать cron-задачи, отключённые в TrueNAS, при ручном запуске действия.",
+                    "data_unit": "Выберите, отображаются ли размеры данных в десятичных (GB) или двоичных (GiB) единицах.",
                     "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
@@ -31,6 +44,9 @@
                 "description": "Ключ API для \"{name}\" больше недействителен. Введите новый ключ API, чтобы восстановить соединение.",
                 "data": {
                     "api_key": "Ключ API"
+                },
+                "data_description": {
+                    "api_key": "Новый ключ API, созданный в TrueNAS в разделе Credentials > API Keys."
                 }
             },
             "migrate": {
@@ -85,6 +101,8 @@
                     "monitored_groups": "Отслеживаемые группы"
                 },
                 "data_description": {
+                    "poll_interval": "Как часто, в секундах, опрашивать экземпляр TrueNAS для получения актуальных данных.",
+                    "data_unit": "Выберите, отображаются ли размеры данных в десятичных (GB) или двоичных (GiB) единицах.",
                     "behaviors": "Выберите, какие варианты поведения активны",
                     "monitored_groups": "Снимите отметки с групп, которые вы не используете, чтобы уменьшить количество сенсоров"
                 }

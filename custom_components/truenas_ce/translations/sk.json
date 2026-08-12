@@ -10,6 +10,14 @@
                     "verify_ssl": "Overte certifikát SSL",
                     "cronjob_skip_disabled": "Pri manuálnom spustení preskočiť zakázané cron úlohy",
                     "data_unit": "Jednotka veľkosti údajov (GB alebo GiB)"
+                },
+                "data_description": {
+                    "name": "Zrozumiteľný názov na odlíšenie tejto inštancie TrueNAS od ostatných, ak nastavujete viac ako jednu.",
+                    "host": "Názov hostiteľa alebo IP adresa vašej inštancie TrueNAS, bez \"https://\", cesty alebo koncovej lomky.",
+                    "api_key": "API kľúč vytvorený v TrueNAS v časti Credentials > API Keys.",
+                    "verify_ssl": "Overiť SSL certifikát inštancie TrueNAS. Vypnite iba vtedy, ak používate samopodpísaný certifikát, ktorý inak nemožno overiť.",
+                    "cronjob_skip_disabled": "Pri manuálnom spustení akcie preskočiť cron úlohy zakázané v TrueNAS.",
+                    "data_unit": "Vyberte, či sa veľkosti údajov zobrazujú v desiatkových (GB) alebo binárnych (GiB) jednotkách."
                 }
             },
             "reconfigure": {
@@ -23,6 +31,11 @@
                     "dataset_passphrases": "Add/update dataset passphrases"
                 },
                 "data_description": {
+                    "host": "Názov hostiteľa alebo IP adresa vašej inštancie TrueNAS, bez \"https://\", cesty alebo koncovej lomky.",
+                    "api_key": "API kľúč vytvorený v TrueNAS v časti Credentials > API Keys.",
+                    "verify_ssl": "Overiť SSL certifikát inštancie TrueNAS. Vypnite iba vtedy, ak používate samopodpísaný certifikát, ktorý inak nemožno overiť.",
+                    "cronjob_skip_disabled": "Pri manuálnom spustení akcie preskočiť cron úlohy zakázané v TrueNAS.",
+                    "data_unit": "Vyberte, či sa veľkosti údajov zobrazujú v desiatkových (GB) alebo binárnych (GiB) jednotkách.",
                     "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
             },
@@ -31,6 +44,9 @@
                 "description": "API kľúč pre \"{name}\" už nie je platný. Zadajte nový API kľúč na obnovenie pripojenia.",
                 "data": {
                     "api_key": "API kľúč"
+                },
+                "data_description": {
+                    "api_key": "Nový API kľúč vytvorený v TrueNAS v časti Credentials > API Keys."
                 }
             },
             "migrate": {
@@ -85,6 +101,8 @@
                     "monitored_groups": "Monitorované skupiny"
                 },
                 "data_description": {
+                    "poll_interval": "Ako často, v sekundách, sa má inštancia TrueNAS dopytovať na aktuálne údaje.",
+                    "data_unit": "Vyberte, či sa veľkosti údajov zobrazujú v desiatkových (GB) alebo binárnych (GiB) jednotkách.",
                     "behaviors": "Vyberte, ktoré správania sú aktívne",
                     "monitored_groups": "Zrušte výber skupín, ktoré nepoužívate, aby ste znížili počet senzorov"
                 }
