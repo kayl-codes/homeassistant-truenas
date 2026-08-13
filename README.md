@@ -333,7 +333,7 @@ target:
 
 
 Minimum requirements:
-* TrueNAS 25.04 or later (tested with 25.10.4)
+* TrueNAS 25.04 or later (tested with 25.10.5)
 * Home Assistant 2025.8.0
 
 ## Using TrueNAS development branch
@@ -399,7 +399,7 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   [Remote access, reverse proxies & Cloudflare](#remote-access-reverse-proxies--cloudflare) for
   supported alternatives (local IP/VPN, or a plain TLS-terminating reverse proxy).
 * **TrueNAS development/nightly builds are not officially supported.** The integration is tested
-  against stable TrueNAS releases (currently 25.04–25.10.4); features may break without notice on a
+  against stable TrueNAS releases (currently 25.04–25.10.5); features may break without notice on a
   development branch.
 * **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
   **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
