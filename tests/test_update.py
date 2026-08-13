@@ -45,6 +45,7 @@ def test_system_update_not_running_has_no_percentage() -> None:
 
 async def test_system_update_async_install_success() -> None:
     update = _make_system_update({})
+    update.coordinator.supports_update_run.return_value = False
     update.coordinator.api.query.return_value = 555
     await update.async_install(version=None, backup=False)
     update.coordinator.api.query.assert_awaited_once_with(
