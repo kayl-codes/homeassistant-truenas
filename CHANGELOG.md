@@ -14,6 +14,25 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
+
+### Fixed
+- **"Unable to start TrueNAS update" on TrueNAS 25.10+ (#72):** TrueNAS 25.10 split the legacy
+  `update.update` API method in two — it's now settings-only, and the actual update installer
+  moved to a new `update.run` method. Calling the old method still worked for checking updates, but
+  clicking **Install** on the system Update entity now failed server-side with
+  `[EINVAL] data.reboot: Extra inputs are not permitted`. The integration now detects the running
+  TrueNAS version and calls `update.run` on 25.10+, while still using `update.update` on 25.04–25.09
+  installs. Thanks to @Regnator for reporting and confirming the fix.
+
+### Changed
+- **Device-registry & coordinator internals hardened against upcoming Home Assistant Core
+  deprecations:** `DataUpdateCoordinator` now receives `config_entry` explicitly instead of relying
+  on its deprecated `ContextVar` fallback, and device linking prefers the newer `via_device_id` over
+  `via_device` where the running Home Assistant Core version supports it (with automatic runtime
+  feature-detection, so installs on older Core versions are unaffected). No user-facing behavior
+  change on any currently-supported Home Assistant version.
+
 ## [2.6.1] — Certificate orphaned-statistics & app-stats name fix
 
 ### Fixed
