@@ -407,6 +407,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             self.hass,
             _LOGGER,
+            config_entry=config_entry,
             name=DOMAIN,
             update_interval=timedelta(seconds=poll),
         )
@@ -416,6 +417,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Computed once: a config-entry rename goes through a full entry
         # reload (new coordinator instance), so this never goes stale.
         self._device_slug = slugify(self.name)
+        # Set by entity.register_system_device() in async_setup_entry, after the
+        # first refresh and before platforms create entities.
+        self.system_device_id: str | None = None
 
         self.ds: dict[str, dict[str, Any]] = {
             "interface": {},

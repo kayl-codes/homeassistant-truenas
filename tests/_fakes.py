@@ -74,6 +74,7 @@ def make_coordinator(
         ),
         last_update_success=True,
         orphaned_statistics=[],
+        system_device_id="test-system-device-id",
         async_refresh=AsyncMock(),
         async_request_refresh=AsyncMock(),
         async_run_task=AsyncMock(),

@@ -59,6 +59,7 @@ from .entity import (
     _composite_references,
     _is_uid_excluded,
     format_unique_id,
+    register_system_device,
 )
 from .helper import alert_action, scaled_data_unit
 from .migration import (
@@ -565,6 +566,9 @@ async def async_setup_entry(
     coordinator = TrueNASCoordinator(hass, config_entry)
     await coordinator.async_config_entry_first_refresh()
     config_entry.runtime_data = coordinator
+    coordinator.system_device_id = register_system_device(
+        hass, config_entry, coordinator
+    )
 
     # Community-Edition rename: free the legacy "truenas" entity_ids before the
     # platforms create the new entities (no-op until the domain is renamed).
