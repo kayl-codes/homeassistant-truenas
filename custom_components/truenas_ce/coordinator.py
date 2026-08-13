@@ -925,6 +925,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     # ---------------------------
+    #   supports_update_run
+    # ---------------------------
+    def supports_update_run(self) -> bool:
+        """Return True if the "update.run" API method is available.
+
+        TrueNAS 25.10 split the legacy "update.update" method: it now only
+        writes update *settings*, while installing an update (with the
+        optional reboot) moved to the new "update.run" method.
+        """
+        return (self._version_major, self._version_minor) >= (25, 10)
+
+    # ---------------------------
     #   _detect_virtualization
     # ---------------------------
     def _detect_virtualization(self) -> None:

@@ -89,9 +89,13 @@ class TrueNASUpdate(TrueNASEntity, UpdateEntity):
         """Install the latest available update.
 
         The version parameter is currently ignored; TrueNAS API only supports
-        installing the latest available firmware via update.update.
+        installing the latest available firmware. TrueNAS 25.10 moved this
+        from "update.update" (now settings-only) to "update.run".
         """
-        job_id = await self.coordinator.api.query("update.update", {"reboot": True})
+        method = (
+            "update.run" if self.coordinator.supports_update_run() else "update.update"
+        )
+        job_id = await self.coordinator.api.query(method, {"reboot": True})
         if job_id is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
