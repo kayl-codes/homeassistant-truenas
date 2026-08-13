@@ -414,7 +414,7 @@
         },
         "dataset_snapshot": {
             "name": "Create dataset snapshot",
-            "description": "Create an on-demand ZFS snapshot of the targeted dataset. The snapshot is taken immediately and named custom-<timestamp>, independent of any periodic snapshot task (target a dataset sensor)."
+            "description": "Create an on-demand ZFS snapshot of the targeted dataset. The snapshot is taken immediately and named \"custom-\" followed by a timestamp, independent of any periodic snapshot task (target a dataset sensor)."
         },
         "system_reboot": {
             "name": "Reboot TrueNAS",
