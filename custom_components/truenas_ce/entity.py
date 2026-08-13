@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from logging import getLogger
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
@@ -598,18 +598,20 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                 configuration_url=f"{http_scheme}://{self.coordinator.config_entry.data[CONF_HOST]}",
             )
 
+        # A plain dict, not DeviceInfo, so the conditional via_device/via_device_id
+        # key below doesn't depend on whichever DeviceInfo TypedDict shape mypy
+        # happens to resolve (via_device_id was only added to it upstream in HA
+        # Core 2026.8 -- see _supports_via_device_id()).
         system_info = self.coordinator.data["system_info"]
-        device_info: DeviceInfo = {
+        device_info: dict[str, Any] = {
             "connections": {(dev_connection, f"{dev_connection_value}")},
             "default_name": f"{self._inst} {dev_group}",
             "default_model": f"{system_info['system_product']}",
             "default_manufacturer": f"{system_info['system_manufacturer']}",
         }
-        if _supports_via_device_id():
-            # Not yet in the DeviceInfo stub this project's pinned homeassistant
-            # dev-dependency ships (added upstream in HA Core 2026.8); guarded by
-            # _supports_via_device_id() at runtime regardless.
-            device_info["via_device_id"] = self.coordinator.system_device_id  # type: ignore[typeddict-unknown-key]
+        system_device_id = self.coordinator.system_device_id
+        if _supports_via_device_id() and system_device_id is not None:
+            device_info["via_device_id"] = system_device_id
         else:
             device_info["via_device"] = (
                 DOMAIN,
@@ -617,7 +619,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                     self._inst, self.coordinator.data["system_info"]["hostname"]
                 ),
             )
-        return device_info
+        return cast("DeviceInfo", device_info)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
