@@ -54,6 +54,17 @@ async def test_system_update_async_install_success() -> None:
     update.coordinator.async_refresh.assert_awaited_once()
 
 
+async def test_system_update_async_install_uses_update_run_on_2510_plus() -> None:
+    update = _make_system_update({})
+    update.coordinator.supports_update_run.return_value = True
+    update.coordinator.api.query.return_value = 555
+    await update.async_install(version=None, backup=False)
+    update.coordinator.api.query.assert_awaited_once_with(
+        "update.run", {"reboot": True}
+    )
+    assert update._data["update_jobid"] == 555
+
+
 async def test_system_update_async_install_failure_raises() -> None:
     update = _make_system_update({})
     update.coordinator.api.query.return_value = None
