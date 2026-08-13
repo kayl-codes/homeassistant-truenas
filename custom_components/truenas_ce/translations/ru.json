@@ -390,5 +390,201 @@
                 "name": "Включено"
             }
         }
+    },
+    "services": {
+        "cloudsync_run": {
+            "name": "Cloudsync run",
+            "description": "Start a cloudsync job (target the cloudsync sensor)."
+        },
+        "cloudsync_abort": {
+            "name": "Cloudsync abort",
+            "description": "Abort a running cloudsync job (target the cloudsync sensor)."
+        },
+        "rsync_run": {
+            "name": "Rsync run",
+            "description": "Start an rsync task on demand (target the rsync task sensor)."
+        },
+        "replication_run": {
+            "name": "Replication run",
+            "description": "Start a replication task on demand (target the replication sensor)."
+        },
+        "snapshottask_run": {
+            "name": "Snapshot task run",
+            "description": "Run a periodic snapshot task now (target the snapshot task sensor). Note: if the task's naming schema only has minute resolution (e.g. auto-%Y-%m-%d_%H-%M), running it twice within the same minute fails on TrueNAS because the snapshot name already exists."
+        },
+        "dataset_snapshot": {
+            "name": "Create dataset snapshot",
+            "description": "Create an on-demand ZFS snapshot of the targeted dataset. The snapshot is taken immediately and named custom-<timestamp>, independent of any periodic snapshot task (target a dataset sensor)."
+        },
+        "system_reboot": {
+            "name": "Reboot TrueNAS",
+            "description": "Reboot the TrueNAS system (target the Uptime sensor)."
+        },
+        "system_shutdown": {
+            "name": "Shut down TrueNAS",
+            "description": "Shut down the TrueNAS system (target the Uptime sensor)."
+        },
+        "system_refresh": {
+            "name": "Refresh TrueNAS data",
+            "description": "Force an immediate re-poll of TrueNAS so automations can act on current data without waiting for the next poll (target the Uptime sensor)."
+        },
+        "service_start": {
+            "name": "Service start",
+            "description": "Start a TrueNAS service (target the service binary sensor)."
+        },
+        "service_stop": {
+            "name": "Service stop",
+            "description": "Stop a TrueNAS service (target the service binary sensor)."
+        },
+        "service_restart": {
+            "name": "Service restart",
+            "description": "Restart a TrueNAS service (target the service binary sensor)."
+        },
+        "service_reload": {
+            "name": "Service reload",
+            "description": "Reload a TrueNAS service (target the service binary sensor)."
+        },
+        "vm_start": {
+            "name": "VM start",
+            "description": "Start a virtual machine (target the VM binary sensor).",
+            "fields": {
+                "overcommit": {
+                    "name": "Overcommit memory",
+                    "description": "Allow the VM to launch even when there is insufficient free memory."
+                }
+            }
+        },
+        "vm_stop": {
+            "name": "VM stop",
+            "description": "Stop a virtual machine (target the VM binary sensor)."
+        },
+        "vm_restart": {
+            "name": "VM restart",
+            "description": "Restart a virtual machine (target the VM binary sensor)."
+        },
+        "container_start": {
+            "name": "Container start",
+            "description": "Start a container (Incus instance; target the container binary sensor)."
+        },
+        "container_stop": {
+            "name": "Container stop",
+            "description": "Stop a container (Incus instance; target the container binary sensor)."
+        },
+        "container_restart": {
+            "name": "Container restart",
+            "description": "Restart a container (Incus instance; target the container binary sensor)."
+        },
+        "app_start": {
+            "name": "App start",
+            "description": "Start an app (target the app binary sensor)."
+        },
+        "app_stop": {
+            "name": "App stop",
+            "description": "Stop an app (target the app binary sensor)."
+        },
+        "dataset_lock": {
+            "name": "Lock dataset",
+            "description": "Lock an encrypted dataset (target the dataset sensor).",
+            "fields": {
+                "force_umount": {
+                    "name": "Force umount",
+                    "description": "Force unmounting of the dataset before locking."
+                }
+            }
+        },
+        "dataset_unlock": {
+            "name": "Unlock dataset",
+            "description": "Unlock an encrypted dataset (target the dataset sensor). If passphrase is omitted, the passphrase stored via passphrase_set (or the ReConfigure flow) is used. Raises an error when neither is available.",
+            "fields": {
+                "passphrase": {
+                    "name": "Passphrase",
+                    "description": "Passphrase for this dataset. Leave empty to fall back to the stored passphrase. Note: when supplied here, the value appears once in debug logs and automation traces."
+                },
+                "recursive": {
+                    "name": "Recursive",
+                    "description": "Apply the key or passphrase to all encrypted children."
+                },
+                "force": {
+                    "name": "Force",
+                    "description": "Force unlock even if the mount path already exists and is not empty."
+                }
+            }
+        },
+        "passphrase_set": {
+            "name": "Store dataset passphrase",
+            "description": "Persist a passphrase for the targeted dataset in the config entry so that dataset_unlock can be called without supplying the passphrase each time. The passphrase is stored in plain text alongside the API key in HA's config storage. Note: the passphrase value appears once in debug logs when this action is called.",
+            "fields": {
+                "passphrase": {
+                    "name": "Passphrase",
+                    "description": "The passphrase to store for this dataset."
+                }
+            }
+        },
+        "passphrase_remove": {
+            "name": "Remove stored dataset passphrase",
+            "description": "Delete a stored dataset passphrase by its full dataset path. Works for both active datasets and orphaned entries left by a typo. After calling this, dataset_unlock will again require the passphrase field for that dataset.",
+            "fields": {
+                "dataset_path": {
+                    "name": "Dataset path",
+                    "description": "Full dataset path as stored, e.g. tank/encrypted or Backup/PP-Test. Must match the key used when the passphrase was stored."
+                },
+                "config_entry": {
+                    "name": "TrueNAS instance",
+                    "description": "TrueNAS instance (optional, defaults to the only/first instance)."
+                }
+            }
+        },
+        "passphrase_list": {
+            "name": "List stored dataset passphrases",
+            "description": "Return the dataset names for which a passphrase is stored. The passphrases themselves are never included in the response.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS instance",
+                    "description": "TrueNAS instance (optional, defaults to the only/first instance)."
+                }
+            }
+        },
+        "alert_dismiss": {
+            "name": "Dismiss alert",
+            "description": "Dismiss a TrueNAS alert by UUID.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS instance",
+                    "description": "TrueNAS instance (optional, defaults to the only/first instance)."
+                },
+                "uuid": {
+                    "name": "Alert UUID",
+                    "description": "UUID of the alert to dismiss (visible in the alert_list response)."
+                }
+            }
+        },
+        "alert_restore": {
+            "name": "Restore alert",
+            "description": "Restore (un-dismiss) a TrueNAS alert by UUID.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS instance",
+                    "description": "TrueNAS instance (optional, defaults to the only/first instance)."
+                },
+                "uuid": {
+                    "name": "Alert UUID",
+                    "description": "UUID of the previously dismissed alert to restore."
+                }
+            }
+        },
+        "alert_list": {
+            "name": "List alerts",
+            "description": "List all TrueNAS alerts with UUIDs and formatted messages.",
+            "fields": {
+                "config_entry": {
+                    "name": "TrueNAS instance",
+                    "description": "TrueNAS instance (optional, defaults to the only/first instance)."
+                },
+                "properties": {
+                    "name": "Properties to include",
+                    "description": "Comma-separated list of properties (e.g. \"uuid,formatted,level\"). Use \"*\" for all properties."
+                }
+            }
+        }
     }
 }
