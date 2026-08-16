@@ -309,6 +309,25 @@ def _ups_value(graph_data: Any) -> float | None:
     return _netdata_mean_value(graph_data)
 
 
+def _cpuset_size(cpuset: Any) -> int:
+    """Return the number of CPUs in a cpuset string such as ``"0-3,6"``, else 0."""
+    if not isinstance(cpuset, str) or not cpuset.strip():
+        return 0
+    count = 0
+    for part in cpuset.split(","):
+        part = part.strip()
+        try:
+            if "-" in part:
+                start, end = (int(p) for p in part.split("-", 1))
+                count += max(0, end - start + 1)
+            elif part:
+                int(part)
+                count += 1
+        except ValueError:
+            return 0
+    return count
+
+
 def _first_ipv4(aliases: Any) -> str:
     """Return the first IPv4 address from a virt instance alias list, else 'unknown'."""
     if isinstance(aliases, list):
@@ -940,6 +959,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         optional reboot) moved to the new "update.run" method.
         """
         return (self._version_major, self._version_minor) >= (25, 10)
+
+    # ---------------------------
+    #   supports_container_api
+    # ---------------------------
+    def supports_container_api(self) -> bool:
+        """Return True if containers live under the ``container.*`` namespace.
+
+        TrueNAS 26.0 dropped the Incus-based ``virt.*`` API; LXC containers
+        are now managed through ``container.query`` / ``container.start`` /
+        ``container.stop`` (libvirt), with a different entry shape.
+        """
+        return (self._version_major, self._version_minor) >= (26, 0)
 
     # ---------------------------
     #   _detect_virtualization
@@ -1947,6 +1978,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["container"] = {}
             return
 
+        if self.supports_container_api():
+            await self._get_container_v26()
+            return
+
         instances = await self.api.query("virt.instance.query")
         if isinstance(instances, list):
             containers = [
@@ -1993,6 +2028,53 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["container"][uid]["memory"] = round(memory / 1048576)
             self.ds["container"][uid]["running"] = vals.get("status") == "RUNNING"
             self.ds["container"][uid]["ip_address"] = _first_ipv4(vals.get("aliases"))
+
+    async def _get_container_v26(self) -> None:
+        """Get LXC containers via ``container.query`` (TrueNAS 26.0+).
+
+        The entry carries no memory, image or IP information and its status
+        is nested (``status.state``); the resulting record keeps the same keys
+        as the Incus path so entities and attributes are unchanged.
+        """
+        containers = await self.api.query("container.query")
+        if not isinstance(containers, list):
+            _LOGGER.debug(
+                "container.query returned %s (expected list); no containers",
+                type(containers).__name__,
+            )
+            containers = []
+
+        self.ds["container"] = parse_api(
+            data=self.ds["container"],
+            source=containers,
+            key="id",
+            vals=[
+                {"name": "id", "default": "unknown"},
+                {"name": "name", "default": "unknown"},
+                {"name": "cpuset", "default": None},
+                {"name": "autostart", "type": "bool", "default": False},
+                {"name": "image", "source": "description", "default": "unknown"},
+                {"name": "status", "source": "status/state", "default": "unknown"},
+            ],
+            ensure_vals=[
+                {"name": "type", "default": "CONTAINER"},
+                {"name": "cpu", "default": 0},
+                {"name": "memory", "default": 0},
+                {"name": "aliases", "default": []},
+                {"name": "running", "type": "bool", "default": False},
+                {"name": "ip_address", "default": "unknown"},
+            ],
+        )
+
+        for vals in self.ds["container"].values():
+            vals["type"] = "CONTAINER"
+            vals["cpu"] = _cpuset_size(vals.pop("cpuset", None))
+            vals["memory"] = 0
+            vals["aliases"] = []
+            vals["ip_address"] = "unknown"
+            if not vals.get("image"):
+                vals["image"] = "unknown"
+            vals["running"] = vals.get("status") == "RUNNING"
 
     # ---------------------------
     #   get_directoryservices

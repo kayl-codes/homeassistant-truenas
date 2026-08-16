@@ -15,7 +15,10 @@ from .binary_sensor_types import (  # noqa: F401
     SENSOR_TYPES,
     TrueNASBinarySensorEntityDescription,
 )
-from .const import VIRT_INSTANCE_STOP_OPTIONS
+from .const import (
+    CONTAINER_STOP_OPTIONS,
+    VIRT_INSTANCE_STOP_OPTIONS,
+)
 from .entity import TrueNASEntity, async_add_entities
 
 _LOGGER = getLogger(__name__)
@@ -129,19 +132,25 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
 #   TrueNASContainerBinarySensor
 # ---------------------------
 class TrueNASContainerBinarySensor(TrueNASBinarySensor):
-    """Define a TrueNAS Container (virt instance) Binary Sensor."""
+    """Define a TrueNAS Container Binary Sensor.
+
+    Containers are Incus ``virt.instance.*`` objects up to TrueNAS 25.x and
+    LXC ``container.*`` objects from 26.0 on; the coordinator's
+    ``supports_container_api`` picks the namespace.
+    """
 
     async def _current_status(self) -> str | None:
         """Return the container's live status, or None if it can't be determined.
 
         The cached coordinator status is stale right after a stop/start (until the
-        next poll), so the start/stop guards query the current state via
-        ``virt.instance.query`` (the response shape is known: top-level ``status``).
+        next poll), so the start/stop guards query the current state directly.
         A transient query failure returns None so the caller proceeds (fail-safe).
         """
+        v26 = self.coordinator.supports_container_api()
+        method = "container.query" if v26 else "virt.instance.query"
         try:
             instances = await self.coordinator.api.query(
-                "virt.instance.query", [[["id", "=", self._data["id"]]]]
+                method, [[["id", "=", self._data["id"]]]]
             )
         except Exception:
             _LOGGER.exception(
@@ -149,39 +158,64 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
             )
             return None
         instance = instances[0] if isinstance(instances, list) and instances else None
-        return instance.get("status") if isinstance(instance, dict) else None
+        if not isinstance(instance, dict):
+            return None
+        status = instance.get("status")
+        if v26:
+            # container.* nests the state: {"state": "RUNNING", ...}
+            return status.get("state") if isinstance(status, dict) else None
+        return status if isinstance(status, str) else None
 
     async def start(self) -> None:
-        """Start a container."""  # virt.instance.start
+        """Start a container."""
         # Only skip when positively running; if the status is unknown, proceed.
         if await self._current_status() == "RUNNING":
             _LOGGER.warning("Container %s is already running", self._data.get("name"))
             return
 
-        await self.coordinator.api.query("virt.instance.start", [self._data["id"]])
+        method = (
+            "container.start"
+            if self.coordinator.supports_container_api()
+            else "virt.instance.start"
+        )
+        await self.coordinator.api.query(method, [self._data["id"]])
         self._raise_if_api_error("start")
         await self.coordinator.async_request_refresh()
 
     async def stop(self) -> None:
-        """Stop a container."""  # virt.instance.stop
+        """Stop a container."""
         # Only skip when positively not running; if unknown, proceed.
         status = await self._current_status()
         if status is not None and status != "RUNNING":
             _LOGGER.warning("Container %s is not running", self._data.get("name"))
             return
 
-        await self.coordinator.api.query(
-            "virt.instance.stop", [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS]
-        )
+        if self.coordinator.supports_container_api():
+            await self.coordinator.api.query(
+                "container.stop", [self._data["id"], CONTAINER_STOP_OPTIONS]
+            )
+        else:
+            await self.coordinator.api.query(
+                "virt.instance.stop", [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS]
+            )
         self._raise_if_api_error("stop")
         await self.coordinator.async_request_refresh()
 
     async def restart(self) -> None:
-        """Restart a container."""  # virt.instance.restart
+        """Restart a container."""
         # A restart always applies (no state guard): it stops and starts again.
-        await self.coordinator.api.query(
-            "virt.instance.restart", [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS]
-        )
+        if self.coordinator.supports_container_api():
+            # container.* has no restart method: wait for the stop job, then start.
+            await self.coordinator.api.query(
+                "container.stop", [self._data["id"], CONTAINER_STOP_OPTIONS], job=True
+            )
+            self._raise_if_api_error("restart")
+            await self.coordinator.api.query("container.start", [self._data["id"]])
+        else:
+            await self.coordinator.api.query(
+                "virt.instance.restart",
+                [self._data["id"], VIRT_INSTANCE_STOP_OPTIONS],
+            )
         self._raise_if_api_error("restart")
         await self.coordinator.async_request_refresh()
 

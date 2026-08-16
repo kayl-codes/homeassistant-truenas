@@ -310,8 +310,15 @@ class TrueNASAPI:
         self,
         service: str,
         params: dict[str, Any] | list[Any] | None = None,
+        *,
+        job: bool = False,
     ) -> Any:
-        """Retrieve data from TrueNAS."""
+        """Retrieve data from TrueNAS.
+
+        With ``job=True`` the call is treated as a job: the client waits for
+        the job to finish and returns its result (or ``None`` on failure)
+        instead of the bare job id.
+        """
         if not self.connected() and not await self.connect():
             return None
 
@@ -319,7 +326,10 @@ class TrueNASAPI:
         _LOGGER.debug("TrueNAS %s query: %s, %s", self._host, service, params)
 
         try:
-            data = await self._client.call(service, params)
+            if job:
+                data = await self._client.call(service, params, job=True)
+            else:
+                data = await self._client.call(service, params)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
             _log_call_error(self._host, exc)
