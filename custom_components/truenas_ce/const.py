@@ -42,6 +42,14 @@ UPTIME_EPOCH_TOLERANCE_SECONDS = 300
 QUERY_TIMEOUT: float = 30.0
 
 # Error constants
+# TrueNAS job states in which an app upgrade job is still active.
+APP_UPDATE_JOB_ACTIVE_STATES: frozenset[str] = frozenset({"WAITING", "RUNNING"})
+# How often the app update entity polls its upgrade job while installing (s).
+APP_UPDATE_JOB_POLL_INTERVAL = 2
+# Give up on entity-side job tracking after this long; the coordinator's
+# regular poll keeps mirroring the job state afterwards.
+APP_UPDATE_JOB_TIMEOUT = 30 * 60
+
 ERR_CERT_VERIFY_FAILED = "certificate_verify_failed"
 ERR_HTTP_USED = "http_used"
 ERR_TLS_NOT_SUPPORTED = "tlsv1_not_supported"

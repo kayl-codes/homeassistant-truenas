@@ -68,6 +68,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._app_stats_sub_id = None
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    coord.host = "truenas.local"
     return coord
 
 
@@ -3145,7 +3146,7 @@ async def test_get_scrub_parses_response() -> None:
 
 
 # ---------------------------
-#   get_app / _clear_finished_app_updates
+#   get_app / app update job tracking
 # ---------------------------
 async def test_get_app_catalog_update_available() -> None:
     coord = _bare_coordinator()
@@ -3163,7 +3164,7 @@ async def test_get_app_catalog_update_available() -> None:
             }
         ]
     )
-    coord._clear_finished_app_updates = AsyncMock()
+    coord._refresh_app_update_jobs = AsyncMock()
     await coord.get_app()
     assert coord.ds["app"]["app1"]["running"] is True
     assert coord.ds["app"]["app1"]["update_available"] is True
@@ -3185,7 +3186,7 @@ async def test_get_app_custom_app_falls_back_to_image_updates() -> None:
             }
         ]
     )
-    coord._clear_finished_app_updates = AsyncMock()
+    coord._refresh_app_update_jobs = AsyncMock()
     await coord.get_app()
     assert coord.ds["app"]["app1"]["update_available"] is True
 
@@ -3206,36 +3207,92 @@ async def test_get_app_no_update_for_noncustom_without_upgrade() -> None:
             }
         ]
     )
-    coord._clear_finished_app_updates = AsyncMock()
+    coord._refresh_app_update_jobs = AsyncMock()
     await coord.get_app()
     assert coord.ds["app"]["app1"]["update_available"] is False
 
 
-async def test_clear_finished_app_updates_resets_when_not_running() -> None:
+async def test_refresh_app_update_job_mirrors_running_progress() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {"app1": {"update_jobid": 5}}}
     coord.api = MagicMock()
-    coord.api.query = AsyncMock(return_value=[{"state": "SUCCESS"}])
-    await coord._clear_finished_app_updates()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 5,
+                "state": "RUNNING",
+                "progress": {"percent": 42, "description": "Pulling image"},
+            }
+        ]
+    )
+    job = await coord.async_refresh_app_update_job("app1")
+    assert job is not None and job["state"] == "RUNNING"
+    coord.api.query.assert_awaited_once_with("core.get_jobs", params=[[["id", "=", 5]]])
+    app = coord.ds["app"]["app1"]
+    assert app["update_jobid"] == 5
+    assert app["update_state"] == "RUNNING"
+    assert app["update_progress"] == 42
+    assert app["update_description"] == "Pulling image"
+
+
+async def test_refresh_app_update_job_resets_when_finished() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 5, "update_progress": 90}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"id": 5, "state": "SUCCESS", "progress": {"percent": 100}}]
+    )
+    job = await coord.async_refresh_app_update_job("app1")
+    assert job is not None and job["state"] == "SUCCESS"
+    app = coord.ds["app"]["app1"]
+    assert app["update_jobid"] == 0
+    assert app["update_progress"] == 0
+    assert app["update_state"] == "SUCCESS"
+
+
+async def test_refresh_app_update_job_resets_when_job_missing() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 5}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[])
+    assert await coord.async_refresh_app_update_job("app1") is None
     assert coord.ds["app"]["app1"]["update_jobid"] == 0
 
 
-async def test_clear_finished_app_updates_keeps_running_job() -> None:
+async def test_refresh_app_update_job_keeps_job_on_api_error() -> None:
     coord = _bare_coordinator()
-    coord.ds = {"app": {"app1": {"update_jobid": 5}}}
+    coord.ds = {"app": {"app1": {"update_jobid": 5, "update_progress": 30}}}
     coord.api = MagicMock()
-    coord.api.query = AsyncMock(return_value=[{"state": "RUNNING"}])
-    await coord._clear_finished_app_updates()
+    coord.api.query = AsyncMock(return_value=None)
+    assert await coord.async_refresh_app_update_job("app1") is None
     assert coord.ds["app"]["app1"]["update_jobid"] == 5
+    assert coord.ds["app"]["app1"]["update_progress"] == 30
 
 
-async def test_clear_finished_app_updates_skips_without_jobid() -> None:
+async def test_refresh_app_update_job_skips_without_jobid() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {"app1": {"update_jobid": 0}}}
     coord.api = MagicMock()
     coord.api.query = AsyncMock()
-    await coord._clear_finished_app_updates()
+    assert await coord.async_refresh_app_update_job("app1") is None
+    assert await coord.async_refresh_app_update_job("missing") is None
     coord.api.query.assert_not_awaited()
+
+
+async def test_refresh_app_update_jobs_polls_every_tracked_app() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {
+            "app1": {"update_jobid": 5},
+            "app2": {"update_jobid": 0},
+            "app3": {"update_jobid": 6},
+        }
+    }
+    coord.async_refresh_app_update_job = AsyncMock()
+    await coord._refresh_app_update_jobs()
+    assert sorted(
+        c.args[0] for c in coord.async_refresh_app_update_job.await_args_list
+    ) == ["app1", "app3"]
 
 
 # ---------------------------

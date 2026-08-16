@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from logging import getLogger
+from time import monotonic
 from typing import Any
 
 from homeassistant.components.update import (
@@ -15,7 +17,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    APP_UPDATE_JOB_ACTIVE_STATES,
+    APP_UPDATE_JOB_POLL_INTERVAL,
+    APP_UPDATE_JOB_TIMEOUT,
+    DOMAIN,
+)
 from .coordinator import TrueNASCoordinator
 from .entity import TrueNASEntity, async_add_entities
 from .update_types import (  # noqa: F401
@@ -141,7 +148,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         """Set up device update entity."""
         super().__init__(coordinator, entity_description, uid)
 
-        self._attr_supported_features = UpdateEntityFeature.INSTALL
+        self._attr_supported_features = (
+            UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+        )
 
     @property
     def installed_version(self) -> str | None:
@@ -190,12 +199,61 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
             )
 
         self._data["update_jobid"] = job_id
-        await self.coordinator.async_refresh()
+        self._data["update_state"] = "RUNNING"
+        self._data["update_progress"] = 0
+        self._data["update_description"] = ""
+        self.async_write_ha_state()
+
+        job = await self._async_track_upgrade_job()
+        # Re-sync versions/state from TrueNAS now that the job is done.
+        await self.coordinator.async_request_refresh()
+
+        if job is not None and job.get("state") != "SUCCESS":
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="app_update_job_failed",
+                translation_placeholders={
+                    "app": self._data["id"],
+                    "host": self.coordinator.host,
+                    "error": str(job.get("error") or job.get("state") or "unknown"),
+                },
+            )
+
+    async def _async_track_upgrade_job(self) -> dict[str, Any] | None:
+        """Poll the running upgrade job and push progress to HA until it ends.
+
+        Returns the final job dict, or ``None`` if the job vanished or tracking
+        timed out (the coordinator keeps mirroring the job on its own cadence).
+        """
+        deadline = monotonic() + APP_UPDATE_JOB_TIMEOUT
+        while self._data.get("update_jobid"):
+            await asyncio.sleep(APP_UPDATE_JOB_POLL_INTERVAL)
+            job = await self.coordinator.async_refresh_app_update_job(self._data["id"])
+            self.async_write_ha_state()
+            if job is not None and job.get("state") not in APP_UPDATE_JOB_ACTIVE_STATES:
+                return job
+            if monotonic() > deadline:
+                _LOGGER.warning(
+                    "Upgrade job %s for app %s is still running after %s s; "
+                    "leaving progress tracking to the regular poll",
+                    self._data.get("update_jobid"),
+                    self._data["id"],
+                    APP_UPDATE_JOB_TIMEOUT,
+                )
+                return None
+        return None
 
     @property
     def in_progress(self) -> bool:
         """Return if update is in progress."""
         return bool(self._data.get("update_jobid"))
+
+    @property
+    def update_percentage(self) -> int | None:
+        """Update installation progress percentage."""
+        if not self.in_progress:
+            return None
+        return int(self._data.get("update_progress") or 0)
 
     @property
     def title(self) -> str | None:

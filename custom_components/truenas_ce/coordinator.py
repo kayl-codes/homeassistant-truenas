@@ -32,6 +32,7 @@ from homeassistant.util import slugify
 from .api import TrueNASAPI, _summarize_payload
 from .apiparser import ApiValueSpec, parse_api
 from .const import (
+    APP_UPDATE_JOB_ACTIVE_STATES,
     BEHAVIOR_SKIP_DISABLED_CRONJOBS,
     CONF_BEHAVIORS,
     CONF_MONITORED_GROUPS,
@@ -2412,6 +2413,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ],
             ensure_vals=[
                 {"name": "running", "type": "bool", "default": False},
+                {"name": "update_jobid", "default": 0},
+                {"name": "update_progress", "default": 0},
+                {"name": "update_state", "default": "unknown"},
+                {"name": "update_description", "default": ""},
             ],
         )
 
@@ -2429,25 +2434,79 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and bool(vals.get("image_updates_available"))
             )
 
-        await self._clear_finished_app_updates()
+        await self._refresh_app_update_jobs()
 
-    async def _clear_finished_app_updates(self) -> None:
-        """Reset update_jobid once an app's upgrade job is no longer running.
+    async def _refresh_app_update_jobs(self) -> None:
+        """Mirror the state of every tracked app upgrade job into ``ds["app"]``.
 
-        Otherwise the update entity stays "in progress" after the first update
-        and the app cannot be updated again until Home Assistant restarts.
+        The update entity polls its own job at a much higher cadence while an
+        install is running; this per-poll pass is the safety net that keeps the
+        entity from staying "in progress" forever (e.g. after HA restarts mid
+        upgrade or if the entity's tracking loop gave up).
         """
-        for vals in self.ds["app"].values():
-            job_id = vals.get("update_jobid")
-            if not job_id:
-                continue
+        for uid, vals in list(self.ds["app"].items()):
+            if vals.get("update_jobid"):
+                await self.async_refresh_app_update_job(uid)
 
-            jobs = await self.api.query("core.get_jobs", params=[[["id", "=", job_id]]])
-            state = None
-            if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict):
-                state = jobs[0].get("state")
-            if state not in ("RUNNING", "WAITING"):
-                vals["update_jobid"] = 0
+    async def async_refresh_app_update_job(self, uid: str) -> dict[str, Any] | None:
+        """Poll the upgrade job of app ``uid`` and store its progress.
+
+        Writes ``update_state``, ``update_progress`` (percent) and
+        ``update_description`` into the app's data. Once the job leaves an
+        active state (or can no longer be found) ``update_jobid`` is reset so
+        the app can be upgraded again.
+
+        Returns the raw job dict, or ``None`` when there is nothing to track or
+        the API call failed (in which case tracking state is left untouched).
+        """
+        vals = self.ds.get("app", {}).get(uid)
+        if not vals:
+            return None
+        job_id = vals.get("update_jobid")
+        if not job_id:
+            return None
+
+        jobs = await self.api.query("core.get_jobs", params=[[["id", "=", job_id]]])
+        if jobs is None:
+            # Transient API error: keep tracking, retry on the next poll.
+            return None
+        job = jobs[0] if jobs and isinstance(jobs[0], dict) else None
+        if job is None:
+            _LOGGER.warning(
+                "Upgrade job %s for app %s no longer exists on %s; stopped tracking",
+                job_id,
+                uid,
+                self.host,
+            )
+            self._reset_app_update_job(vals, state="unknown")
+            return None
+
+        state = str(job.get("state") or "unknown")
+        progress = job.get("progress") or {}
+        vals["update_state"] = state
+        vals["update_progress"] = int(progress.get("percent") or 0)
+        vals["update_description"] = str(progress.get("description") or "")
+
+        if state not in APP_UPDATE_JOB_ACTIVE_STATES:
+            if state != "SUCCESS":
+                _LOGGER.error(
+                    "Upgrade job %s for app %s on %s finished with state %s: %s",
+                    job_id,
+                    uid,
+                    self.host,
+                    state,
+                    job.get("error") or "no error message",
+                )
+            self._reset_app_update_job(vals, state=state)
+        return job
+
+    @staticmethod
+    def _reset_app_update_job(vals: dict[str, Any], *, state: str) -> None:
+        """Stop tracking an app upgrade job, leaving its final state visible."""
+        vals["update_jobid"] = 0
+        vals["update_progress"] = 0
+        vals["update_description"] = ""
+        vals["update_state"] = state
 
     # ---------------------------
     #   app stats subscription helpers

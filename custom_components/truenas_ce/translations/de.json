@@ -171,6 +171,9 @@
         "app_update_failed": {
             "message": "Start des TrueNAS-App-Updates für {app} auf {host} fehlgeschlagen: {error}"
         },
+        "app_update_job_failed": {
+            "message": "TrueNAS-App-Update für {app} auf {host} war nicht erfolgreich: {error}"
+        },
         "missing_uuid": {
             "message": "Fehlender Pflichtparameter: uuid"
         },
