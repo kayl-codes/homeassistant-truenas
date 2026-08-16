@@ -52,6 +52,7 @@ from custom_components.truenas_ce.coordinator import (
     _arc_value,
     _as_int,
     _count_statistics_with_data,
+    _cpuset_size,
     _first_ipv4,
     _is_truenas_sensor_id,
     _median,
@@ -2848,6 +2849,21 @@ async def test_get_container_v26_uses_container_query() -> None:
     assert ct8["running"] is False
     assert ct8["cpu"] == 0
     assert ct8["image"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("cpuset", "expected"),
+    [
+        ("0-3,6", 5),
+        ("2", 1),
+        ("", 0),
+        (None, 0),
+        ("0-1,x,4", 3),
+        ("3-1", 0),
+    ],
+)
+def test_cpuset_size(cpuset: str | None, expected: int) -> None:
+    assert _cpuset_size(cpuset) == expected
 
 
 def test_supports_container_api_from_26() -> None:

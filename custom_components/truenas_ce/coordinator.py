@@ -310,21 +310,27 @@ def _ups_value(graph_data: Any) -> float | None:
 
 
 def _cpuset_size(cpuset: Any) -> int:
-    """Return the number of CPUs in a cpuset string such as ``"0-3,6"``, else 0."""
+    """Return the number of CPUs in a cpuset string such as ``"0-3,6"``.
+
+    Malformed segments are skipped (logged at debug level) so a partially
+    valid cpuset still yields the count of its valid CPUs.
+    """
     if not isinstance(cpuset, str) or not cpuset.strip():
         return 0
     count = 0
     for part in cpuset.split(","):
         part = part.strip()
+        if not part:
+            continue
         try:
             if "-" in part:
                 start, end = (int(p) for p in part.split("-", 1))
                 count += max(0, end - start + 1)
-            elif part:
+            else:
                 int(part)
                 count += 1
         except ValueError:
-            return 0
+            _LOGGER.debug("Ignoring malformed cpuset segment %r in %r", part, cpuset)
     return count
 
 

@@ -209,6 +209,8 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
             await self.coordinator.api.query(
                 "container.stop", [self._data["id"], CONTAINER_STOP_OPTIONS], job=True
             )
+            # Abort before starting if the stop failed; the trailing check
+            # below then covers the start call.
             self._raise_if_api_error("restart")
             await self.coordinator.api.query("container.start", [self._data["id"]])
         else:
