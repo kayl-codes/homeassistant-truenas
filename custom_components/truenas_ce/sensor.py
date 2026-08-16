@@ -1023,7 +1023,7 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
         ``TrueNASCoordinator._stale_app_networks``); report them unavailable
         rather than showing a stale or unknown rate.
         """
-        if self._data.get("stale"):
+        if isinstance(self._data, dict) and self._data.get("stale"):
             return False
         return super().available
 

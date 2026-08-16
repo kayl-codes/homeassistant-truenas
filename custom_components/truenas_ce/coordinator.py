@@ -2714,16 +2714,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             blkio_read = blkio_write = None
 
-        networks = app.get("networks", [])
-        if not isinstance(networks, list):
-            networks = []
-        else:
-            networks = [
-                net
-                for net in networks
-                if isinstance(net, dict) and bool(net.get("interface_name"))
-            ]
-
+        networks = self._filter_app_networks(app.get("networks", []))
         if not networks:
             networks = self._stale_app_networks(str(app_name))
 
@@ -2739,6 +2730,17 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "networks": networks,
         }
 
+    @staticmethod
+    def _filter_app_networks(networks: Any) -> list[dict[str, Any]]:
+        """Return only well-formed network entries (dicts with an interface_name)."""
+        if not isinstance(networks, list):
+            return []
+        return [
+            net
+            for net in networks
+            if isinstance(net, dict) and bool(net.get("interface_name"))
+        ]
+
     def _stale_app_networks(self, app_name: str) -> list[dict[str, Any]]:
         """Return the app's last known interfaces as stale stubs.
 
@@ -2749,9 +2751,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         kept with ``None`` values and ``stale=True`` so the sensors survive and
         merely become unavailable until the app reports live traffic again.
         """
-        previous = self.ds["app_stats"].get(app_name, {}).get("networks")
-        if not isinstance(previous, list):
-            return []
+        previous = self._filter_app_networks(
+            self.ds.get("app_stats", {}).get(app_name, {}).get("networks")
+        )
         return [
             {
                 "interface_name": net["interface_name"],
@@ -2760,7 +2762,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "stale": True,
             }
             for net in previous
-            if isinstance(net, dict) and net.get("interface_name")
         ]
 
     def _collect_current_app_names(self) -> set[str]:

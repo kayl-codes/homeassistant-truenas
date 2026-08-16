@@ -23,7 +23,7 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ### Fixed
 - **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
-  `app.stats`, so its per-interface RX/TX sensors were removed from the entity registry (losing
+  `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
   history and customisations) and re-created on the next start. The last known interfaces are now
   kept as stale entries and the sensors simply become `unavailable` while the app is stopped.
 
