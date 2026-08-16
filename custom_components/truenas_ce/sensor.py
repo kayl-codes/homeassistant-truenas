@@ -1017,7 +1017,14 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
+        """Return True if entity is available.
+
+        Network sensors of a stopped app resolve to a stale interface stub (see
+        ``TrueNASCoordinator._stale_app_networks``); report them unavailable
+        rather than showing a stale or unknown rate.
+        """
+        if self._data.get("stale"):
+            return False
         return super().available
 
     @property

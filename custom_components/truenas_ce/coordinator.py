@@ -2724,6 +2724,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(net, dict) and bool(net.get("interface_name"))
             ]
 
+        if not networks:
+            networks = self._stale_app_networks(str(app_name))
+
         cpu_usage = self._coerce_float(app.get("cpu_usage"))
         memory = self._coerce_float(app.get("memory"))
 
@@ -2735,6 +2738,30 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "blkio_write": blkio_write,
             "networks": networks,
         }
+
+    def _stale_app_networks(self, app_name: str) -> list[dict[str, Any]]:
+        """Return the app's last known interfaces as stale stubs.
+
+        A stopped app reports no networks in ``app.stats``. Dropping the
+        interfaces would make the orphan cleanup delete the per-interface
+        sensors from the entity registry on every stop (and re-create them on
+        start, losing history and customisations). Instead the interfaces are
+        kept with ``None`` values and ``stale=True`` so the sensors survive and
+        merely become unavailable until the app reports live traffic again.
+        """
+        previous = self.ds["app_stats"].get(app_name, {}).get("networks")
+        if not isinstance(previous, list):
+            return []
+        return [
+            {
+                "interface_name": net["interface_name"],
+                "rx_bytes": None,
+                "tx_bytes": None,
+                "stale": True,
+            }
+            for net in previous
+            if isinstance(net, dict) and net.get("interface_name")
+        ]
 
     def _collect_current_app_names(self) -> set[str]:
         """App names currently present in the app data."""
