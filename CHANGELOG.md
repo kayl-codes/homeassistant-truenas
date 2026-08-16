@@ -21,6 +21,14 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   and reports a `FAILED`/`ABORTED` job as an error instead of silently finishing. The
   coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
 
+### Fixed
+- **TrueNAS 26.0+ containers:** TrueNAS 26 removed the Incus-based `virt.*` API, so every poll
+  logged `API error: Method does not exist` and the Containers group stayed empty. Containers are
+  now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start` /
+  `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
+  `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
+  attributes read `0` / description / `unknown` there.
+
 ## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
 
 ### Fixed
