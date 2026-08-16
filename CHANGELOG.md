@@ -14,6 +14,13 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Added
+- **App update progress tracking:** the app update entity now supports HA's progress feature.
+  After starting an `app.upgrade`, the entity polls the TrueNAS job every 2 s, exposes its
+  percent as `update_percentage`, mirrors `update_state`/`update_description` in the app data
+  and reports a `FAILED`/`ABORTED` job as an error instead of silently finishing. The
+  coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
+
 ## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
 
 ### Fixed
