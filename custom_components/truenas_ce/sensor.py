@@ -83,6 +83,9 @@ async def async_setup_entry(
         # instance's entities and try to add them here, causing "Platform truenas
         # does not generate unique IDs … already exists" spam (#33).
         if updated_coordinator is not None and updated_coordinator is not coordinator:
+            _LOGGER.debug(
+                "Ignoring app-stats refresh from other config entry's coordinator"
+            )
             return
         _discover_app_stats(platform, coordinator, _async_add_entities)
 
