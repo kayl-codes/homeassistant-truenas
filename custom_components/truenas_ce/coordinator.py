@@ -2802,20 +2802,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             blkio_read = blkio_write = None
 
-        networks = app.get("networks", [])
-        if not isinstance(networks, list):
-            networks = []
-        else:
-            networks = [
-                net
-                for net in networks
-                if isinstance(net, dict) and bool(net.get("interface_name"))
-            ]
+        networks = self._filter_app_networks(app.get("networks", []))
+        if not networks:
+            networks = self._stale_app_networks(app_name)
 
         cpu_usage = self._coerce_float(app.get("cpu_usage"))
         memory = self._coerce_float(app.get("memory"))
 
-        self.ds["app_stats"][str(app_name)] = {
+        self.ds["app_stats"][app_name] = {
             "app_name": app_name,
             "cpu_usage": cpu_usage,
             "memory": memory,
@@ -2823,6 +2817,40 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "blkio_write": blkio_write,
             "networks": networks,
         }
+
+    @staticmethod
+    def _filter_app_networks(networks: Any) -> list[dict[str, Any]]:
+        """Return only well-formed network entries (dicts with an interface_name)."""
+        if not isinstance(networks, list):
+            return []
+        return [
+            net
+            for net in networks
+            if isinstance(net, dict) and bool(net.get("interface_name"))
+        ]
+
+    def _stale_app_networks(self, app_name: str) -> list[dict[str, Any]]:
+        """Return the app's last known interfaces as stale stubs.
+
+        A stopped app reports no networks in ``app.stats``. Dropping the
+        interfaces would make the orphan cleanup delete the per-interface
+        sensors from the entity registry on every stop (and re-create them on
+        start, losing history and customisations). Instead the interfaces are
+        kept with ``None`` values and ``stale=True`` so the sensors survive and
+        merely become unavailable until the app reports live traffic again.
+        """
+        previous = self._filter_app_networks(
+            self.ds.get("app_stats", {}).get(app_name, {}).get("networks")
+        )
+        return [
+            {
+                "interface_name": net["interface_name"],
+                "rx_bytes": None,
+                "tx_bytes": None,
+                "stale": True,
+            }
+            for net in previous
+        ]
 
     def _collect_current_app_names(self) -> set[str]:
         """App names currently present in the app data."""

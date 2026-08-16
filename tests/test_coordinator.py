@@ -3614,3 +3614,63 @@ async def test_get_cronjob_falls_back_to_legacy_option_when_behaviors_absent() -
     )
     await coord.get_cronjob()
     assert coord.ds["cronjob"][3]["display_name"] == "Cronjob 3"
+
+
+# ---------------------------
+#   app.stats: stopped apps keep their network interfaces
+# ---------------------------
+def _stats_entry(name: str, networks: list[dict] | None) -> dict:
+    entry: dict = {"app_name": name, "cpu_usage": 0, "memory": 0}
+    if networks is not None:
+        entry["networks"] = networks
+    return entry
+
+
+def test_upsert_app_stats_keeps_known_interfaces_when_app_stops() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app_stats": {
+            "plex": {
+                "app_name": "plex",
+                "networks": [
+                    {"interface_name": "eth0", "rx_bytes": 10, "tx_bytes": 20}
+                ],
+            }
+        }
+    }
+    coord._upsert_app_stats_entry(_stats_entry("plex", []))
+    assert coord.ds["app_stats"]["plex"]["networks"] == [
+        {"interface_name": "eth0", "rx_bytes": None, "tx_bytes": None, "stale": True}
+    ]
+
+
+def test_upsert_app_stats_no_interfaces_without_prior_knowledge() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app_stats": {}}
+    coord._upsert_app_stats_entry(_stats_entry("plex", []))
+    assert coord.ds["app_stats"]["plex"]["networks"] == []
+
+
+def test_upsert_app_stats_live_interfaces_replace_stale_ones() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app_stats": {
+            "plex": {
+                "app_name": "plex",
+                "networks": [
+                    {
+                        "interface_name": "eth0",
+                        "rx_bytes": None,
+                        "tx_bytes": None,
+                        "stale": True,
+                    }
+                ],
+            }
+        }
+    }
+    coord._upsert_app_stats_entry(
+        _stats_entry("plex", [{"interface_name": "eth0", "rx_bytes": 5, "tx_bytes": 6}])
+    )
+    assert coord.ds["app_stats"]["plex"]["networks"] == [
+        {"interface_name": "eth0", "rx_bytes": 5, "tx_bytes": 6}
+    ]

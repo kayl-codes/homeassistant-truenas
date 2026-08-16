@@ -28,6 +28,10 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
   `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
   attributes read `0` / description / `unknown` there.
+- **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
+  `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
+  history and customisations) and re-created on the next start. The last known interfaces are now
+  kept as stale entries and the sensors simply become `unavailable` while the app is stopped.
 
 ## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
 

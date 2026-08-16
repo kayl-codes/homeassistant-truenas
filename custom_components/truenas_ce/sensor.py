@@ -240,8 +240,10 @@ def _resolve_app_network_data(
     base_uid, interface_name = _parse_app_network_uid(uid)
     if base_uid is None or interface_name is None:
         return None
-    main_data = app_stats.get(base_uid, {})
-    if not main_data or not isinstance(main_data.get("networks"), list):
+    main_data = app_stats.get(base_uid)
+    if not isinstance(main_data, dict) or not isinstance(
+        main_data.get("networks"), list
+    ):
         return None
     return next(
         (
@@ -1017,7 +1019,14 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
+        """Return True if entity is available.
+
+        Network sensors of a stopped app resolve to a stale interface stub (see
+        ``TrueNASCoordinator._stale_app_networks``); report them unavailable
+        rather than showing a stale or unknown rate.
+        """
+        if isinstance(self._data, dict) and self._data.get("stale"):
+            return False
         return super().available
 
     @property
