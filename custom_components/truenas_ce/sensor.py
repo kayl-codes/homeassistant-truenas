@@ -75,9 +75,22 @@ async def async_setup_entry(
     def _discover_app_stats_sensors(
         updated_coordinator: TrueNASCoordinator | None = None,
     ) -> None:
-        _discover_app_stats(
-            platform, updated_coordinator or coordinator, _async_add_entities
-        )
+        # SIGNAL_UPDATE_SENSORS fires for every config entry on every platform,
+        # so with multiple TrueNAS entries this platform would otherwise build
+        # the *other* entry's entities too, causing "already exists" spam (#33).
+        # __init__ always passes the same coordinator instance per entry, so an
+        # identity check reliably tells them apart.
+        if updated_coordinator is not None and updated_coordinator is not coordinator:
+            _LOGGER.debug(
+                "Ignoring app-stats refresh for %s (%s); this platform belongs to "
+                "%s (%s)",
+                updated_coordinator.name,
+                updated_coordinator.config_entry.entry_id,
+                coordinator.name,
+                coordinator.config_entry.entry_id,
+            )
+            return
+        _discover_app_stats(platform, coordinator, _async_add_entities)
 
     _discover_app_stats_sensors()
     config_entry.async_on_unload(
@@ -116,6 +129,12 @@ def _discover_app_stats(
         ``app_name::interface_name`` so apps sharing an NIC name remain unique
     """
     app_stats_data = coord.data.get("app_stats", {})
+    if not isinstance(app_stats_data, dict):
+        _LOGGER.warning(
+            "TrueNAS app stats returned malformed data: %s",
+            app_stats_data,
+        )
+        app_stats_data = {}
     app_stats_entities: list[TrueNASAppStatsSensor] = []
 
     loaded = {
