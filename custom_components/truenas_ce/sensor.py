@@ -75,16 +75,16 @@ async def async_setup_entry(
     def _discover_app_stats_sensors(
         updated_coordinator: TrueNASCoordinator | None = None,
     ) -> None:
-        # SIGNAL_UPDATE_SENSORS is a global dispatcher signal that __init__ always
-        # fires with the *same* coordinator instance object (one per config entry),
-        # so the identity check below is safe. With more than one TrueNAS config
-        # entry every platform receives every entry's refresh, so ignore refreshes
-        # from other entries — otherwise this platform would build the *other*
-        # instance's entities and try to add them here, causing "Platform truenas
-        # does not generate unique IDs … already exists" spam (#33).
+        # SIGNAL_UPDATE_SENSORS fires for every config entry on every platform,
+        # so with multiple TrueNAS entries this platform would otherwise build
+        # the *other* entry's entities too, causing "already exists" spam (#33).
+        # __init__ always passes the same coordinator instance per entry, so an
+        # identity check reliably tells them apart.
         if updated_coordinator is not None and updated_coordinator is not coordinator:
             _LOGGER.debug(
-                "Ignoring app-stats refresh from other config entry's coordinator"
+                "Ignoring app-stats refresh for %s (this platform belongs to %s)",
+                updated_coordinator.name,
+                coordinator.name,
             )
             return
         _discover_app_stats(platform, coordinator, _async_add_entities)
