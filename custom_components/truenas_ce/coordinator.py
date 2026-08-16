@@ -2716,12 +2716,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         networks = self._filter_app_networks(app.get("networks", []))
         if not networks:
-            networks = self._stale_app_networks(str(app_name))
+            networks = self._stale_app_networks(app_name)
 
         cpu_usage = self._coerce_float(app.get("cpu_usage"))
         memory = self._coerce_float(app.get("memory"))
 
-        self.ds["app_stats"][str(app_name)] = {
+        self.ds["app_stats"][app_name] = {
             "app_name": app_name,
             "cpu_usage": cpu_usage,
             "memory": memory,
