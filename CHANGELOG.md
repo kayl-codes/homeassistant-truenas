@@ -21,6 +21,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   and reports a `FAILED`/`ABORTED` job as an error instead of silently finishing. The
   coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
 
+### Fixed
+- **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
+  `app.stats`, so its per-interface RX/TX sensors were removed from the entity registry (losing
+  history and customisations) and re-created on the next start. The last known interfaces are now
+  kept as stale entries and the sensors simply become `unavailable` while the app is stopped.
+
 ## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
 
 ### Fixed
