@@ -127,6 +127,10 @@ def _discover_app_stats(
     """
     app_stats_data = coord.data.get("app_stats", {})
     if not isinstance(app_stats_data, dict):
+        _LOGGER.warning(
+            "TrueNAS app stats returned malformed data: %s",
+            app_stats_data,
+        )
         app_stats_data = {}
     app_stats_entities: list[TrueNASAppStatsSensor] = []
 
