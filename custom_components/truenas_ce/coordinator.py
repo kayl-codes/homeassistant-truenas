@@ -2444,7 +2444,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         entity from staying "in progress" forever (e.g. after HA restarts mid
         upgrade or if the entity's tracking loop gave up).
         """
-        for uid, vals in list(self.ds["app"].items()):
+        for uid, vals in self.ds["app"].items():
             if vals.get("update_jobid"):
                 await self.async_refresh_app_update_job(uid)
 
@@ -2502,10 +2502,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @staticmethod
     def _reset_app_update_job(vals: dict[str, Any], *, state: str) -> None:
-        """Stop tracking an app upgrade job, leaving its final state visible."""
+        """Stop tracking an app upgrade job.
+
+        Only the job id is cleared; the final state, progress and description
+        stay visible in the app data for troubleshooting until the next
+        upgrade starts.
+        """
         vals["update_jobid"] = 0
-        vals["update_progress"] = 0
-        vals["update_description"] = ""
         vals["update_state"] = state
 
     # ---------------------------

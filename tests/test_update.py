@@ -234,6 +234,45 @@ async def test_app_update_async_install_tracks_job_until_success() -> None:
     update.coordinator.async_request_refresh.assert_awaited()
 
 
+async def test_app_update_async_install_keeps_polling_while_waiting() -> None:
+    update = _install_ready_update(
+        [
+            {"state": "WAITING", "progress": {"percent": 0}},
+            {"state": "RUNNING", "progress": {"percent": 50}},
+            {"state": "SUCCESS", "progress": {"percent": 100}},
+        ]
+    )
+    with patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()):
+        await update.async_install(version=None, backup=False)
+
+    assert update.coordinator.async_refresh_app_update_job.await_count == 3
+    assert update.in_progress is False
+
+
+async def test_app_update_async_install_gives_up_after_timeout() -> None:
+    # Job never leaves RUNNING; monotonic() jumps past the deadline on the
+    # third poll (first call sets the deadline, then one call per poll).
+    update = _install_ready_update(
+        [{"state": "RUNNING", "progress": {"percent": 10}}] * 3
+    )
+    with (
+        patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()),
+        patch("custom_components.truenas_ce.update.APP_UPDATE_JOB_TIMEOUT", 100),
+        patch(
+            "custom_components.truenas_ce.update.monotonic",
+            side_effect=[0, 50, 99, 100],
+        ),
+    ):
+        await update.async_install(version=None, backup=False)
+
+    assert update.coordinator.async_refresh_app_update_job.await_count == 3
+    # Job is left for the coordinator poll to track: still marked in progress.
+    assert update._data["update_jobid"] == 99
+    assert update.in_progress is True
+    assert update.async_write_ha_state.call_count == 4
+    update.coordinator.async_request_refresh.assert_awaited_once()
+
+
 async def test_app_update_async_install_raises_when_job_fails() -> None:
     update = _install_ready_update(
         [

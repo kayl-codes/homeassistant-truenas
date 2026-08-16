@@ -232,7 +232,7 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
             self.async_write_ha_state()
             if job is not None and job.get("state") not in APP_UPDATE_JOB_ACTIVE_STATES:
                 return job
-            if monotonic() > deadline:
+            if monotonic() >= deadline:
                 _LOGGER.warning(
                     "Upgrade job %s for app %s is still running after %s s; "
                     "leaving progress tracking to the regular poll",

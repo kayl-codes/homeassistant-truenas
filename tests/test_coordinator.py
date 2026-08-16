@@ -3226,7 +3226,8 @@ async def test_refresh_app_update_job_mirrors_running_progress() -> None:
         ]
     )
     job = await coord.async_refresh_app_update_job("app1")
-    assert job is not None and job["state"] == "RUNNING"
+    assert job is not None
+    assert job["state"] == "RUNNING"
     coord.api.query.assert_awaited_once_with("core.get_jobs", params=[[["id", "=", 5]]])
     app = coord.ds["app"]["app1"]
     assert app["update_jobid"] == 5
@@ -3243,11 +3244,60 @@ async def test_refresh_app_update_job_resets_when_finished() -> None:
         return_value=[{"id": 5, "state": "SUCCESS", "progress": {"percent": 100}}]
     )
     job = await coord.async_refresh_app_update_job("app1")
-    assert job is not None and job["state"] == "SUCCESS"
+    assert job is not None
+    assert job["state"] == "SUCCESS"
     app = coord.ds["app"]["app1"]
     assert app["update_jobid"] == 0
-    assert app["update_progress"] == 0
     assert app["update_state"] == "SUCCESS"
+    # Final progress stays visible for troubleshooting.
+    assert app["update_progress"] == 100
+
+
+async def test_refresh_app_update_job_keeps_waiting_job_active() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 7}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 7,
+                "state": "WAITING",
+                "progress": {"percent": 0, "description": "Queued"},
+            }
+        ]
+    )
+    job = await coord.async_refresh_app_update_job("app1")
+    assert job is not None
+    assert job["state"] == "WAITING"
+    app = coord.ds["app"]["app1"]
+    assert app["update_jobid"] == 7
+    assert app["update_state"] == "WAITING"
+    assert app["update_progress"] == 0
+    assert app["update_description"] == "Queued"
+
+
+async def test_refresh_app_update_job_failed_keeps_final_progress() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 5}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 5,
+                "state": "FAILED",
+                "error": "pull failed",
+                "progress": {"percent": 40, "description": "Pulling image"},
+            }
+        ]
+    )
+    job = await coord.async_refresh_app_update_job("app1")
+    assert job is not None
+    assert job["state"] == "FAILED"
+    app = coord.ds["app"]["app1"]
+    assert app["update_jobid"] == 0
+    assert app["update_state"] == "FAILED"
+    assert app["update_progress"] == 40
+    assert app["update_description"] == "Pulling image"
 
 
 async def test_refresh_app_update_job_resets_when_job_missing() -> None:
