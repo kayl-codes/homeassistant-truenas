@@ -82,9 +82,12 @@ async def async_setup_entry(
         # identity check reliably tells them apart.
         if updated_coordinator is not None and updated_coordinator is not coordinator:
             _LOGGER.debug(
-                "Ignoring app-stats refresh for %s (this platform belongs to %s)",
+                "Ignoring app-stats refresh for %s (%s); this platform belongs to "
+                "%s (%s)",
                 updated_coordinator.name,
+                updated_coordinator.config_entry.entry_id,
                 coordinator.name,
+                coordinator.config_entry.entry_id,
             )
             return
         _discover_app_stats(platform, coordinator, _async_add_entities)
