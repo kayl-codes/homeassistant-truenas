@@ -1045,3 +1045,59 @@ def test_app_stats_extra_state_attributes_no_data_returns_attribution_only() -> 
     sensor = TrueNASAppStatsSensor(coordinator, _app_stats_desc(), "plex")
     attrs = sensor.extra_state_attributes
     assert "app_name" not in attrs
+
+
+def test_app_stats_network_stale_interface_is_unavailable() -> None:
+    """A stopped app keeps its interfaces as stale stubs; the sensor must go
+    unavailable instead of being deleted and re-created on every stop/start."""
+    coordinator = make_coordinator(
+        data={
+            "app_stats": {
+                "plex": {
+                    "app_name": "Plex",
+                    "networks": [
+                        {
+                            "interface_name": "eth0",
+                            "rx_bytes": None,
+                            "tx_bytes": None,
+                            "stale": True,
+                        }
+                    ],
+                }
+            }
+        }
+    )
+    desc = TrueNASSensorEntityDescription(
+        key="app_stats_network_rx",
+        name="RX",
+        data_path="app_stats",
+        data_attribute="rx_bytes",
+    )
+    sensor = TrueNASAppStatsSensor(coordinator, desc, "plex::eth0")
+    assert sensor.available is False
+    assert sensor.native_value is None
+    assert sensor.name == "Plex eth0 RX"
+
+
+def test_app_stats_network_live_interface_is_available() -> None:
+    coordinator = make_coordinator(
+        data={
+            "app_stats": {
+                "plex": {
+                    "app_name": "Plex",
+                    "networks": [
+                        {"interface_name": "eth0", "rx_bytes": 2048, "tx_bytes": 1}
+                    ],
+                }
+            }
+        }
+    )
+    desc = TrueNASSensorEntityDescription(
+        key="app_stats_network_rx",
+        name="RX",
+        data_path="app_stats",
+        data_attribute="rx_bytes",
+    )
+    sensor = TrueNASAppStatsSensor(coordinator, desc, "plex::eth0")
+    assert sensor.available is True
+    assert sensor.native_value == 2.0
