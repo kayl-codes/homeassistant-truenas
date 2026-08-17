@@ -22,6 +22,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
 
 ### Fixed
+- **TrueNAS 26.0+ containers:** TrueNAS 26 removed the Incus-based `virt.*` API, so every poll
+  logged `API error: Method does not exist` and the Containers group stayed empty. Containers are
+  now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start` /
+  `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
+  `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
+  attributes read `0` / description / `unknown` there.
 - **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
   `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
   history and customisations) and re-created on the next start. The last known interfaces are now

@@ -52,6 +52,7 @@ from custom_components.truenas_ce.coordinator import (
     _arc_value,
     _as_int,
     _count_statistics_with_data,
+    _cpuset_size,
     _first_ipv4,
     _is_truenas_sensor_id,
     _median,
@@ -69,6 +70,8 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
+    coord._version_major = 0
+    coord._version_minor = 0
     return coord
 
 
@@ -2798,6 +2801,77 @@ async def test_get_container_filters_container_type_and_computes_fields() -> Non
     assert coord.ds["container"]["c1"]["memory"] == 1
     assert coord.ds["container"]["c1"]["running"] is True
     assert coord.ds["container"]["c1"]["ip_address"] == "10.0.0.5"
+
+
+async def test_get_container_v26_uses_container_query() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    coord._version_major, coord._version_minor = 26, 0
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 7,
+                "uuid": "8c8b3d3e-0000-4000-8000-000000000000",
+                "name": "debian",
+                "description": "Debian 13",
+                "autostart": True,
+                "cpuset": "0-3,6",
+                "dataset": "tank/.containers/debian",
+                "status": {"state": "RUNNING", "pid": 1234, "domain_state": "running"},
+            },
+            {
+                "id": 8,
+                "name": "alpine",
+                "description": "",
+                "autostart": False,
+                "cpuset": None,
+                "dataset": "tank/.containers/alpine",
+                "status": {"state": "STOPPED", "pid": None, "domain_state": None},
+            },
+        ]
+    )
+    await coord.get_container()
+    coord.api.query.assert_awaited_once_with("container.query")
+    ct = coord.ds["container"][7]
+    assert ct["name"] == "debian"
+    assert ct["type"] == "CONTAINER"
+    assert ct["status"] == "RUNNING"
+    assert ct["running"] is True
+    assert ct["autostart"] is True
+    assert ct["cpu"] == 5
+    assert ct["memory"] == 0
+    assert ct["image"] == "Debian 13"
+    assert ct["ip_address"] == "unknown"
+    ct8 = coord.ds["container"][8]
+    assert ct8["running"] is False
+    assert ct8["cpu"] == 0
+    assert ct8["image"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("cpuset", "expected"),
+    [
+        ("0-3,6", 5),
+        ("2", 1),
+        ("", 0),
+        (None, 0),
+        ("0-1,x,4", 3),
+        ("3-1", 0),
+    ],
+)
+def test_cpuset_size(cpuset: str | None, expected: int) -> None:
+    assert _cpuset_size(cpuset) == expected
+
+
+def test_supports_container_api_from_26() -> None:
+    coord = _bare_coordinator()
+    coord._version_major, coord._version_minor = 25, 10
+    assert coord.supports_container_api() is False
+    coord._version_major, coord._version_minor = 26, 0
+    assert coord.supports_container_api() is True
 
 
 async def test_get_container_normalizes_non_numeric_memory() -> None:

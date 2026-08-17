@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
 from _fakes import make_coordinator
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.truenas_ce.binary_sensor import (
     TrueNASAppBinarySensor,
@@ -14,7 +16,10 @@ from custom_components.truenas_ce.binary_sensor import (
 from custom_components.truenas_ce.binary_sensor_types import (
     TrueNASBinarySensorEntityDescription,
 )
-from custom_components.truenas_ce.const import VIRT_INSTANCE_STOP_OPTIONS
+from custom_components.truenas_ce.const import (
+    CONTAINER_STOP_OPTIONS,
+    VIRT_INSTANCE_STOP_OPTIONS,
+)
 
 _DESC = TrueNASBinarySensorEntityDescription(
     key="k", name="N", data_path="vm", data_is_on="running"
@@ -166,6 +171,63 @@ async def test_container_restart_always_calls_and_refreshes() -> None:
         "virt.instance.restart", ["c1", VIRT_INSTANCE_STOP_OPTIONS]
     )
     ct.coordinator.async_request_refresh.assert_awaited_once()
+
+
+# TrueNAS 26+: LXC containers under container.* (virt.* is gone)
+def _make_container_v26(data: dict | None = None) -> TrueNASContainerBinarySensor:
+    ct = _make_container({"id": 7, **(data or {})})
+    ct.coordinator.supports_container_api.return_value = True
+    return ct
+
+
+async def test_container_v26_current_status_reads_nested_state() -> None:
+    ct = _make_container_v26()
+    ct.coordinator.api.query.return_value = [{"status": {"state": "RUNNING"}}]
+    assert await ct._current_status() == "RUNNING"
+    ct.coordinator.api.query.assert_awaited_once_with(
+        "container.query", [[["id", "=", 7]]]
+    )
+
+
+async def test_container_v26_start_success() -> None:
+    ct = _make_container_v26()
+    ct.coordinator.api.query.side_effect = [[{"status": {"state": "STOPPED"}}], None]
+    await ct.start()
+    ct.coordinator.api.query.assert_awaited_with("container.start", [7])
+    ct.coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_container_v26_stop_success() -> None:
+    ct = _make_container_v26()
+    ct.coordinator.api.query.side_effect = [[{"status": {"state": "RUNNING"}}], None]
+    await ct.stop()
+    ct.coordinator.api.query.assert_awaited_with(
+        "container.stop", [7, CONTAINER_STOP_OPTIONS]
+    )
+    ct.coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_container_v26_restart_stops_then_starts() -> None:
+    ct = _make_container_v26()
+    await ct.restart()
+    assert [c.args for c in ct.coordinator.api.query.await_args_list] == [
+        ("container.stop", [7, CONTAINER_STOP_OPTIONS]),
+        ("container.start", [7]),
+    ]
+    # The stop is a job; wait for it before starting again.
+    assert ct.coordinator.api.query.await_args_list[0].kwargs == {"job": True}
+    ct.coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_container_v26_restart_stop_error_prevents_start() -> None:
+    ct = _make_container_v26()
+    ct.coordinator.api.error = "middleware down"
+    with pytest.raises(HomeAssistantError):
+        await ct.restart()
+    ct.coordinator.api.query.assert_awaited_once_with(
+        "container.stop", [7, CONTAINER_STOP_OPTIONS], job=True
+    )
+    ct.coordinator.async_request_refresh.assert_not_awaited()
 
 
 # ---------------------------

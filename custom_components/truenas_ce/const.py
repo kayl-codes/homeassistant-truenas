@@ -328,6 +328,9 @@ SCHEMA_SERVICE_CONTAINER_RESTART: VolDictType = {}
 # stop (force=True) with no graceful-shutdown wait (timeout=-1). Kept here so the
 # TrueNAS stop semantics are easy to adjust in one place.
 VIRT_INSTANCE_STOP_OPTIONS = {"force": True, "timeout": -1}
+# Options passed to container.stop on TrueNAS 26+ (LXC containers under the
+# container.* namespace): shut down gracefully, kill after shutdown_timeout.
+CONTAINER_STOP_OPTIONS = {"force": False, "force_after_timeout": True}
 
 SERVICE_APP_START = "app_start"
 SCHEMA_SERVICE_APP_START: VolDictType = {}

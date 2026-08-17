@@ -375,6 +375,13 @@ async def test_query_returns_none_when_connect_fails(closed_api: TrueNASAPI) -> 
 async def test_query_returns_data_on_success(connected_api: TrueNASAPI) -> None:
     connected_api._client.call.return_value = {"ok": True}
     assert await connected_api.query("system.info") == {"ok": True}
+    connected_api._client.call.assert_awaited_once_with("system.info", None)
+
+
+async def test_query_job_waits_for_job_result(connected_api: TrueNASAPI) -> None:
+    connected_api._client.call.return_value = None
+    assert await connected_api.query("container.stop", [1], job=True) is None
+    connected_api._client.call.assert_awaited_once_with("container.stop", [1], job=True)
 
 
 async def test_query_call_error_uses_reason(connected_api: TrueNASAPI) -> None:
