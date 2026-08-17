@@ -523,11 +523,8 @@ async def test_subscribe_events_non_permission_call_error_still_logs_error(
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.subscribe = AsyncMock(
-        side_effect=TrueNASCallError(
-            "boom", code=22, errname="EINVAL", reason="bad params"
-        )
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.subscribe = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         sub_id, queue = await connected_api.subscribe_events("app.stats")
     assert sub_id is None
@@ -535,6 +532,8 @@ async def test_subscribe_events_non_permission_call_error_still_logs_error(
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "app.stats", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 async def test_unsubscribe_events_calls_client(connected_api: TrueNASAPI) -> None:
@@ -607,17 +606,16 @@ async def test_get_subscription_events_non_permission_call_error_still_logs_erro
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.get_subscription_events = AsyncMock(
-        side_effect=TrueNASCallError(
-            "boom", code=22, errname="EINVAL", reason="bad params"
-        )
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.get_subscription_events = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         result = await connected_api.get_subscription_events("sub-123")
     assert result == []
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "sub-123", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 async def test_get_subscription_events_generic_error(connected_api: TrueNASAPI) -> None:
