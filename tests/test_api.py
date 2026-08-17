@@ -550,6 +550,21 @@ async def test_unsubscribe_events_handles_call_error(connected_api: TrueNASAPI) 
     assert connected_api.error == ""
 
 
+async def test_unsubscribe_events_logs_error_with_subscription_id(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.unsubscribe = AsyncMock(side_effect=exc)
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        await connected_api.unsubscribe_events("sub-123")
+    error_records = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert error_records
+    assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "sub-123", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
+
+
 async def test_unsubscribe_events_handles_generic_error(
     connected_api: TrueNASAPI,
 ) -> None:
