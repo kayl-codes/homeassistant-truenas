@@ -159,6 +159,13 @@ def test_generate_keymap_ignores_non_dict_values(ap: ModuleType) -> None:
     assert ap.generate_keymap(data, "guid") == {"guid-2": "uid-2"}
 
 
+def test_generate_keymap_ignores_non_dict_value_containing_key_search_substring(
+    ap: ModuleType,
+) -> None:
+    data = {"uid-1": "has a guid in it", "uid-2": {"guid": "guid-2"}}
+    assert ap.generate_keymap(data, "guid") == {"guid-2": "uid-2"}
+
+
 def test_generate_keymap_skips_entries_missing_key_search(ap: ModuleType) -> None:
     data = {
         "uid-1": {"guid": "guid-1"},

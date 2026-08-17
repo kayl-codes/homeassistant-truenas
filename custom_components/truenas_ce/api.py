@@ -425,7 +425,6 @@ class TrueNASAPI:
                 subscription_id,
                 exc,
             )
-            _LOGGER.exception(ERROR_API_FORMAT, self._host, exc)
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
             _LOGGER.warning(

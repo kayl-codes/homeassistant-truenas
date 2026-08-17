@@ -294,6 +294,11 @@ def _collect_new_entities(
         data = coordinator.data.get(entity_description.data_path or "")
         if data is None:
             continue
+        if not isinstance(data, dict):
+            # A malformed coordinator payload for this data_path would
+            # otherwise raise AttributeError in _skip_keyless_description's
+            # or _new_referenced_entities' unconditional .get() access.
+            continue
 
         if entity_description.data_reference:
             new_entities += _new_referenced_entities(
