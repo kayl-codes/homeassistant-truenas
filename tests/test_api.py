@@ -467,7 +467,9 @@ async def test_query_non_permission_call_error_still_logs_error(
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
     assert any(
-        "truenas.local" in record.getMessage() and "boom" in record.getMessage()
+        "truenas.local" in record.getMessage()
+        and "system.info" in record.getMessage()
+        and "boom" in record.getMessage()
         for record in error_records
     )
 
