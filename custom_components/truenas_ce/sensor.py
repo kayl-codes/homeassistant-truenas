@@ -1007,7 +1007,6 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
                 self._data = resolved or {}
             else:
                 self._data = {}
-            self._has_valid_interface_payload = bool(resolved)
             if not resolved:
                 _LOGGER.debug(
                     "Network sensor %s (%s) could not resolve interface data",
