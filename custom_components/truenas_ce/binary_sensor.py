@@ -154,7 +154,9 @@ class TrueNASContainerBinarySensor(TrueNASBinarySensor):
             )
         except Exception:
             _LOGGER.exception(
-                "Failed to query status for container %s", self._data.get("name")
+                "Failed to query status for container %s via %s",
+                self._data.get("name"),
+                method,
             )
             return None
         instance = instances[0] if isinstance(instances, list) and instances else None

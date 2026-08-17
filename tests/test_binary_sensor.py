@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
 from _fakes import make_coordinator
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.truenas_ce.binary_sensor import (
     TrueNASAppBinarySensor,
@@ -215,6 +217,17 @@ async def test_container_v26_restart_stops_then_starts() -> None:
     # The stop is a job; wait for it before starting again.
     assert ct.coordinator.api.query.await_args_list[0].kwargs == {"job": True}
     ct.coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_container_v26_restart_stop_error_prevents_start() -> None:
+    ct = _make_container_v26()
+    ct.coordinator.api.error = "middleware down"
+    with pytest.raises(HomeAssistantError):
+        await ct.restart()
+    ct.coordinator.api.query.assert_awaited_once_with(
+        "container.stop", [7, CONTAINER_STOP_OPTIONS], job=True
+    )
+    ct.coordinator.async_request_refresh.assert_not_awaited()
 
 
 # ---------------------------
