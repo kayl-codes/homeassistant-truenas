@@ -41,6 +41,7 @@ from custom_components.truenas_ce.const import (
     ERR_TIMEOUT,
     ERR_UNKNOWN,
     ERR_UNKNOWN_HOSTNAME,
+    ERROR_API_FORMAT,
 )
 
 
@@ -458,20 +459,15 @@ async def test_query_non_permission_call_error_still_logs_error(
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.call.side_effect = TrueNASCallError(
-        "boom", code=22, errname="EINVAL", reason="bad params"
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.call.side_effect = exc
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         assert await connected_api.query("system.info") is None
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
-    assert any(
-        "truenas.local" in record.getMessage()
-        and "system.info" in record.getMessage()
-        and "boom" in record.getMessage()
-        for record in error_records
-    )
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "system.info", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 # ---------------------------
