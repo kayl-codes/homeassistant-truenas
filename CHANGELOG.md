@@ -17,25 +17,26 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 ## [2.7.0] — App Update Progress & TrueNAS 26 Container Support
 
 ### Added
-- **App update progress tracking:** the app update entity now supports HA's progress feature.
-  After starting an `app.upgrade`, the entity polls the TrueNAS job every 2 s, exposes its
-  percent as `update_percentage`, mirrors `update_state`/`update_description` in the app data
-  and reports a `FAILED`/`ABORTED` job as an error instead of silently finishing. The
-  coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
-  (#75)
+- **App update progress tracking:** contributed by @cedricziel — many thanks! The app update
+  entity now supports HA's progress feature. After starting an `app.upgrade`, the entity polls
+  the TrueNAS job every 2 s, exposes its percent as `update_percentage`, mirrors
+  `update_state`/`update_description` in the app data and reports a `FAILED`/`ABORTED` job as an
+  error instead of silently finishing. The coordinator poll keeps tracking (and clearing) jobs as
+  a safety net, e.g. after an HA restart. (#75)
 
 ### Fixed
-- **TrueNAS 26.0+ containers (#81):** TrueNAS 26 removed the Incus-based `virt.*` API, so every
-  poll logged `API error: Method does not exist` and the Containers group stayed empty.
-  Containers are now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start`
-  / `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
+- **TrueNAS 26.0+ containers:** TrueNAS 26 removed the Incus-based `virt.*` API, so every poll
+  logged `API error: Method does not exist` and the Containers group stayed empty. Containers are
+  now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start` /
+  `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
   `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
-  attributes read `0` / description / `unknown` there. Thanks to @mmattel for reporting. (#77)
-- **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
-  `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
-  history and customisations) and re-created on the next start. The last known interfaces are now
-  kept as stale entries and the sensors simply become `unavailable` while the app is stopped.
-  (#76)
+  attributes read `0` / description / `unknown` there. Contributed by @cedricziel — many thanks!
+  (#77) Thanks also to @mmattel for reporting the underlying issue. (#81)
+- **App network sensors deleted on every app stop:** also contributed by @cedricziel. A stopped
+  app reports no interfaces in `app.stats`, so its per-interface RX/TX sensors are removed from
+  the entity registry (losing history and customisations) and re-created on the next start. The
+  last known interfaces are now kept as stale entries and the sensors simply become `unavailable`
+  while the app is stopped. (#76)
 - **Cross-entry app-stats sensor discovery with multiple TrueNAS config entries:** the app-stats
   discovery callback reacted to every config entry's coordinator refresh, not just its own,
   occasionally producing entities for another entry's coordinator and a `Platform truenas does
