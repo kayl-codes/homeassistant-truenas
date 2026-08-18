@@ -30,7 +30,8 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   Containers are now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start`
   / `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
   `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
-  attributes read `0` / description / `unknown` there. Thanks to @mmattel for reporting. (#77)
+  attributes read `0` / description / `unknown` there. Contributed by @cedricziel — many thanks!
+  Thanks also to @mmattel for reporting the underlying issue. (#77)
 - **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
   `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
   history and customisations) and re-created on the next start. The last known interfaces are now
