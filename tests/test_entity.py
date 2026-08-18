@@ -192,6 +192,19 @@ def test_collect_new_entities_skips_missing_data_path() -> None:
     assert not result
 
 
+def test_collect_new_entities_skips_non_dict_data_path_payload() -> None:
+    desc = TrueNASSensorEntityDescription(
+        key="uptime",
+        name="Uptime",
+        data_path="system_info",
+        data_attribute="hostname",
+        func="TrueNASEntity",
+    )
+    coordinator = make_coordinator(data={"system_info": "not-a-dict"})
+    result = _collect_new_entities(coordinator, [desc], _dispatcher(), set())
+    assert not result
+
+
 def test_collect_new_entities_skips_app_stats_sensor_descriptions() -> None:
     desc = TrueNASSensorEntityDescription(
         key="k", name="N", data_path="disk", func="TrueNASAppStatsSensor"
