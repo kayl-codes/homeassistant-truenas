@@ -362,7 +362,15 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
                 uom = self.entity_description.native_unit_of_measurement[6:]
                 if uom in self._data:
                     data_uom = self._data[uom]
-                    return data_uom if isinstance(data_uom, str) else None
+                    if isinstance(data_uom, str):
+                        return data_uom
+                    _LOGGER.debug(
+                        "Sensor %s: data-derived UOM %s is %s, expected str",
+                        self.entity_description.key,
+                        uom,
+                        type(data_uom).__name__,
+                    )
+                    return None
 
             return self.entity_description.native_unit_of_measurement
 
@@ -1020,9 +1028,15 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
                 )
         else:
             app_stats = self.coordinator.data.get("app_stats")
-            self._data = (
-                app_stats.get(self._uid, {}) if isinstance(app_stats, dict) else {}
-            )
+            if isinstance(app_stats, dict):
+                self._data = app_stats.get(self._uid, {})
+            else:
+                self._data = {}
+                _LOGGER.debug(
+                    "App stats sensor %s: coordinator app_stats is %s, expected dict",
+                    self._uid,
+                    type(app_stats).__name__,
+                )
 
     @property
     def available(self) -> bool:
