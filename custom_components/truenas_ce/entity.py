@@ -263,8 +263,7 @@ def _new_referenced_entities(
     behaviors = coordinator.config_entry.options.get(CONF_BEHAVIORS, DEFAULT_BEHAVIORS)
     apply_exclude = BEHAVIOR_REMOVE_INACTIVE_NIC in behaviors
     new_entities: list[TrueNASEntity] = []
-    for uid in data:
-        vals = data[uid]
+    for uid, vals in data.items():
         if apply_exclude and _is_uid_excluded(entity_description, vals):
             continue
         obj = dispatcher[entity_description.func](coordinator, entity_description, uid)
