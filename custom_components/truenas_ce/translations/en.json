@@ -70,7 +70,7 @@
             "connection_refused": "Connection failed, connection refused.",
             "handshake_timeout": "Connection failed, timed out while waiting for handshake response.",
             "api_not_found": "Connection failed, API not found.",
-            "cannot_connect": "Failed to connect to host (TCP port {port} closed or timeout).",
+            "cannot_connect": "Failed to connect to host (TCP port closed or timeout).",
             "malformed_result": "API response is malformed.",
             "certificate_verify_failed": "Certificate verification failed.",
             "http_used": "The plain HTTP request was sent to HTTPS port. Reverse proxy?",
