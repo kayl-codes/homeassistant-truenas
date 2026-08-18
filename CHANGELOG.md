@@ -14,24 +14,44 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.7.0] — App Update Progress & TrueNAS 26 Container Support
+
 ### Added
 - **App update progress tracking:** the app update entity now supports HA's progress feature.
   After starting an `app.upgrade`, the entity polls the TrueNAS job every 2 s, exposes its
   percent as `update_percentage`, mirrors `update_state`/`update_description` in the app data
   and reports a `FAILED`/`ABORTED` job as an error instead of silently finishing. The
   coordinator poll keeps tracking (and clearing) jobs as a safety net, e.g. after an HA restart.
+  (#75)
 
 ### Fixed
-- **TrueNAS 26.0+ containers:** TrueNAS 26 removed the Incus-based `virt.*` API, so every poll
-  logged `API error: Method does not exist` and the Containers group stayed empty. Containers are
-  now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start` /
-  `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
+- **TrueNAS 26.0+ containers (#81):** TrueNAS 26 removed the Incus-based `virt.*` API, so every
+  poll logged `API error: Method does not exist` and the Containers group stayed empty.
+  Containers are now read from `container.query` on 26.0+ (LXC / libvirt) with `container.start`
+  / `container.stop` for the actions (restart = stop job + start); TrueNAS 25.x keeps using
   `virt.instance.*`. The 26.x entries carry no memory, image or IP information, so those
-  attributes read `0` / description / `unknown` there.
+  attributes read `0` / description / `unknown` there. Thanks to @mmattel for reporting. (#77)
 - **App network sensors deleted on every app stop:** a stopped app reports no interfaces in
   `app.stats`, so its per-interface RX/TX sensors are removed from the entity registry (losing
   history and customisations) and re-created on the next start. The last known interfaces are now
   kept as stale entries and the sensors simply become `unavailable` while the app is stopped.
+  (#76)
+- **Cross-entry app-stats sensor discovery with multiple TrueNAS config entries:** the app-stats
+  discovery callback reacted to every config entry's coordinator refresh, not just its own,
+  occasionally producing entities for another entry's coordinator and a `Platform truenas does
+  not generate unique IDs ... already exists` error. Discovery now ignores refreshes whose
+  coordinator instance doesn't match the platform's own. (#78)
+
+### Changed
+- **API error-log diagnostics:** TrueNAS API error logs now include which service, event or
+  subscription call actually failed, not just the host and error text — makes recurring errors
+  traceable back to a specific method from the log alone. (#83)
+- **Hardened against malformed API responses:** several code paths that process TrueNAS API
+  payloads (keymap generation, app-network sensor resolution, new-entity discovery) now guard
+  against unexpected non-dict data instead of risking an `AttributeError`; also dropped a
+  redundant duplicate log line for an expected unsubscribe-during-shutdown failure and removed an
+  unused sensor attribute. No user-facing behavior change under normal operation. (#79, #80, #82,
+  #84)
 
 ## [2.6.2] — TrueNAS 25.10+ update fix & device-registry hardening
 
