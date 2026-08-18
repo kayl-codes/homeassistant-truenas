@@ -284,6 +284,23 @@ _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 _HOST_TAIL_RE = re.compile(r"[/?#]")
 
 
+def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
+    """Drop a blank ``CONF_API_KEY`` from ``user_input`` meaning "unchanged".
+
+    The API key field is never pre-filled (see ``_base_schema``), so a blank
+    resubmission means "keep the current key" -- but only when
+    ``keep_existing`` says there actually is one to fall back to; a brand
+    new setup with no stored key yet still gets a validation error instead
+    of silently continuing with an empty key. Shared by
+    ``_async_apply_user_input`` (``keep_existing`` reflects whether the
+    in-progress config already has a key, e.g. from a taken-over legacy
+    entry) and ``async_step_reconfigure`` (always ``True``, since the entry
+    being edited already has one).
+    """
+    if user_input.get(CONF_API_KEY, "") == "" and keep_existing:
+        user_input.pop(CONF_API_KEY, None)
+
+
 def _sanitize_host(host: str) -> str:
     """Normalize user input to the bare hostname/IP[:port] the API expects.
 
@@ -533,11 +550,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if CONF_HOST in user_input:
             user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-        # An empty submission keeps a previously known key (from a taken-over
-        # legacy entry) rather than blanking it out -- the field is never
-        # pre-filled (see _base_schema), so a blank resubmit means "unchanged".
-        if user_input.get(CONF_API_KEY, "") == "" and truenas_config.get(CONF_API_KEY):
-            user_input.pop(CONF_API_KEY, None)
+        _pop_blank_api_key(user_input, bool(truenas_config.get(CONF_API_KEY)))
         truenas_config |= user_input
 
         # The same device must not be configurable twice: abort when another
@@ -858,8 +871,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if CONF_HOST in user_input:
                 user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            if user_input.get(CONF_API_KEY, "") == "":
-                user_input.pop(CONF_API_KEY, None)
+            _pop_blank_api_key(user_input, keep_existing=True)
             if CONF_DATASET_PASSPHRASES in user_input:
                 self._apply_passphrase_input(
                     user_input,
