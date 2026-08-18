@@ -327,11 +327,11 @@ def generate_keymap(
     if not key_search:
         return None
     return {
-        data[uid][key_search]: uid
+        entry[key_search]: uid
         for uid in data
-        if isinstance(data[uid], dict)
-        and key_search in data[uid]
-        and isinstance(data[uid][key_search], Hashable)
+        if isinstance(entry := data[uid], dict)
+        and key_search in entry
+        and isinstance(entry[key_search], Hashable)
     }
 
 

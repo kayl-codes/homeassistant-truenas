@@ -299,8 +299,10 @@ def _collect_new_entities(
             # otherwise raise AttributeError in _skip_keyless_description's
             # or _new_referenced_entities' unconditional .get() access.
             _LOGGER.debug(
-                "Skipping non-dict coordinator payload for data_path %s: %r",
+                "Skipping non-dict coordinator payload for data_path %s"
+                " (entity description key %s): %r",
                 entity_description.data_path or "",
+                entity_description.key,
                 data,
             )
             continue
