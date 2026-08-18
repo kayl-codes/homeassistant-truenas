@@ -40,7 +40,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Monitor Snapshot Tasks
  * Control and Monitor Services
  * Control and Monitor Virtual Machines (start / stop / restart)
- * Control and Monitor Containers (Incus instances: start / stop / restart)
+ * Control and Monitor Containers (Incus instances on TrueNAS 25.x, LXC containers on TrueNAS 26+: start / stop / restart)
  * **Monitor Apps** (CPU, RAM, Network RX/TX, Block I/O — live event-based statistics per running app)
  * Control and Monitor Cloudsync
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
@@ -49,7 +49,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Create a Dataset Snapshot
  * Lock / unlock encrypted Datasets and store passphrases for automated unlock
  * **Refresh coordinator data on demand** (System Refresh action)
- * Update Sensor
+ * Update Sensor, including **live progress** while an app update installs
  * Reboot and Shutdown TrueNAS system
  * Configurable poll interval, data unit, behaviour and per-group sensor toggles (Options)
 
@@ -101,10 +101,16 @@ Start, stop and restart are available through the `vm_start`, `vm_stop` and `vm_
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
 
 ## Containers
-Monitor each TrueNAS **Container** (Incus instance, TrueNAS 25.04+) as a binary sensor,
-with type, status, CPU, memory, autostart, image and IP address as attributes.
-Start, stop and restart are available through the `container_start`, `container_stop`
-and `container_restart` actions (target the container's binary sensor).
+Monitor each TrueNAS **Container** as a binary sensor, with type, status, CPU, autostart
+and (on TrueNAS 25.x) memory, image and IP address as attributes. Start, stop and restart
+are available through the `container_start`, `container_stop` and `container_restart`
+actions (target the container's binary sensor).
+
+> TrueNAS 26.0 replaced the Incus-based `virt.*` API with a new `container.*` API
+> (LXC/libvirt). The integration detects the running TrueNAS version and switches
+> automatically — no configuration needed. On TrueNAS 26.0+ the `memory`, `image` and
+> `ip_address` attributes are not available from the new API and read `0` / description /
+> `unknown`.
 
 > **Containers** is a monitored group (enabled by default). You can disable it under
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
@@ -124,6 +130,15 @@ Sensors are created and removed automatically as apps are deployed or removed. E
 gets its own device, and network metrics are exposed per network interface. Stats are
 updated via TrueNAS `app.stats` event subscriptions rather than polling, so they reflect
 the current state without waiting for the next poll interval.
+
+> When an app is stopped, its per-interface network sensors are kept (rather than deleted
+> and re-created on the next start) and simply become `unavailable` — this preserves their
+> history and any customisations (name, area, hidden state) across stop/start cycles.
+
+Each app's **Update** entity supports Home Assistant's install-progress feature: after
+starting an update, it reports the live `update_percentage` and a short status description
+while the TrueNAS upgrade job runs, and surfaces a failed/aborted job as an error instead of
+finishing silently.
 
 > **Apps** is a monitored group (enabled by default). You can disable it under
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
@@ -400,7 +415,10 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   supported alternatives (local IP/VPN, or a plain TLS-terminating reverse proxy).
 * **TrueNAS development/nightly builds are not officially supported.** The integration is tested
   against stable TrueNAS releases (currently 25.04–25.10.5); features may break without notice on a
-  development branch.
+  development branch. **Exception:** the TrueNAS 26.0+ `container.*` API (replacing the removed
+  Incus `virt.*` API) is already supported ahead of a stable 26.0 release, verified against a
+  26.0.0 nightly/beta build, since installs already on a 26.x beta would otherwise see the
+  Containers group break entirely.
 * **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
   **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
   persistent "active" state of its own — this is a standard HA UX limitation, not a bug. The

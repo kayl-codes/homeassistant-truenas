@@ -15,7 +15,7 @@
         "aiotruenas>=1.1.0",
         "websockets>=15.0.1"
     ],
-    "version": "2.6.2",
+    "version": "2.7.0",
     "zeroconf": [
         "_http._tcp.local."
     ]
