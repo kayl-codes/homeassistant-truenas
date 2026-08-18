@@ -601,7 +601,6 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         if ha_group == "System":
             http_scheme = "https" if self.coordinator.api.scheme == "wss" else "http"
             return DeviceInfo(
-                connections={(dev_connection, f"{dev_connection_value}")},
                 identifiers={(dev_connection, f"{dev_connection_value}")},
                 name=self._inst,
                 model=f"{self.coordinator.data['system_info']['system_product']}",
@@ -616,7 +615,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         # Core 2026.8 -- see _supports_via_device_id()).
         system_info = self.coordinator.data["system_info"]
         device_info: dict[str, Any] = {
-            "connections": {(dev_connection, f"{dev_connection_value}")},
+            "identifiers": {(dev_connection, f"{dev_connection_value}")},
             "default_name": f"{self._inst} {dev_group}",
             "default_model": f"{system_info['system_product']}",
             "default_manufacturer": f"{system_info['system_manufacturer']}",

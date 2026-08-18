@@ -471,7 +471,7 @@ def test_device_info_explicit_connection_and_value() -> None:
     )
     entity = _make_entity(description=desc)
     info = entity.device_info
-    assert info["connections"] == {("custom_domain", "fixed-value")}
+    assert info["identifiers"] == {("custom_domain", "fixed-value")}
 
 
 def test_device_info_connection_value_from_data() -> None:
@@ -487,7 +487,7 @@ def test_device_info_connection_value_from_data() -> None:
         uid="d1", data={"guid": "g1", "pool": "tank"}, description=desc
     )
     info = entity.device_info
-    assert info["connections"] == {("truenas_ce", "TrueNAS_tank")}
+    assert info["identifiers"] == {("truenas_ce", "TrueNAS_tank")}
 
 
 def test_extra_state_attributes_includes_attribution_and_listed_fields() -> None:
