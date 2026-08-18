@@ -536,7 +536,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         # An empty submission keeps a previously known key (from a taken-over
         # legacy entry) rather than blanking it out -- the field is never
         # pre-filled (see _base_schema), so a blank resubmit means "unchanged".
-        if not user_input.get(CONF_API_KEY) and truenas_config.get(CONF_API_KEY):
+        if user_input.get(CONF_API_KEY, "") == "" and truenas_config.get(CONF_API_KEY):
             user_input.pop(CONF_API_KEY, None)
         truenas_config |= user_input
 
@@ -858,7 +858,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if CONF_HOST in user_input:
                 user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            if not user_input.get(CONF_API_KEY):
+            if user_input.get(CONF_API_KEY, "") == "":
                 user_input.pop(CONF_API_KEY, None)
             if CONF_DATASET_PASSPHRASES in user_input:
                 self._apply_passphrase_input(
