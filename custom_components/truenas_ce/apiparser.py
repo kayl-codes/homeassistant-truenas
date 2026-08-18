@@ -320,7 +320,9 @@ def generate_keymap(
     ``data``'s values are typed ``Any`` rather than ``dict[str, Any]``: this
     is a general-purpose helper, and a future/unexpected caller could pass a
     non-dict value for some uid, so the entry must be runtime-checked rather
-    than trusted from the static type.
+    than trusted from the static type. Entries whose value is not a dict, or
+    that lack ``key_search``, are silently ignored and excluded from the
+    returned keymap.
     """
     if not key_search:
         return None

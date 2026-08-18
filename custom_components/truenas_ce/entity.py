@@ -298,6 +298,11 @@ def _collect_new_entities(
             # A malformed coordinator payload for this data_path would
             # otherwise raise AttributeError in _skip_keyless_description's
             # or _new_referenced_entities' unconditional .get() access.
+            _LOGGER.debug(
+                "Skipping non-dict coordinator payload for data_path %s: %r",
+                entity_description.data_path or "",
+                data,
+            )
             continue
 
         if entity_description.data_reference:
