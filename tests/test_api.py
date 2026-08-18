@@ -41,6 +41,7 @@ from custom_components.truenas_ce.const import (
     ERR_TIMEOUT,
     ERR_UNKNOWN,
     ERR_UNKNOWN_HOSTNAME,
+    ERROR_API_FORMAT,
 )
 
 
@@ -458,18 +459,15 @@ async def test_query_non_permission_call_error_still_logs_error(
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.call.side_effect = TrueNASCallError(
-        "boom", code=22, errname="EINVAL", reason="bad params"
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.call.side_effect = exc
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         assert await connected_api.query("system.info") is None
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
-    assert any(
-        "truenas.local" in record.getMessage() and "boom" in record.getMessage()
-        for record in error_records
-    )
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "system.info", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 # ---------------------------
@@ -525,11 +523,8 @@ async def test_subscribe_events_non_permission_call_error_still_logs_error(
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.subscribe = AsyncMock(
-        side_effect=TrueNASCallError(
-            "boom", code=22, errname="EINVAL", reason="bad params"
-        )
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.subscribe = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         sub_id, queue = await connected_api.subscribe_events("app.stats")
     assert sub_id is None
@@ -537,6 +532,8 @@ async def test_subscribe_events_non_permission_call_error_still_logs_error(
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "app.stats", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 async def test_unsubscribe_events_calls_client(connected_api: TrueNASAPI) -> None:
@@ -551,6 +548,21 @@ async def test_unsubscribe_events_handles_call_error(connected_api: TrueNASAPI) 
     )
     await connected_api.unsubscribe_events("sub-123")
     assert connected_api.error == ""
+
+
+async def test_unsubscribe_events_logs_error_with_subscription_id(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.unsubscribe = AsyncMock(side_effect=exc)
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        await connected_api.unsubscribe_events("sub-123")
+    error_records = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert error_records
+    assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "sub-123", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 async def test_unsubscribe_events_handles_generic_error(
@@ -609,17 +621,16 @@ async def test_get_subscription_events_non_permission_call_error_still_logs_erro
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    connected_api._client.get_subscription_events = AsyncMock(
-        side_effect=TrueNASCallError(
-            "boom", code=22, errname="EINVAL", reason="bad params"
-        )
-    )
+    exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
+    connected_api._client.get_subscription_events = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         result = await connected_api.get_subscription_events("sub-123")
     assert result == []
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
+    expected_message = ERROR_API_FORMAT % ("truenas.local", "sub-123", exc)
+    assert any(record.getMessage() == expected_message for record in error_records)
 
 
 async def test_get_subscription_events_generic_error(connected_api: TrueNASAPI) -> None:
