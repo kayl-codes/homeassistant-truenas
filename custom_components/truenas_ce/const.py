@@ -240,7 +240,7 @@ ISSUE_MIGRATION_ROLLBACK = "migration_rollback_available"
 # Community-Edition migration state, persisted on the (new) config entry's data.
 # MIGRATION_DONE is the idempotency flag; MIGRATION_RECORDS holds the reverse map
 # (unique_id -> old entity_id + registry overrides) so the adoption can be rolled
-# back; MIGRATION_LEGACY_ENTRY_ID/​_CONFIG remember the disabled legacy entry and
+# back; MIGRATION_LEGACY_ENTRY_ID/_CONFIG remember the disabled legacy entry and
 # a snapshot of its data+options for a clean rollback; MIGRATION_BACKUP_KEY is the
 # .storage key of the standalone safety snapshot. See migration.py.
 MIGRATION_DONE = "ce_migration_done"

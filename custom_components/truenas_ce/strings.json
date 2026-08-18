@@ -2,7 +2,7 @@
     "config": {
         "step": {
             "user": {
-                "description": "Set up TrueNAS integration.",
+                "description": "Set up TrueNAS CE integration.",
                 "data": {
                     "name": "Name of the integration",
                     "host": "Host",
@@ -284,19 +284,19 @@
                 "name": "Memory free"
             },
             "pool_free": {
-                "name": "free"
+                "name": "Free"
             },
             "pool_size": {
-                "name": "size"
+                "name": "Size"
             },
             "pool_allocated": {
-                "name": "allocated"
+                "name": "Allocated"
             },
             "pool_errors": {
-                "name": "errors"
+                "name": "Errors"
             },
             "pool_fragmentation": {
-                "name": "fragmentation"
+                "name": "Fragmentation"
             },
             "pool_scrub_start": {
                 "name": "Scrub started"
