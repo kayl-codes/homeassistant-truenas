@@ -365,10 +365,10 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
                     if isinstance(data_uom, str):
                         return data_uom
                     _LOGGER.debug(
-                        "Sensor %s: data-derived UOM %s is %s, expected str",
+                        "Sensor %s: data-derived UOM %s is %r, expected str",
                         self.entity_description.key,
                         uom,
-                        type(data_uom).__name__,
+                        data_uom,
                     )
                     return None
 
