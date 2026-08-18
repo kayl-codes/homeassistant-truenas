@@ -85,7 +85,17 @@ _API_KEY_SELECTOR = selector.TextSelector(
 
 
 def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
-    """Generate base schema."""
+    """Generate base schema.
+
+    The API key default is intentionally never pre-filled from
+    ``truenas_config`` (e.g. a taken-over legacy entry), even though every
+    other field is: a secret's value would otherwise be embedded in the
+    frontend's form state and re-submitted in cleartext -- the same reason
+    ``_reconfigure_schema`` below only ever declares ``CONF_API_KEY`` as
+    ``vol.Optional`` with no default. Leaving it blank is safe because
+    ``_async_apply_user_input`` keeps the previously known key when the
+    field comes back empty.
+    """
     base_schema = {
         vol.Required(
             CONF_NAME, default=truenas_config.get(CONF_NAME, DEFAULT_DEVICE_NAME)
@@ -93,9 +103,7 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
         vol.Required(
             CONF_HOST, default=truenas_config.get(CONF_HOST, DEFAULT_HOST)
         ): str,
-        vol.Required(
-            CONF_API_KEY, default=truenas_config.get(CONF_API_KEY, "")
-        ): _API_KEY_SELECTOR,
+        vol.Required(CONF_API_KEY, default=""): _API_KEY_SELECTOR,
         vol.Required(
             CONF_VERIFY_SSL,
             default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
@@ -274,6 +282,23 @@ def configured_instances(hass: HomeAssistant) -> set[str]:
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 # Everything from the first path/query/fragment delimiter is not part of host.
 _HOST_TAIL_RE = re.compile(r"[/?#]")
+
+
+def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
+    """Drop a blank ``CONF_API_KEY`` from ``user_input`` meaning "unchanged".
+
+    The API key field is never pre-filled (see ``_base_schema``), so a blank
+    resubmission means "keep the current key" -- but only when
+    ``keep_existing`` says there actually is one to fall back to; a brand
+    new setup with no stored key yet still gets a validation error instead
+    of silently continuing with an empty key. Shared by
+    ``_async_apply_user_input`` (``keep_existing`` reflects whether the
+    in-progress config already has a key, e.g. from a taken-over legacy
+    entry) and ``async_step_reconfigure`` (always ``True``, since the entry
+    being edited already has one).
+    """
+    if user_input.get(CONF_API_KEY, "") == "" and keep_existing:
+        user_input.pop(CONF_API_KEY, None)
 
 
 def _sanitize_host(host: str) -> str:
@@ -525,6 +550,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if CONF_HOST in user_input:
             user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
+        _pop_blank_api_key(user_input, bool(truenas_config.get(CONF_API_KEY)))
         truenas_config |= user_input
 
         # The same device must not be configurable twice: abort when another
@@ -641,9 +667,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                     "failed to connect while checking for a rediscovery match",
                 ):
                     continue
-                # A failed identity lookup must not abort rediscovery either;
-                # fall back to the same best-effort match used for entries
-                # that predate this check (see docstring).
+                # A failed identity lookup must not abort rediscovery for the
+                # other entries; system_id stays None, which the stored_id
+                # check below treats as a mismatch (not a best-effort match)
+                # for any entry that has a stored id (see docstring).
                 system_id = await _async_get_system_id(api, host)
             finally:
                 await _async_safe_disconnect(api)
@@ -844,8 +871,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if CONF_HOST in user_input:
                 user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
-            if not user_input.get(CONF_API_KEY):
-                user_input.pop(CONF_API_KEY, None)
+            _pop_blank_api_key(user_input, keep_existing=True)
             if CONF_DATASET_PASSPHRASES in user_input:
                 self._apply_passphrase_input(
                     user_input,
