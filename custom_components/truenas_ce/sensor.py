@@ -1033,9 +1033,9 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
             else:
                 self._data = {}
                 _LOGGER.debug(
-                    "App stats sensor %s: coordinator app_stats is %s, expected dict",
+                    "App stats sensor %s: coordinator app_stats is %r, expected dict",
                     self._uid,
-                    type(app_stats).__name__,
+                    app_stats,
                 )
 
     @property
