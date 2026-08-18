@@ -70,7 +70,7 @@
             "connection_refused": "Conexión fallida, conexión rechazada.",
             "handshake_timeout": "Conexión fallida, se agotó el tiempo de espera para la respuesta.",
             "api_not_found": "Conexión fallida, no se encontró el API.",
-            "cannot_connect": "No se pudo conectar al host (puerto TCP {port} cerrado o tiempo de espera agotado).",
+            "cannot_connect": "No se pudo conectar al host (puerto TCP cerrado o tiempo de espera agotado).",
             "malformed_result": "La respuesta de la API está mal formada.",
             "certificate_verify_failed": "Falló la verificación del certificado.",
             "http_used": "Se envió una solicitud HTTP simple al puerto HTTPS. ¿Proxy inverso?",

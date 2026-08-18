@@ -75,7 +75,7 @@
             "connection_refused": "Connection failed, connection refused.",
             "handshake_timeout": "Connection failed, timed out while waiting for handshake response.",
             "api_not_found": "Connection failed, API not found.",
-            "cannot_connect": "Failed to connect to host (TCP port {port} closed or timeout).",
+            "cannot_connect": "Failed to connect to host (TCP port closed or timeout).",
             "malformed_result": "API response is malformed.",
             "unknown": "Unknown error occurred.",
             "unknown_dataset": "Unknown dataset path(s): {datasets}. Verify the spelling and try again.",
