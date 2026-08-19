@@ -570,7 +570,9 @@ async def test_write_migration_backup_success() -> None:
 
     assert key == store_instance.key
     store_instance.async_save.assert_awaited_once()
-    remove_mock.assert_awaited_once_with(hass, store_instance.key)
+    remove_mock.assert_awaited_once_with(
+        hass, migration_module._entry_backup_prefix(entry.entry_id), store_instance.key
+    )
 
 
 async def test_write_migration_backup_failure_returns_none() -> None:
@@ -608,7 +610,11 @@ async def test_remove_backups_removes_all_except_keep_key() -> None:
         ),
         patch.object(migration_module, "Store", return_value=store_instance),
     ):
-        await migration_module._remove_backups(hass, "truenas_ce_migration_backup_1")
+        await migration_module._remove_backups(
+            hass,
+            migration_module._BACKUP_KEY_PREFIX,
+            "truenas_ce_migration_backup_1",
+        )
 
     store_instance.async_remove.assert_awaited_once()
 
@@ -619,7 +625,9 @@ async def test_remove_backups_handles_listdir_error() -> None:
     hass.async_add_executor_job = AsyncMock(side_effect=lambda func: func())
 
     with patch("os.listdir", side_effect=OSError("no such dir")):
-        await migration_module._remove_backups(hass, None)  # must not raise
+        await migration_module._remove_backups(
+            hass, migration_module._BACKUP_KEY_PREFIX, None
+        )  # must not raise
 
 
 async def test_remove_backups_logs_on_remove_failure(
@@ -637,7 +645,9 @@ async def test_remove_backups_logs_on_remove_failure(
         patch.object(migration_module, "Store", return_value=store_instance),
         caplog.at_level("WARNING"),
     ):
-        await migration_module._remove_backups(hass, None)
+        await migration_module._remove_backups(
+            hass, migration_module._BACKUP_KEY_PREFIX, None
+        )
 
     assert "Could not remove CE migration backup" in caplog.text
 
@@ -739,4 +749,6 @@ async def test_async_rollback_to_legacy_full_flow() -> None:
     assert result is True
     hass.config_entries.async_remove.assert_awaited_once_with(entry.entry_id)
     hass.config_entries.async_set_disabled_by.assert_awaited_once_with("legacy-1", None)
-    rm_mock.assert_awaited_once_with(hass, keep_key=None)
+    rm_mock.assert_awaited_once_with(
+        hass, migration_module._entry_backup_prefix(entry.entry_id), keep_key=None
+    )
