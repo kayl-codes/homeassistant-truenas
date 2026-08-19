@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from _fakes import make_coordinator
+from _fakes import make_config_entry, make_coordinator
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -459,6 +459,29 @@ def test_device_info_data_group_resolves_group_from_data() -> None:
     info = entity.device_info
     assert info["name"] == "TrueNAS tank"
     assert info["identifiers"] == {("truenas_ce", "TrueNAS_tank")}
+
+
+def test_device_info_data_group_instance_prefix_prevents_collision() -> None:
+    """Two instances resolving the same group must not share a device identifier."""
+    desc = TrueNASSensorEntityDescription(
+        key="disk_temp",
+        name="Temperature",
+        data_path="disk",
+        data_reference="guid",
+        ha_group="data__pool",
+    )
+    data = {"disk": {"d1": {"guid": "g1", "pool": "tank"}}}
+    entity_a = TrueNASEntity(
+        make_coordinator(data=data, config_entry=make_config_entry(name="TrueNAS-A")),
+        desc,
+        "d1",
+    )
+    entity_b = TrueNASEntity(
+        make_coordinator(data=data, config_entry=make_config_entry(name="TrueNAS-B")),
+        desc,
+        "d1",
+    )
+    assert entity_a.device_info["identifiers"] != entity_b.device_info["identifiers"]
 
 
 def test_device_info_explicit_connection_and_value() -> None:
