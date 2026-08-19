@@ -151,6 +151,8 @@ class MigrationRollbackRepairFlow(RepairsFlow):
         """Hand the adopted entities (and history) back to the legacy entry."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is not None:
+            # Scheduled, not awaited: the rollback removes this config entry,
+            # which would tear down this very flow mid-step if awaited inline.
             self.hass.async_create_task(
                 _async_rollback_and_log_errors(self.hass, entry)
             )
