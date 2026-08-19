@@ -611,7 +611,9 @@ async def test_remove_backups_removes_all_except_keep_key() -> None:
         patch.object(migration_module, "Store", return_value=store_instance),
     ):
         await migration_module._remove_backups(
-            hass, "truenas_ce_migration_backup", "truenas_ce_migration_backup_1"
+            hass,
+            migration_module._BACKUP_KEY_PREFIX,
+            "truenas_ce_migration_backup_1",
         )
 
     store_instance.async_remove.assert_awaited_once()
@@ -624,7 +626,7 @@ async def test_remove_backups_handles_listdir_error() -> None:
 
     with patch("os.listdir", side_effect=OSError("no such dir")):
         await migration_module._remove_backups(
-            hass, "truenas_ce_migration_backup", None
+            hass, migration_module._BACKUP_KEY_PREFIX, None
         )  # must not raise
 
 
@@ -644,7 +646,7 @@ async def test_remove_backups_logs_on_remove_failure(
         caplog.at_level("WARNING"),
     ):
         await migration_module._remove_backups(
-            hass, "truenas_ce_migration_backup", None
+            hass, migration_module._BACKUP_KEY_PREFIX, None
         )
 
     assert "Could not remove CE migration backup" in caplog.text
