@@ -649,7 +649,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # retried setup instead of a crash.
             if "hostname" not in self.ds["system_info"]:
                 raise UpdateFailed(
-                    "Essential system information was not received from TrueNAS"
+                    "Essential system information (hostname) was not received"
+                    " from TrueNAS"
                 )
 
             await asyncio.gather(*(_run_job(job) for job in jobs))
