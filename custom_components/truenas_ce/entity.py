@@ -633,7 +633,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                     self._inst, self.coordinator.data["system_info"]["hostname"]
                 ),
             )
-        return cast("DeviceInfo", device_info)
+        return cast(DeviceInfo, device_info)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:

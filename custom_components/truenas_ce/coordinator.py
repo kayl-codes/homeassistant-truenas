@@ -641,6 +641,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # would leave RX/TX at 0 until the next poll.
             await _run_job(self.get_systeminfo)
 
+            # A middleware error leaves ds["system_info"] at its empty initial
+            # value (query() returns None on failure without dropping the
+            # socket). register_system_device() indexes "hostname" out of it
+            # right after the first refresh, so failing fast here -- instead of
+            # returning ds with that key missing -- is what turns this into a
+            # retried setup instead of a crash.
+            if "hostname" not in self.ds["system_info"]:
+                raise UpdateFailed(
+                    "Essential system information (hostname) was not received"
+                    " from TrueNAS"
+                )
+
             await asyncio.gather(*(_run_job(job) for job in jobs))
 
             # get_pool relies on dataset data, so run it after gather completes
