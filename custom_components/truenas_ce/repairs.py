@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from logging import getLogger
 from typing import Any
 
 from homeassistant.components.repairs import RepairsFlow
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
@@ -18,6 +20,8 @@ from .const import (
 )
 from .coordinator import get_truenas_coordinator
 from .migration import async_rollback_to_legacy
+
+_LOGGER = getLogger(__name__)
 
 # Upper bound on ids rendered into the repair dialog. A chain of renames can
 # leave dozens behind; the remainder is summarised so the dialog stays readable
@@ -98,6 +102,25 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
         return self.async_create_entry(title="", data={})
 
 
+async def _async_rollback_and_log_errors(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Run the legacy rollback, logging (not raising) any failure.
+
+    Scheduled via ``async_create_task`` because the rollback removes this very
+    config entry, which would tear down the repair flow mid-step if awaited
+    inline. An unhandled exception in an untracked task would otherwise only
+    surface as a generic asyncio "Task exception was never retrieved" log
+    entry with no integration context.
+    """
+    try:
+        await async_rollback_to_legacy(hass, entry)
+    except Exception:
+        _LOGGER.exception(
+            "TrueNAS CE migration rollback failed for entry %s", entry.entry_id
+        )
+
+
 class MigrationRollbackRepairFlow(RepairsFlow):
     """Confirm-gated rollback of the Community-Edition migration.
 
@@ -128,9 +151,9 @@ class MigrationRollbackRepairFlow(RepairsFlow):
         """Hand the adopted entities (and history) back to the legacy entry."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is not None:
-            # Scheduled as a task because the rollback removes this very config
-            # entry; doing it inline would tear down the flow mid-step.
-            self.hass.async_create_task(async_rollback_to_legacy(self.hass, entry))
+            self.hass.async_create_task(
+                _async_rollback_and_log_errors(self.hass, entry)
+            )
         ir.async_delete_issue(
             self.hass, DOMAIN, f"{ISSUE_MIGRATION_ROLLBACK}_{self._entry_id}"
         )
