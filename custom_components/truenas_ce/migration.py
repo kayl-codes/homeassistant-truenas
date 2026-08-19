@@ -189,6 +189,16 @@ def _remove_legacy_entities(
         ent_reg.async_remove(record[_R_ENTITY_ID])
 
 
+def _entry_backup_prefix(entry_id: str) -> str:
+    """Return the per-entry ``.storage`` key prefix for migration backups.
+
+    Namespaced by config entry id so two TrueNAS instances migrating around
+    the same time never collide on the same timestamped key, and so removing
+    stale snapshots for one entry can never prune another entry's backup.
+    """
+    return f"{_BACKUP_KEY_PREFIX}_{entry_id}"
+
+
 async def _write_migration_backup(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -202,9 +212,8 @@ async def _write_migration_backup(
     migration. Returns the ``.storage`` key on success, else ``None``.
     """
     timestamp = dt_util.utcnow().strftime("%Y%m%d_%H%M%S")
-    store: Store[dict[str, Any]] = Store(
-        hass, _BACKUP_VERSION, f"{_BACKUP_KEY_PREFIX}_{timestamp}"
-    )
+    prefix = _entry_backup_prefix(config_entry.entry_id)
+    store: Store[dict[str, Any]] = Store(hass, _BACKUP_VERSION, f"{prefix}_{timestamp}")
     payload = {
         "created": dt_util.utcnow().isoformat(),
         "ce_entry_id": config_entry.entry_id,
@@ -221,19 +230,23 @@ async def _write_migration_backup(
         _LOGGER.warning("Could not write CE migration backup snapshot: %s", err)
         return None
     _LOGGER.info("Wrote CE migration backup snapshot '%s'", store.key)
-    await _remove_backups(hass, store.key)
+    await _remove_backups(hass, prefix, store.key)
     return store.key
 
 
-async def _remove_backups(hass: HomeAssistant, keep_key: str | None) -> None:
-    """Remove migration backup snapshots from ``.storage``.
+async def _remove_backups(
+    hass: HomeAssistant, prefix: str, keep_key: str | None
+) -> None:
+    """Remove this entry's migration backup snapshots from ``.storage``.
 
-    Scans the ``.storage`` directory for ``truenas_ce_migration_backup_*`` stores
-    and removes every one except ``keep_key`` — pass ``None`` to remove all. Used
+    Scans the ``.storage`` directory for stores matching ``prefix`` (already
+    namespaced by config entry id -- see :func:`_entry_backup_prefix`) and
+    removes every one except ``keep_key`` — pass ``None`` to remove all. Used
     to keep only the latest snapshot after a write, and to drop all of them on
-    rollback. Listing the directory (rather than trusting a stored key) makes the
-    rollback cleanup robust even if the key was never persisted. Best effort —
-    failures are logged, never raised.
+    rollback, without ever touching another config entry's backups. Listing
+    the directory (rather than trusting a stored key) makes the rollback
+    cleanup robust even if the key was never persisted. Best effort — failures
+    are logged, never raised.
     """
     storage_dir = hass.config.path(".storage")
 
@@ -242,7 +255,7 @@ async def _remove_backups(hass: HomeAssistant, keep_key: str | None) -> None:
             return [
                 name
                 for name in os.listdir(storage_dir)
-                if name.startswith(_BACKUP_KEY_PREFIX) and name != keep_key
+                if name.startswith(prefix) and name != keep_key
             ]
         except OSError:
             return []
@@ -519,7 +532,9 @@ async def async_rollback_to_legacy(
     ]
     _remap_and_restore(ent_reg, pairs)
 
-    # The migration is fully undone — drop all safety snapshots.
-    await _remove_backups(hass, keep_key=None)
+    # The migration is fully undone — drop this entry's safety snapshots.
+    await _remove_backups(
+        hass, _entry_backup_prefix(config_entry.entry_id), keep_key=None
+    )
 
     return True
