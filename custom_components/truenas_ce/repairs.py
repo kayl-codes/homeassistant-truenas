@@ -112,12 +112,19 @@ async def _async_rollback_and_log_errors(
     inline. An unhandled exception in an untracked task would otherwise only
     surface as a generic asyncio "Task exception was never retrieved" log
     entry with no integration context.
+
+    Migration-rollback-specific: the broad ``except Exception`` is this
+    coroutine's whole purpose (turning an untracked task's crash into a
+    logged, actionable message), not a generic error-swallowing helper —
+    don't reuse it for other background tasks.
     """
     try:
         await async_rollback_to_legacy(hass, entry)
     except Exception:
         _LOGGER.exception(
-            "TrueNAS CE migration rollback failed for entry %s", entry.entry_id
+            "TrueNAS CE migration rollback failed for entry %s (%s)",
+            entry.entry_id,
+            entry.title,
         )
 
 
