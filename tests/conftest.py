@@ -11,6 +11,7 @@ a bare ``assert`` at module-import time.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -31,11 +32,18 @@ collect_ignore_glob: list[str] = (
 
 
 def load_module_from_path(name: str, path: Path) -> ModuleType:
-    """Load a standalone module by file path."""
+    """Load a standalone module by file path.
+
+    Registers the module in ``sys.modules`` before executing it, since
+    ``dataclasses`` (used with ``from __future__ import annotations``) resolves
+    string annotations via a ``sys.modules`` lookup of the class's own module
+    and raises ``AttributeError`` otherwise.
+    """
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load module {name!r} from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -57,3 +65,10 @@ def vt() -> ModuleType:
     """The ``.github/validate_translations.py`` script under test."""
     path = REPO_ROOT / ".github" / "validate_translations.py"
     return load_module_from_path("validate_translations", path)
+
+
+@pytest.fixture(scope="session")
+def ep() -> ModuleType:
+    """The ``custom_components.truenas_ce.event_push`` module under test."""
+    path = REPO_ROOT / "custom_components" / "truenas_ce" / "event_push.py"
+    return load_module_from_path("event_push", path)
