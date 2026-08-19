@@ -481,7 +481,8 @@ def test_device_info_data_group_instance_prefix_prevents_collision() -> None:
         desc,
         "d1",
     )
-    assert entity_a.device_info["identifiers"] != entity_b.device_info["identifiers"]
+    assert entity_a.device_info["identifiers"] == {("truenas_ce", "TrueNAS-A_tank")}
+    assert entity_b.device_info["identifiers"] == {("truenas_ce", "TrueNAS-B_tank")}
 
 
 def test_device_info_explicit_connection_and_value() -> None:
