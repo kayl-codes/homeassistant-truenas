@@ -428,7 +428,11 @@ async def test_zeroconf_flow_updates_matched_entry_host_after_user_authenticates
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             _user_input(
-                **{CONF_HOST: "192.168.1.50", CONF_API_KEY: "freshly-typed-key"}
+                **{
+                    CONF_HOST: "192.168.1.50",
+                    CONF_API_KEY: "freshly-typed-key",
+                    CONF_NAME: "New Name",
+                }
             ),
         )
     assert result["type"] is FlowResultType.ABORT
