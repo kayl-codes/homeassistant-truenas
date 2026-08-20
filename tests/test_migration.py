@@ -497,6 +497,31 @@ async def test_async_adopt_legacy_entities_skips_disable_when_already_disabled()
     hass.config_entries.async_set_disabled_by.assert_not_awaited()
 
 
+async def test_async_adopt_legacy_entities_aborts_when_disable_fails() -> None:
+    """A legacy entry that fails to disable must not lose its entities either.
+
+    If ``async_set_disabled_by`` returns falsy, adoption must abort without
+    persisting ``MIGRATION_DONE``, so a later setup (once the legacy entry can
+    be disabled) retries instead of stripping entities out from under a still-
+    active legacy coordinator.
+    """
+    hass = MagicMock()
+    legacy_entry = SimpleNamespace(
+        entry_id="legacy-1",
+        data={"host": "truenas.local"},
+        options={},
+        disabled_by=None,
+    )
+    hass.config_entries.async_entries.return_value = [legacy_entry]
+    hass.config_entries.async_set_disabled_by = AsyncMock(return_value=False)
+    entry = _config_entry(data={"host": "truenas.local"})
+
+    records = await async_adopt_legacy_entities(hass, entry)
+
+    assert records == []
+    hass.config_entries.async_update_entry.assert_not_called()
+
+
 # ---------------------------
 #   finalize_legacy_adoption
 # ---------------------------
