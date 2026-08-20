@@ -15,6 +15,7 @@ from custom_components.truenas_ce.repairs import (
     MAX_LISTED_ORPHANS,
     MigrationRollbackRepairFlow,
     StatisticsCleanupRepairFlow,
+    _async_rollback_and_log_errors,
     async_create_fix_flow,
 )
 
@@ -239,3 +240,52 @@ async def test_migration_rollback_ignore_deletes_issue() -> None:
 
     delete_issue.assert_called_once()
     assert result["type"] == "create_entry"
+
+
+async def test_rollback_task_success_raises_no_failure_issue() -> None:
+    """The success path must not touch the issue registry at all."""
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry2", title="TrueNAS")
+
+    with (
+        patch(
+            "custom_components.truenas_ce.repairs.async_rollback_to_legacy",
+            new=AsyncMock(),
+        ),
+        patch(
+            "custom_components.truenas_ce.repairs.ir.async_create_issue"
+        ) as create_issue,
+    ):
+        await _async_rollback_and_log_errors(hass, entry)
+
+    create_issue.assert_not_called()
+
+
+async def test_rollback_task_failure_raises_visible_issue() -> None:
+    """A failed background rollback must surface as its own Repairs issue.
+
+    The original migration_rollback_available issue is already deleted by
+    the caller before this task can finish (see
+    MigrationRollbackRepairFlow.async_step_rollback), so this is the only
+    remaining UI-visible signal that the rollback didn't actually happen.
+    """
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry2", title="TrueNAS")
+
+    with (
+        patch(
+            "custom_components.truenas_ce.repairs.async_rollback_to_legacy",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch(
+            "custom_components.truenas_ce.repairs.ir.async_create_issue"
+        ) as create_issue,
+    ):
+        await _async_rollback_and_log_errors(hass, entry)
+
+    create_issue.assert_called_once()
+    _, args, kwargs = create_issue.mock_calls[0]
+    assert args == (hass, "truenas_ce", "migration_rollback_failed_entry2")
+    assert kwargs["is_fixable"] is False
+    assert kwargs["translation_key"] == "migration_rollback_failed"
+    assert kwargs["translation_placeholders"] == {"name": "TrueNAS"}
