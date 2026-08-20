@@ -147,6 +147,10 @@
                     }
                 }
             }
+        },
+        "migration_rollback_failed": {
+            "title": "TrueNAS-CE-Migrations-Rollback fehlgeschlagen",
+            "description": "Das Rückgängigmachen der TrueNAS-CE-Migration für {name} ist mittendrin fehlgeschlagen. Die Integration befindet sich möglicherweise in einem inkonsistenten Zustand — prüfe die Home-Assistant-Protokolle für Details und drücke dann erneut den Rollback-Button oder installiere die Integration neu."
         }
     },
     "exceptions": {

@@ -238,6 +238,9 @@ BUTTON_SYSTEM_REFRESH = "system_refresh"
 # Dismissing it just closes it; pressing the button again re-raises it.
 BUTTON_MIGRATION_ROLLBACK = "migration_rollback"
 ISSUE_MIGRATION_ROLLBACK = "migration_rollback_available"
+# Raised if the fire-and-forget rollback task (see repairs.py) fails after the
+# issue above was already dismissed, so the failure stays visible in Repairs.
+ISSUE_MIGRATION_ROLLBACK_FAILED = "migration_rollback_failed"
 
 # Community-Edition migration state, persisted on the (new) config entry's data.
 # MIGRATION_DONE is the idempotency flag; MIGRATION_RECORDS holds the reverse map

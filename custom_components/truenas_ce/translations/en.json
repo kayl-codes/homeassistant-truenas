@@ -8,7 +8,7 @@
                     "host": "Host",
                     "api_key": "API key",
                     "verify_ssl": "Verify SSL certificate",
-                    "cronjob_skip_disabled": "Skip disabled cronjobs on manual run",
+                    "cronjob_skip_disabled": "Skip disabled cronjobs",
                     "data_unit": "Data size unit (GB or GiB)"
                 },
                 "data_description": {
@@ -16,7 +16,7 @@
                     "host": "The hostname or IP address of your TrueNAS instance, without \"https://\", path or trailing slash.",
                     "api_key": "An API key generated in TrueNAS under Credentials > API Keys. Leave blank to keep a previously configured key when taking over an existing configuration.",
                     "verify_ssl": "Verify the TrueNAS instance's SSL certificate. Disable only if you use a self-signed certificate you cannot otherwise validate.",
-                    "cronjob_skip_disabled": "Skip cron jobs that are disabled in TrueNAS when running the manual run action.",
+                    "cronjob_skip_disabled": "Exclude cron jobs that are disabled in TrueNAS from monitoring; no sensor entities are created for them.",
                     "data_unit": "Choose whether data sizes are displayed using decimal (GB) or binary (GiB) units."
                 }
             },
@@ -26,7 +26,7 @@
                     "host": "Host",
                     "api_key": "API key",
                     "verify_ssl": "Verify SSL certificate",
-                    "cronjob_skip_disabled": "Skip disabled cronjobs on manual run",
+                    "cronjob_skip_disabled": "Skip disabled cronjobs",
                     "data_unit": "Data size unit (GB or GiB)",
                     "dataset_passphrases": "Add/update dataset passphrases"
                 },
@@ -34,7 +34,7 @@
                     "host": "The hostname or IP address of your TrueNAS instance, without \"https://\", path or trailing slash.",
                     "api_key": "An API key generated in TrueNAS under Credentials > API Keys. Leave blank to keep the current key unchanged.",
                     "verify_ssl": "Verify the TrueNAS instance's SSL certificate. Disable only if you use a self-signed certificate you cannot otherwise validate.",
-                    "cronjob_skip_disabled": "Skip cron jobs that are disabled in TrueNAS when running the manual run action.",
+                    "cronjob_skip_disabled": "Exclude cron jobs that are disabled in TrueNAS from monitoring; no sensor entities are created for them.",
                     "data_unit": "Choose whether data sizes are displayed using decimal (GB) or binary (GiB) units.",
                     "dataset_passphrases": "Enter DatasetName#PassPhrase pairs (one per line, e.g. tank/encrypted#MySecret) to add or update stored passphrases. Leave empty to keep existing passphrases unchanged. Use the passphrase_remove action to delete a stored passphrase by its dataset path."
                 }
@@ -147,6 +147,10 @@
                     }
                 }
             }
+        },
+        "migration_rollback_failed": {
+            "title": "TrueNAS CE migration rollback failed",
+            "description": "Rolling back the TrueNAS CE migration for {name} failed partway through. The integration may be left in an inconsistent state — check the Home Assistant logs for details, then try pressing the rollback button again or reinstalling the integration."
         }
     },
     "exceptions": {
