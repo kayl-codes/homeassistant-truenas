@@ -98,11 +98,12 @@ async def async_adopt_legacy_entities(
         # (without persisting MIGRATION_DONE) if that fails, so a later setup
         # retries instead of stripping entities out from under a still-active
         # legacy coordinator.
-        disabled = legacy_entry.disabled_by is not None or (
-            await hass.config_entries.async_set_disabled_by(
+        if legacy_entry.disabled_by is not None:
+            disabled = True
+        else:
+            disabled = await hass.config_entries.async_set_disabled_by(
                 legacy_entry.entry_id, ConfigEntryDisabler.USER
             )
-        )
         if not disabled:
             _LOGGER.error(
                 "Adoption aborted: legacy '%s' entry %s could not be disabled;"
