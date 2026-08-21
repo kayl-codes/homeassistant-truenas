@@ -522,6 +522,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._service_push = _PushSourceState()
         self._pool_push = _PushSourceState()
+        self._cloudsync_push = _PushSourceState()
+        self._replication_push = _PushSourceState()
+        self._rsync_push = _PushSourceState()
 
     # ---------------------------
     #   connected
@@ -2595,11 +2598,38 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_cloudsync
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "cloudsync.query" is accepted and returns a real subscription id. Like
+    # service/alerts, any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_cloudsync already does every poll tick.
+    _CLOUDSYNC_EVENT = "cloudsync.query"
+
     async def get_cloudsync(self) -> None:
-        """Get cloudsync from TrueNAS."""
+        """Refresh cloudsync tasks, then ensure the push subscription is active."""
         if not self._is_group_monitored(MONITOR_GROUP_CLOUDSYNC):
             self.ds["cloudsync"] = {}
+            await self._stop_push_subscription(self._cloudsync_push)
             return
+        await self._refresh_cloudsync()
+        await self._ensure_push_subscription(
+            self._cloudsync_push,
+            self._CLOUDSYNC_EVENT,
+            self._on_cloudsync_push,
+            label="cloudsync",
+        )
+
+    async def _on_cloudsync_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh cloudsync state on push notification."""
+        await self._refresh_cloudsync()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_cloudsync_push(self) -> None:
+        """Stop the cloudsync push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._cloudsync_push)
+
+    async def _refresh_cloudsync(self) -> None:
+        """Query cloudsync.query and recompute the cloudsync state."""
         self.ds["cloudsync"] = parse_api(
             data=self.ds["cloudsync"],
             source=await self.api.query("cloudsync.query"),
@@ -2619,11 +2649,38 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_replication
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "replication.query" is accepted and returns a real subscription id. Like
+    # service/alerts, any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_replication already does every poll tick.
+    _REPLICATION_EVENT = "replication.query"
+
     async def get_replication(self) -> None:
-        """Get replication from TrueNAS."""
+        """Refresh replication tasks, then ensure the push subscription is active."""
         if not self._is_group_monitored(MONITOR_GROUP_REPLICATION):
             self.ds["replication"] = {}
+            await self._stop_push_subscription(self._replication_push)
             return
+        await self._refresh_replication()
+        await self._ensure_push_subscription(
+            self._replication_push,
+            self._REPLICATION_EVENT,
+            self._on_replication_push,
+            label="replication",
+        )
+
+    async def _on_replication_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh replication state on push notification."""
+        await self._refresh_replication()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_replication_push(self) -> None:
+        """Stop the replication push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._replication_push)
+
+    async def _refresh_replication(self) -> None:
+        """Query replication.query and recompute the replication state."""
         self.ds["replication"] = parse_api(
             data=self.ds["replication"],
             source=await self.api.query("replication.query"),
@@ -2661,11 +2718,38 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_rsync
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "rsynctask.query" is accepted and returns a real subscription id. Like
+    # service/alerts, any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_rsync already does every poll tick.
+    _RSYNC_EVENT = "rsynctask.query"
+
     async def get_rsync(self) -> None:
-        """Get rsync tasks from TrueNAS."""
+        """Refresh rsync tasks, then ensure the push subscription is active."""
         if not self._is_group_monitored(MONITOR_GROUP_RSYNC):
             self.ds["rsynctask"] = {}
+            await self._stop_push_subscription(self._rsync_push)
             return
+        await self._refresh_rsync()
+        await self._ensure_push_subscription(
+            self._rsync_push,
+            self._RSYNC_EVENT,
+            self._on_rsync_push,
+            label="rsync",
+        )
+
+    async def _on_rsync_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh rsync task state on push notification."""
+        await self._refresh_rsync()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_rsync_push(self) -> None:
+        """Stop the rsync push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._rsync_push)
+
+    async def _refresh_rsync(self) -> None:
+        """Query rsynctask.query and recompute the rsync task state."""
         self.ds["rsynctask"] = parse_api(
             data=self.ds["rsynctask"],
             source=await self.api.query("rsynctask.query"),

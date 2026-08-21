@@ -75,6 +75,9 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._alerts_breaker = SubscriptionCircuitBreaker()
     coord._service_push = _PushSourceState()
     coord._pool_push = _PushSourceState()
+    coord._cloudsync_push = _PushSourceState()
+    coord._replication_push = _PushSourceState()
+    coord._rsync_push = _PushSourceState()
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -2758,6 +2761,164 @@ async def test_stop_service_push_unsubscribes_and_clears() -> None:
 
 
 # ---------------------------
+#   get_cloudsync / get_replication / get_rsync push subscription wiring
+# ---------------------------
+async def test_get_cloudsync_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CLOUDSYNC]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_cloudsync()
+
+    coord.api.subscribe_events.assert_awaited_once_with("cloudsync.query")
+    assert coord._cloudsync_push.sub_id == "sub-1"
+    await coord._cloudsync_push.consumer.stop()
+
+
+async def test_on_cloudsync_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": "cs1", "description": "backup"}])
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_cloudsync_push([{"msg": "changed"}])
+
+    assert "cs1" in coord.ds["cloudsync"]
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_cloudsync_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._cloudsync_push,
+        coord._CLOUDSYNC_EVENT,
+        coord._on_cloudsync_push,
+        label="cloudsync",
+    )
+
+    await coord.stop_cloudsync_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._cloudsync_push.sub_id is None
+
+
+async def test_get_replication_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_REPLICATION]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_replication()
+
+    coord.api.subscribe_events.assert_awaited_once_with("replication.query")
+    assert coord._replication_push.sub_id == "sub-1"
+    await coord._replication_push.consumer.stop()
+
+
+async def test_on_replication_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"id": 1, "name": "repl1", "job": {"state": "RUNNING"}}]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_replication_push([{"msg": "changed"}])
+
+    assert coord.ds["replication"][1]["state"] == "RUNNING"
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_replication_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._replication_push,
+        coord._REPLICATION_EVENT,
+        coord._on_replication_push,
+        label="replication",
+    )
+
+    await coord.stop_replication_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._replication_push.sub_id is None
+
+
+async def test_get_rsync_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_RSYNC]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_rsync()
+
+    coord.api.subscribe_events.assert_awaited_once_with("rsynctask.query")
+    assert coord._rsync_push.sub_id == "sub-1"
+    await coord._rsync_push.consumer.stop()
+
+
+async def test_on_rsync_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": 1, "path": "/mnt/tank"}])
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_rsync_push([{"msg": "changed"}])
+
+    assert 1 in coord.ds["rsynctask"]
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_rsync_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._rsync_push,
+        coord._RSYNC_EVENT,
+        coord._on_rsync_push,
+        label="rsync",
+    )
+
+    await coord.stop_rsync_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._rsync_push.sub_id is None
+
+
+# ---------------------------
 #   get_pool / _add_boot_pool
 # ---------------------------
 async def test_get_pool_uses_dataset_mountpoint_match() -> None:
@@ -3577,9 +3738,31 @@ async def test_get_cloudsync_parses_when_monitored() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CLOUDSYNC]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(return_value=[{"id": "cs1", "description": "backup"}])
     await coord.get_cloudsync()
     assert "cs1" in coord.ds["cloudsync"]
+
+
+async def test_get_cloudsync_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._cloudsync_push.sub_id = "sub-1"
+    coord._cloudsync_push.consumer = consumer
+
+    await coord.get_cloudsync()
+
+    assert coord.ds["cloudsync"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._cloudsync_push.sub_id is None
 
 
 async def test_get_replication_falls_back_to_job_state() -> None:
@@ -3588,6 +3771,7 @@ async def test_get_replication_falls_back_to_job_state() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_REPLICATION]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[{"id": 1, "name": "repl1", "job": {"state": "RUNNING"}}]
     )
@@ -3607,6 +3791,27 @@ async def test_get_replication_empty_when_not_monitored() -> None:
     assert coord.ds["replication"] == {}
 
 
+async def test_get_replication_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._replication_push.sub_id = "sub-1"
+    coord._replication_push.consumer = consumer
+
+    await coord.get_replication()
+
+    assert coord.ds["replication"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._replication_push.sub_id is None
+
+
 async def test_get_rsync_empty_when_not_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"rsynctask": {"stale": {}}}
@@ -3618,12 +3823,34 @@ async def test_get_rsync_empty_when_not_monitored() -> None:
     assert coord.ds["rsynctask"] == {}
 
 
+async def test_get_rsync_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._rsync_push.sub_id = "sub-1"
+    coord._rsync_push.consumer = consumer
+
+    await coord.get_rsync()
+
+    assert coord.ds["rsynctask"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._rsync_push.sub_id is None
+
+
 async def test_get_rsync_parses_when_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"rsynctask": {}}
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_RSYNC]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(return_value=[{"id": 1, "path": "/mnt/tank"}])
     await coord.get_rsync()
     assert 1 in coord.ds["rsynctask"]
