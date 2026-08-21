@@ -63,7 +63,6 @@
             }
         },
         "error": {
-            "name_exists": "Nombre ya existente.",
             "invalid_key": "Error de inicio de sesión, clave API inválida.",
             "proxy_intercepted": "Conexión interceptada por un proxy inverso o portal SSO (p. ej. Cloudflare Access). Apunte la integración directamente al host de TrueNAS a través de su LAN/VPN, o exima el punto final WebSocket de la autenticación del proxy.",
             "invalid_hostname": "Host inválido. Introduzca solo el nombre de host o la dirección IP — sin \"https://\", ruta ni barra final.",

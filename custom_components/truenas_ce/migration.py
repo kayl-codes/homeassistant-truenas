@@ -43,6 +43,7 @@ from .const import (
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
 )
+from .helper import sanitize_host
 
 _LOGGER = getLogger(__name__)
 
@@ -161,11 +162,15 @@ def finalize_legacy_adoption(
 def _find_legacy_entry(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> ConfigEntry | None:
-    """Find the old ``truenas`` config entry matching this one (by host)."""
+    """Find the old ``truenas`` config entry matching this one (by host).
+
+    Both sides are run through ``sanitize_host`` before comparing, so a
+    legacy host stored in a different case (e.g. ``NAS.local``) still matches.
+    """
     candidates = hass.config_entries.async_entries(LEGACY_DOMAIN)
-    host = config_entry.data.get(CONF_HOST)
+    host = sanitize_host(config_entry.data.get(CONF_HOST, ""))
     for entry in candidates:
-        if entry.data.get(CONF_HOST) == host:
+        if sanitize_host(entry.data.get(CONF_HOST, "")) == host:
             return entry
     # Single legacy entry with a differing host (e.g. host was normalized): adopt it.
     return candidates[0] if len(candidates) == 1 else None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import re
 import socket
 from collections.abc import Mapping
 from logging import getLogger
@@ -23,7 +22,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -75,6 +74,7 @@ from .const import (
     MONITOR_GROUP_VMS,
 )
 from .coordinator import get_truenas_coordinator
+from .helper import sanitize_host
 
 _LOGGER = getLogger(__name__)
 
@@ -265,26 +265,6 @@ def _map_error_to_ha(errorcode: str) -> str:
     return errorcode if errorcode in valid_errors else "unknown"
 
 
-# ---------------------------
-#   configured_instances
-# ---------------------------
-@callback
-def configured_instances(hass: HomeAssistant) -> set[str]:
-    """Return a set of configured instances."""
-    return {
-        entry.data[CONF_NAME] for entry in hass.config_entries.async_entries(DOMAIN)
-    }
-
-
-# ---------------------------
-#   _sanitize_host
-# ---------------------------
-# Strip a leading URL scheme (e.g. "https://" or "http://") from the host.
-_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
-# Everything from the first path/query/fragment delimiter is not part of host.
-_HOST_TAIL_RE = re.compile(r"[/?#]")
-
-
 def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
     """Drop a blank ``CONF_API_KEY`` from ``user_input`` meaning "unchanged".
 
@@ -300,23 +280,6 @@ def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
     """
     if user_input.get(CONF_API_KEY, "") == "" and keep_existing:
         user_input.pop(CONF_API_KEY, None)
-
-
-def _sanitize_host(host: str) -> str:
-    """Normalize user input to the bare hostname/IP[:port] the API expects.
-
-    Users frequently paste a full URL (for example
-    ``https://nas.example.com/ui?tab=1``). The API layer requires a bare host,
-    so strip any scheme as well as a trailing path, query or fragment here
-    instead of erroring out, so the value just works. Hostnames (and DNS in
-    general) are case-insensitive, so the result is also lowercased — this
-    keeps ``NAS.local`` and ``nas.local`` from being treated as two different
-    hosts by the exact-string duplicate/rediscovery matching elsewhere.
-    """
-    host = host.strip()
-    host = _SCHEME_RE.sub("", host)  # drop a leading scheme
-    host = _HOST_TAIL_RE.split(host, maxsplit=1)[0]  # drop path/query/fragment
-    return host.strip().lower()
 
 
 # ---------------------------
@@ -382,7 +345,7 @@ def _probe_candidates(host: str, port: int | None) -> list[str]:
     A genuinely non-default port is appended as a fallback, so an instance
     behind a custom port or reverse proxy is no longer misread as "not
     TrueNAS". ``aiotruenas`` builds its URL from the host verbatim, so
-    ``host:port`` is a valid host string here (see ``_sanitize_host``).
+    ``host:port`` is a valid host string here (see ``helper.sanitize_host``).
     """
     if port is None or port in _DEFAULT_WS_PORTS:
         return [host]
@@ -476,7 +439,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 config[CONF_VERIFY_SSL],
             )
         except ValueError:
-            # _sanitize_host already removes a scheme/path up front, so this
+            # sanitize_host already removes a scheme/path up front, so this
             # only triggers for a genuinely malformed host that the API layer
             # still rejects. Surface a clear error instead of an unhandled
             # exception (which the frontend reports as a generic failure).
@@ -549,21 +512,15 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         cognitive complexity within bounds (SonarQube S3776).
         """
         if CONF_HOST in user_input:
-            user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
+            user_input[CONF_HOST] = sanitize_host(user_input[CONF_HOST])
         _pop_blank_api_key(user_input, bool(truenas_config.get(CONF_API_KEY)))
         truenas_config |= user_input
 
         # The same device must not be configurable twice: abort when another
-        # entry already points at this host (the name check below alone would
-        # let the same host in again under a different name).
+        # entry already points at this host.
         self._async_abort_entries_match({CONF_HOST: truenas_config[CONF_HOST]})
 
-        # Check if instance with this name already exists
-        if truenas_config[CONF_NAME] in configured_instances(self.hass):
-            errors["base"] = "name_exists"
-
-        if not errors:
-            await self._validate_connection(truenas_config, errors)
+        await self._validate_connection(truenas_config, errors)
 
         # Once the box's stable identity is known, key the entry's unique_id
         # on it rather than on the (zeroconf-set) host, so rediscovery and
@@ -664,11 +621,24 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         Only relevant in the renamed (``truenas_ce``) integration; inert while
         ``DOMAIN == LEGACY_DOMAIN`` so the takeover never appears pre-rename.
+        With more than one legacy entry (multiple boxes set up under the old
+        integration), a host already known at this point (e.g. from zeroconf
+        discovery) picks the matching one instead of always offering the
+        first; with no host known yet and more than one legacy entry, none is
+        offered here (ambiguous -- the user can still migrate manually).
         """
         if DOMAIN == LEGACY_DOMAIN:
             return None
         legacy_entries = self.hass.config_entries.async_entries(LEGACY_DOMAIN)
-        return legacy_entries[0] if legacy_entries else None
+        if not legacy_entries:
+            return None
+        if host := self.truenas_config.get(CONF_HOST):
+            sanitized_host = sanitize_host(host)
+            for entry in legacy_entries:
+                entry_host = entry.data.get(CONF_HOST)
+                if entry_host and sanitize_host(entry_host) == sanitized_host:
+                    return entry
+        return legacy_entries[0] if len(legacy_entries) == 1 else None
 
     async def async_step_migrate(
         self, user_input: dict[str, Any] | None = None
@@ -831,7 +801,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             if CONF_HOST in user_input:
-                user_input[CONF_HOST] = _sanitize_host(user_input[CONF_HOST])
+                user_input[CONF_HOST] = sanitize_host(user_input[CONF_HOST])
             _pop_blank_api_key(user_input, keep_existing=True)
             if CONF_DATASET_PASSPHRASES in user_input:
                 self._apply_passphrase_input(
