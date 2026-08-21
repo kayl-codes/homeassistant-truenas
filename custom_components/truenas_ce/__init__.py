@@ -614,6 +614,7 @@ async def async_unload_entry(
         coordinator = get_truenas_coordinator(config_entry)
         if coordinator is not None:
             await coordinator.stop_app_stats()
+            await coordinator.stop_alerts()
             await coordinator.api.close()
         if hasattr(config_entry, "runtime_data"):
             del config_entry.runtime_data

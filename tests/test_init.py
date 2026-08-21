@@ -856,6 +856,7 @@ async def test_async_unload_entry_stops_coordinator_on_success() -> None:
 
     coordinator = SimpleNamespace(
         stop_app_stats=AsyncMock(),
+        stop_alerts=AsyncMock(),
         api=SimpleNamespace(close=AsyncMock()),
     )
     entry.runtime_data = coordinator
@@ -865,6 +866,7 @@ async def test_async_unload_entry_stops_coordinator_on_success() -> None:
 
     assert result is True
     coordinator.stop_app_stats.assert_awaited_once()
+    coordinator.stop_alerts.assert_awaited_once()
     coordinator.api.close.assert_awaited_once()
     assert not hasattr(entry, "runtime_data")
 

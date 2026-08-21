@@ -14,6 +14,7 @@ used for ``TrueNASConfigFlow``.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +47,7 @@ from custom_components.truenas_ce.const import (
     MONITOR_GROUP_VMS,
 )
 from custom_components.truenas_ce.coordinator import (
+    SubscriptionCircuitBreaker,
     TrueNASCoordinator,
     _accumulate_vdev_errors,
     _aggregate_topology_errors,
@@ -67,6 +69,9 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord = TrueNASCoordinator.__new__(TrueNASCoordinator)
     coord._app_stats_event_name = None
     coord._app_stats_sub_id = None
+    coord._alerts_sub_id = None
+    coord._alerts_push_consumer = None
+    coord._alerts_breaker = SubscriptionCircuitBreaker()
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -632,6 +637,7 @@ async def test_get_alerts_malformed_response_resets_to_defaults() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(return_value={"not": "a list"})
     await coord.get_alerts()
     assert coord.ds["alerts"] == {
@@ -648,6 +654,7 @@ async def test_get_alerts_filters_dismissed_and_counts_levels() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -695,6 +702,7 @@ async def test_get_alerts_no_disk_issues_when_unrelated() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -708,6 +716,175 @@ async def test_get_alerts_no_disk_issues_when_unrelated() -> None:
     )
     await coord.get_alerts()
     assert coord.ds["alerts"]["disk_issues"] is False
+
+
+# ---------------------------
+#   alerts push subscription
+# ---------------------------
+def _hass_with_background_tasks() -> MagicMock:
+    """A hass stub whose async_create_background_task really schedules the coro.
+
+    A plain MagicMock would return a mock without ever awaiting the passed
+    coroutine, leaving it un-awaited (and the consumer loop never running) --
+    real ``asyncio.create_task`` is needed so ``SubscriptionPushConsumer``
+    behaves like it does in production.
+    """
+    hass = MagicMock()
+    hass.async_create_background_task = lambda coro, name: asyncio.create_task(
+        coro, name=name
+    )
+    return hass
+
+
+async def test_ensure_alerts_subscription_noop_when_not_connected() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock()
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
+
+
+async def test_ensure_alerts_subscription_subscribes_once() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_awaited_once_with("alert.list")
+    assert coord._alerts_sub_id == "sub-1"
+    assert coord._alerts_push_consumer is not None
+    await coord._alerts_push_consumer.stop()
+
+
+async def test_ensure_alerts_subscription_noop_when_already_active() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-existing"
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id == "sub-existing"
+
+
+async def test_ensure_alerts_subscription_resubscribes_when_stale() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    coord._alerts_sub_id = "sub-stale"
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_awaited_once_with("alert.list")
+    assert coord._alerts_sub_id == "sub-new"
+    await coord._alerts_push_consumer.stop()
+
+
+async def test_ensure_alerts_subscription_handles_subscribe_failure() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(side_effect=Exception("subscribe failed"))
+
+    await coord._ensure_alerts_subscription()
+
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_ensure_alerts_subscription_handles_no_sub_id_returned() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=(None, None))
+
+    await coord._ensure_alerts_subscription()
+
+    assert coord._alerts_sub_id is None
+
+
+async def test_ensure_alerts_subscription_respects_breaker_cooldown() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    for _ in range(3):  # default config trips after 3 consecutive breaches
+        coord._alerts_breaker.record_batch(9999)
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
+
+
+async def test_on_alerts_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"alerts": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"dismissed": False, "level": "CRITICAL", "formatted": "x"}]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_alerts_push([{"msg": "removed"}])
+
+    assert coord.ds["alerts"]["count"] == 1
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_on_alerts_breaker_trip_stops_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-1"
+
+    await coord._on_alerts_breaker_trip()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_stop_alerts_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_alerts_subscription()
+
+    await coord.stop_alerts()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_stop_alerts_noop_when_not_subscribed() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+
+    await coord.stop_alerts()
+
+    coord.api.unsubscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
 
 
 # ---------------------------

@@ -61,6 +61,7 @@ from .const import (
     MONITOR_GROUP_VMS,
     UPTIME_EPOCH_TOLERANCE_SECONDS,
 )
+from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -499,6 +500,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._app_stats_event_name: str | None = None
         self._app_stats_sub_id: str | None = None
+
+        self._alerts_sub_id: str | None = None
+        self._alerts_push_consumer: SubscriptionPushConsumer | None = None
+        self._alerts_breaker = SubscriptionCircuitBreaker()
 
     # ---------------------------
     #   connected
@@ -2175,7 +2180,20 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   get_alerts
     # ---------------------------
     async def get_alerts(self) -> None:
-        """Get alerts from TrueNAS."""
+        """Refresh alerts, then ensure the push subscription is active.
+
+        The full ``alert.list`` query below is cheap and stays unconditional
+        on every poll tick, so it doubles as the safety net if the push
+        subscription is inactive/tripped -- unlike ``app.stats``, alerts has
+        no cost difference between "query everything" and "read the queue",
+        so a failed subscription degrades straight back to today's plain
+        polling instead of needing a separate fallback path.
+        """
+        await self._refresh_alerts()
+        await self._ensure_alerts_subscription()
+
+    async def _refresh_alerts(self) -> None:
+        """Query alert.list and recompute the aggregated alerts state."""
         alerts = await self.api.query("alert.list")
         if not isinstance(alerts, list):
             _LOGGER.warning(
@@ -2213,6 +2231,93 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "disk_issues": disk_issues,
             "uuids": [a.get("uuid") for a in active_alerts if a.get("uuid")],
         }
+
+    # ---------------------------
+    #   alerts push subscription helpers
+    # ---------------------------
+    # Subscription lifecycle:
+    #   UNSUBSCRIBED: _alerts_sub_id is None.
+    #   SUBSCRIBED:   _alerts_sub_id and _alerts_push_consumer are set together.
+    #   stop_alerts clears both, unconditionally.
+    # Verified against a live TrueNAS instance (2026-08-21): core.subscribe on
+    # "alert.list" delivers a collection_update notification (msg: "removed")
+    # on alert.dismiss. The push consumer below treats arrival of any message
+    # as a pure "something changed, refetch now" signal and re-runs the same
+    # full query _refresh_alerts already does every poll tick, rather than
+    # trying to reconstruct the aggregated counts from partial CRUD payloads.
+    _ALERTS_EVENT = "alert.list"
+
+    async def _ensure_alerts_subscription(self) -> None:
+        """(Re-)establish the alerts push subscription if not already active."""
+        if not self.api.connected():
+            return
+
+        if self._alerts_sub_id and not await self.api.is_subscribed(
+            self._alerts_sub_id
+        ):
+            self._clear_alerts_subscription()
+
+        if self._alerts_sub_id:
+            return
+
+        if self._alerts_breaker.tripped:
+            if not self._alerts_breaker.should_attempt_reset():
+                return
+            self._alerts_breaker.reset()
+
+        try:
+            sub_id, queue = await self.api.subscribe_events(self._ALERTS_EVENT)
+        except Exception as err:
+            _LOGGER.exception("Failed to establish alerts subscription: %s", err)
+            return
+
+        if not sub_id or queue is None:
+            _LOGGER.debug("Alerts subscription failed: no sub_id/queue returned")
+            return
+
+        consumer = SubscriptionPushConsumer(
+            queue,
+            self._on_alerts_push,
+            breaker=self._alerts_breaker,
+            on_trip=self._on_alerts_breaker_trip,
+        )
+        consumer.start(task_factory=self.hass.async_create_background_task)
+        self._alerts_sub_id = sub_id
+        self._alerts_push_consumer = consumer
+        _LOGGER.debug("TrueNAS alerts push subscription established: %s", sub_id)
+
+    async def _on_alerts_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh alerts state on push notification (Sofort-Trigger)."""
+        await self._refresh_alerts()
+        self.async_set_updated_data(self.ds)
+
+    async def _on_alerts_breaker_trip(self) -> None:
+        """Unsubscribe and fall back to plain polling after the breaker trips."""
+        _LOGGER.warning(
+            "TrueNAS alerts subscription falling back to polling after circuit "
+            "breaker trip"
+        )
+        await self.stop_alerts()
+
+    def _clear_alerts_subscription(self) -> None:
+        """Clear local alerts subscription state."""
+        self._alerts_sub_id = None
+        self._alerts_push_consumer = None
+
+    async def stop_alerts(self) -> None:
+        """Stop the alerts push subscription, e.g. on unload."""
+        if self._alerts_push_consumer is not None:
+            await self._alerts_push_consumer.stop()
+        if self._alerts_sub_id and self.api.connected():
+            try:
+                await self.api.unsubscribe_events(self._alerts_sub_id)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "TrueNAS failed to unsubscribe alerts %s (%s)",
+                    self._alerts_sub_id,
+                    exc,
+                )
+        self._clear_alerts_subscription()
 
     # ---------------------------
     #   get_certificates
