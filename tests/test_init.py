@@ -858,6 +858,9 @@ async def test_async_unload_entry_stops_coordinator_on_success() -> None:
         stop_app_stats=AsyncMock(),
         stop_alerts=AsyncMock(),
         stop_service_push=AsyncMock(),
+        stop_vm_push=AsyncMock(),
+        stop_container_push=AsyncMock(),
+        stop_app_push=AsyncMock(),
         api=SimpleNamespace(close=AsyncMock()),
     )
     entry.runtime_data = coordinator
@@ -869,6 +872,9 @@ async def test_async_unload_entry_stops_coordinator_on_success() -> None:
     coordinator.stop_app_stats.assert_awaited_once()
     coordinator.stop_alerts.assert_awaited_once()
     coordinator.stop_service_push.assert_awaited_once()
+    coordinator.stop_vm_push.assert_awaited_once()
+    coordinator.stop_container_push.assert_awaited_once()
+    coordinator.stop_app_push.assert_awaited_once()
     coordinator.api.close.assert_awaited_once()
     assert not hasattr(entry, "runtime_data")
 

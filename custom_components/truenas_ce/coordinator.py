@@ -521,6 +521,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alerts_breaker = SubscriptionCircuitBreaker()
 
         self._service_push = _PushSourceState()
+        self._vm_push = _PushSourceState()
+        self._container_push = _PushSourceState()
+        self._app_push = _PushSourceState()
 
     # ---------------------------
     #   connected
@@ -1996,11 +1999,38 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_vm
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "vm.query" is accepted and returns a real subscription id. Like
+    # service/alerts, any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_vm already does every poll tick.
+    _VM_EVENT = "vm.query"
+
     async def get_vm(self) -> None:
-        """Get VMs from TrueNAS."""
+        """Refresh VMs, then ensure the push subscription is active."""
         if not self._is_group_monitored(MONITOR_GROUP_VMS):
             self.ds["vm"] = {}
+            await self._stop_push_subscription(self._vm_push)
             return
+        await self._refresh_vm()
+        await self._ensure_push_subscription(
+            self._vm_push,
+            self._VM_EVENT,
+            self._on_vm_push,
+            label="vm",
+        )
+
+    async def _on_vm_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh VM state on push notification."""
+        await self._refresh_vm()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_vm_push(self) -> None:
+        """Stop the VM push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._vm_push)
+
+    async def _refresh_vm(self) -> None:
+        """Query vm.query and recompute the VM state."""
         self.ds["vm"] = parse_api(
             data=self.ds["vm"],
             source=await self.api.query("vm.query"),
@@ -2033,7 +2063,42 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_container
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # both "container.query" and "virt.instance.query" is accepted and
+    # returns a real subscription id. Like service/alerts, any push message
+    # is treated as a pure "something changed, refetch now" signal and
+    # re-runs the same full query _refresh_container already does every poll
+    # tick. The topic is re-derived from supports_container_api() on every
+    # call (not cached) so a mid-session TrueNAS upgrade is picked up.
     async def get_container(self) -> None:
+        """Refresh containers, then ensure the push subscription is active."""
+        if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
+            self.ds["container"] = {}
+            await self._stop_push_subscription(self._container_push)
+            return
+        await self._refresh_container()
+        event = (
+            "container.query"
+            if self.supports_container_api()
+            else "virt.instance.query"
+        )
+        await self._ensure_push_subscription(
+            self._container_push,
+            event,
+            self._on_container_push,
+            label="container",
+        )
+
+    async def _on_container_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh container state on push notification."""
+        await self._refresh_container()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_container_push(self) -> None:
+        """Stop the container push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._container_push)
+
+    async def _refresh_container(self) -> None:
         """Get virt CONTAINER instances (Incus) from TrueNAS.
 
         ``virt.instance.query`` returns both CONTAINER and VM Incus instances;
@@ -2041,10 +2106,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``get_vm``). Container ``cpu``/``memory`` may be ``None``, so both are
         treated null-safely (this was the upstream crash, see #26).
         """
-        if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
-            self.ds["container"] = {}
-            return
-
         if self.supports_container_api():
             await self._get_container_v26()
             return
@@ -2707,8 +2768,36 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_app
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "app.query" is accepted and returns a real subscription id. Like
+    # service/alerts, any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_app already does every poll tick. get_app has no monitor-group
+    # gate today (unlike get_app_stats, which gates on MONITOR_GROUP_
+    # CONTAINERS), so this wrapper stays ungated too.
+    _APP_EVENT = "app.query"
+
     async def get_app(self) -> None:
-        """Get Apps from TrueNAS."""
+        """Refresh apps, then ensure the push subscription is active."""
+        await self._refresh_app()
+        await self._ensure_push_subscription(
+            self._app_push,
+            self._APP_EVENT,
+            self._on_app_push,
+            label="app",
+        )
+
+    async def _on_app_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh app state on push notification."""
+        await self._refresh_app()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_app_push(self) -> None:
+        """Stop the app push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._app_push)
+
+    async def _refresh_app(self) -> None:
+        """Query app.query and recompute the app state."""
         self.ds["app"] = parse_api(
             data=self.ds["app"],
             source=await self.api.query("app.query"),
