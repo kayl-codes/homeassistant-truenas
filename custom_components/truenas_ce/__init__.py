@@ -616,6 +616,7 @@ async def async_unload_entry(
             await coordinator.stop_app_stats()
             await coordinator.stop_alerts()
             await coordinator.stop_service_push()
+            await coordinator.stop_pool_push()
             await coordinator.api.close()
         if hasattr(config_entry, "runtime_data"):
             del config_entry.runtime_data

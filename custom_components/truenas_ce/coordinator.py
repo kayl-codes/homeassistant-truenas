@@ -521,6 +521,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alerts_breaker = SubscriptionCircuitBreaker()
 
         self._service_push = _PushSourceState()
+        self._pool_push = _PushSourceState()
 
     # ---------------------------
     #   connected
@@ -1510,8 +1511,35 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_pool
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-22): core.subscribe on
+    # "pool.query" is accepted and returns a real subscription id. Pool health
+    # changes (degraded/faulted, capacity, scrub state, etc.) are infrequent,
+    # so -- like service -- any push message is treated as a pure "something
+    # changed, refetch now" signal and re-runs the same full query
+    # _refresh_pool already does every poll tick.
+    _POOL_EVENT = "pool.query"
+
     async def get_pool(self) -> None:
-        """Get pools from TrueNAS."""
+        """Refresh pools, then ensure the push subscription is active."""
+        await self._refresh_pool()
+        await self._ensure_push_subscription(
+            self._pool_push,
+            self._POOL_EVENT,
+            self._on_pool_push,
+            label="pool",
+        )
+
+    async def _on_pool_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh pool state on push notification."""
+        await self._refresh_pool()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_pool_push(self) -> None:
+        """Stop the pool push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._pool_push)
+
+    async def _refresh_pool(self) -> None:
+        """Query pool.query and recompute the pool state."""
         raw_pools = await self.api.query("pool.query")
         self.ds["pool"] = parse_api(
             data=self.ds["pool"],

@@ -74,6 +74,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._alerts_push_consumer = None
     coord._alerts_breaker = SubscriptionCircuitBreaker()
     coord._service_push = _PushSourceState()
+    coord._pool_push = _PushSourceState()
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -2844,6 +2845,75 @@ async def test_add_boot_pool_noop_when_absent() -> None:
     coord.api.query = AsyncMock(return_value=None)
     await coord._add_boot_pool()
     assert coord.ds["pool"] == {}
+
+
+# ---------------------------
+#   get_pool push subscription wiring
+# ---------------------------
+async def test_get_pool_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {}, "dataset": {}}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_pool()
+
+    coord.api.subscribe_events.assert_awaited_once_with("pool.query")
+    assert coord._pool_push.sub_id == "sub-1"
+    await coord._pool_push.consumer.stop()
+
+
+async def test_on_pool_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "pool": {},
+        "dataset": {"tank": {"mountpoint": "/mnt/tank", "available": 40, "used": 60}},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "guid": "g1",
+                    "name": "tank",
+                    "path": "/mnt/tank",
+                    "fragmentation": "12",
+                    "topology": {},
+                }
+            ],
+            None,  # boot.get_state
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_pool_push([{"msg": "changed"}])
+
+    assert coord.ds["pool"]["g1"]["available"] == 40
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_pool_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._pool_push,
+        coord._POOL_EVENT,
+        coord._on_pool_push,
+        label="pool",
+    )
+
+    await coord.stop_pool_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._pool_push.sub_id is None
 
 
 # ---------------------------
