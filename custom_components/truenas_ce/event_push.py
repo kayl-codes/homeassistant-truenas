@@ -26,6 +26,7 @@ Wiring these into a concrete ``coordinator.py`` data source (per the
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
@@ -164,26 +165,35 @@ class SubscriptionPushConsumer:
         self._task = task_factory(self._run(), f"{__name__}.push_consumer")
 
     async def stop(self) -> None:
-        """Cancel the background drain task and wait for it to finish."""
+        """Cancel the background drain task and wait for it to finish.
+
+        Safe to call from within the drain task itself (e.g. an ``on_trip``
+        callback invoked from :meth:`_run`): a task cannot await itself, so
+        that case just forgets the task and lets it unwind on its own instead
+        of cancelling/awaiting it.
+        """
         if self._task is None:
             return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._task = None
+        task, self._task = self._task, None
+        if task is asyncio.current_task():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
     async def _run(self) -> None:
         try:
             while True:
-                batch = await self._collect_batch()
-                if self._breaker is not None and self._breaker.record_batch(len(batch)):
-                    if self._on_trip is not None:
-                        await self._on_trip()
+                batch, subscription_ended = await self._collect_batch()
+                if batch and not await self._drain_batch(batch):
                     return
-                await self._flush_callback(batch)
+                if subscription_ended:
+                    _LOGGER.debug(
+                        "SubscriptionPushConsumer: subscription ended, "
+                        "falling back to polling"
+                    )
+                    await self._notify_trip()
+                    return
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -192,14 +202,48 @@ class SubscriptionPushConsumer:
             )
             raise
 
-    async def _collect_batch(self) -> list[Any]:
-        """Wait for one message, then coalesce more within the debounce window."""
-        batch = [await self._queue.get()]
+    async def _drain_batch(self, batch: list[Any]) -> bool:
+        """Flush one batch; return False if the caller should stop draining."""
+        if self._breaker is not None and self._breaker.record_batch(len(batch)):
+            await self._notify_trip()
+            return False
+        try:
+            await self._flush_callback(batch)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "SubscriptionPushConsumer: flush callback failed, falling "
+                "back to polling"
+            )
+            await self._notify_trip()
+            return False
+        return True
+
+    async def _notify_trip(self) -> None:
+        if self._on_trip is not None:
+            await self._on_trip()
+
+    async def _collect_batch(self) -> tuple[list[Any], bool]:
+        """Wait for one message, then coalesce more within the debounce window.
+
+        Returns ``(batch, subscription_ended)``. ``subscription_ended`` is
+        True once aiotruenas's internal subscription-terminator sentinel (a
+        non-dict queue item, see :meth:`TrueNASAPI.subscribe_events`) is
+        seen, meaning no further items will ever arrive on this queue.
+        """
+        first = await self._queue.get()
+        if not isinstance(first, dict):
+            return [], True
+        batch: list[Any] = [first]
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._debounce_seconds
         while (remaining := deadline - loop.time()) > 0:
             try:
-                batch.append(await asyncio.wait_for(self._queue.get(), remaining))
+                item = await asyncio.wait_for(self._queue.get(), remaining)
             except TimeoutError:
                 break
-        return batch
+            if not isinstance(item, dict):
+                return batch, True
+            batch.append(item)
+        return batch, False

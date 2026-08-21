@@ -164,6 +164,102 @@ async def test_consumer_trip_stops_without_flushing_and_calls_on_trip(
         await consumer.stop()
 
 
+async def test_consumer_trip_callback_calling_stop_does_not_raise(
+    ep: ModuleType,
+) -> None:
+    """An ``on_trip`` callback that calls ``consumer.stop()`` on itself (as
+    the coordinator's ``_ensure_push_subscription`` does) must not deadlock
+    or raise -- a task cannot await itself, so ``stop()`` must detect that
+    case (regression test for #101 review comment)."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def flush(batch: list) -> None:
+        pass
+
+    breaker = ep.SubscriptionCircuitBreaker(
+        ep.CircuitBreakerConfig(message_threshold=0, consecutive_breaches_to_trip=1)
+    )
+    consumer: ep.SubscriptionPushConsumer
+
+    async def on_trip() -> None:
+        await consumer.stop()
+
+    consumer = ep.SubscriptionPushConsumer(
+        queue,
+        flush,
+        debounce=timedelta(milliseconds=10),
+        breaker=breaker,
+        on_trip=on_trip,
+    )
+    consumer.start()
+    try:
+        await queue.put({"id": 1})
+        await asyncio.sleep(0.05)
+        assert consumer.running is False
+    finally:
+        await consumer.stop()
+
+
+async def test_consumer_non_dict_item_ends_subscription_and_calls_on_trip(
+    ep: ModuleType,
+) -> None:
+    """A non-dict queue item is aiotruenas's subscription-terminator
+    sentinel; the consumer must stop draining and notify ``on_trip`` so the
+    coordinator falls back to polling instead of hanging on a dead queue."""
+    queue: asyncio.Queue = asyncio.Queue()
+    flushed: list[list] = []
+    tripped = asyncio.Event()
+
+    async def flush(batch: list) -> None:
+        flushed.append(batch)
+
+    async def on_trip() -> None:
+        tripped.set()
+
+    consumer = ep.SubscriptionPushConsumer(
+        queue, flush, debounce=timedelta(milliseconds=10), on_trip=on_trip
+    )
+    consumer.start()
+    try:
+        await queue.put({"id": 1})
+        await queue.put(None)  # stand-in for aiotruenas's private sentinel type
+        await asyncio.wait_for(tripped.wait(), timeout=1)
+        assert flushed == [[{"id": 1}]]
+        await asyncio.sleep(0.02)
+        assert consumer.running is False
+    finally:
+        await consumer.stop()
+
+
+async def test_consumer_flush_callback_error_calls_on_trip_instead_of_dying(
+    ep: ModuleType,
+) -> None:
+    """If the flush callback raises (e.g. a transient query failure), the
+    consumer must stop cleanly via ``on_trip`` rather than letting the
+    background task die silently while the coordinator still thinks the
+    subscription is healthy."""
+    queue: asyncio.Queue = asyncio.Queue()
+    tripped = asyncio.Event()
+
+    async def flush(batch: list) -> None:
+        raise RuntimeError("transient query failure")
+
+    async def on_trip() -> None:
+        tripped.set()
+
+    consumer = ep.SubscriptionPushConsumer(
+        queue, flush, debounce=timedelta(milliseconds=10), on_trip=on_trip
+    )
+    consumer.start()
+    try:
+        await queue.put({"id": 1})
+        await asyncio.wait_for(tripped.wait(), timeout=1)
+        await asyncio.sleep(0.02)
+        assert consumer.running is False
+    finally:
+        await consumer.stop()
+
+
 async def test_consumer_stop_is_idempotent_and_cancels_cleanly(
     ep: ModuleType,
 ) -> None:

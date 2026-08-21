@@ -430,8 +430,10 @@ class _PushSourceState:
 
     def __init__(self) -> None:
         self.sub_id: str | None = None
+        self.event: str | None = None
         self.consumer: SubscriptionPushConsumer | None = None
         self.breaker = SubscriptionCircuitBreaker()
+        self.refresh_lock = asyncio.Lock()
 
 
 # ---------------------------
@@ -1450,7 +1452,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def get_service(self) -> None:
         """Refresh services, then ensure the push subscription is active."""
-        await self._refresh_service()
+        await self._refresh_locked(self._service_push, self._refresh_service)
         await self._ensure_push_subscription(
             self._service_push,
             self._SERVICE_EVENT,
@@ -1460,7 +1462,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_service_push(self, _batch: list[Any]) -> None:
         """Immediately refresh service state on push notification."""
-        await self._refresh_service()
+        await self._refresh_locked(self._service_push, self._refresh_service)
         self.async_set_updated_data(self.ds)
 
     async def stop_service_push(self) -> None:
@@ -1527,7 +1529,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def get_pool(self) -> None:
         """Refresh pools, then ensure the push subscription is active."""
-        await self._refresh_pool()
+        await self._refresh_locked(self._pool_push, self._refresh_pool)
         await self._ensure_push_subscription(
             self._pool_push,
             self._POOL_EVENT,
@@ -1537,7 +1539,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_pool_push(self, _batch: list[Any]) -> None:
         """Immediately refresh pool state on push notification."""
-        await self._refresh_pool()
+        await self._refresh_locked(self._pool_push, self._refresh_pool)
         self.async_set_updated_data(self.ds)
 
     async def stop_pool_push(self) -> None:
@@ -2043,7 +2045,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["vm"] = {}
             await self._stop_push_subscription(self._vm_push)
             return
-        await self._refresh_vm()
+        await self._refresh_locked(self._vm_push, self._refresh_vm)
         await self._ensure_push_subscription(
             self._vm_push,
             self._VM_EVENT,
@@ -2053,7 +2055,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_vm_push(self, _batch: list[Any]) -> None:
         """Immediately refresh VM state on push notification."""
-        await self._refresh_vm()
+        await self._refresh_locked(self._vm_push, self._refresh_vm)
         self.async_set_updated_data(self.ds)
 
     async def stop_vm_push(self) -> None:
@@ -2107,7 +2109,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["container"] = {}
             await self._stop_push_subscription(self._container_push)
             return
-        await self._refresh_container()
+        await self._refresh_locked(self._container_push, self._refresh_container)
         event = (
             "container.query"
             if self.supports_container_api()
@@ -2122,7 +2124,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_container_push(self, _batch: list[Any]) -> None:
         """Immediately refresh container state on push notification."""
-        await self._refresh_container()
+        await self._refresh_locked(self._container_push, self._refresh_container)
         self.async_set_updated_data(self.ds)
 
     async def stop_container_push(self) -> None:
@@ -2130,12 +2132,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._stop_push_subscription(self._container_push)
 
     async def _refresh_container(self) -> None:
-        """Get virt CONTAINER instances (Incus) from TrueNAS.
+        """Get container instances from TrueNAS via the supported API.
 
-        ``virt.instance.query`` returns both CONTAINER and VM Incus instances;
-        only CONTAINER ones are surfaced here (legacy libvirt VMs are handled by
-        ``get_vm``). Container ``cpu``/``memory`` may be ``None``, so both are
-        treated null-safely (this was the upstream crash, see #26).
+        On TrueNAS 26.0+ (``supports_container_api()``), dispatches to
+        ``container.query`` (LXC) via :meth:`_get_container_v26`. On older
+        versions, ``virt.instance.query`` returns both CONTAINER and VM Incus
+        instances; only CONTAINER ones are surfaced here (legacy libvirt VMs
+        are handled by ``get_vm``). Container ``cpu``/``memory`` may be
+        ``None`` on the legacy path, so both are treated null-safely (this
+        was the upstream crash, see #26).
         """
         if self.supports_container_api():
             await self._get_container_v26()
@@ -2336,7 +2341,16 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         if state.sub_id and not await self.api.is_subscribed(state.sub_id):
-            self._clear_push_subscription(state)
+            await self._stop_push_subscription(state)
+
+        if state.sub_id and state.event != event:
+            _LOGGER.debug(
+                "TrueNAS %s subscription topic changed (%s -> %s); resubscribing",
+                label,
+                state.event,
+                event,
+            )
+            await self._stop_push_subscription(state)
 
         if state.sub_id:
             return
@@ -2369,12 +2383,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         consumer.start(task_factory=self.hass.async_create_background_task)
         state.sub_id = sub_id
+        state.event = event
         state.consumer = consumer
         _LOGGER.debug("TrueNAS %s push subscription established: %s", label, sub_id)
 
     def _clear_push_subscription(self, state: _PushSourceState) -> None:
         """Clear local subscription state for one source."""
         state.sub_id = None
+        state.event = None
         state.consumer = None
 
     async def _stop_push_subscription(self, state: _PushSourceState) -> None:
@@ -2389,6 +2405,19 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "TrueNAS failed to unsubscribe %s (%s)", state.sub_id, exc
                 )
         self._clear_push_subscription(state)
+
+    async def _refresh_locked(
+        self, state: _PushSourceState, refresh: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Serialize one source's refresh calls.
+
+        Without this, a push notification's immediate refresh can race the
+        regular 60s poll's refresh of the same source; whichever finishes
+        last wins, so a slower poll can silently overwrite fresher
+        push-triggered state with stale data.
+        """
+        async with state.refresh_lock:
+            await refresh()
 
     # ---------------------------
     #   get_alerts
@@ -2672,7 +2701,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["cloudsync"] = {}
             await self._stop_push_subscription(self._cloudsync_push)
             return
-        await self._refresh_cloudsync()
+        await self._refresh_locked(self._cloudsync_push, self._refresh_cloudsync)
         await self._ensure_push_subscription(
             self._cloudsync_push,
             self._CLOUDSYNC_EVENT,
@@ -2682,7 +2711,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_cloudsync_push(self, _batch: list[Any]) -> None:
         """Immediately refresh cloudsync state on push notification."""
-        await self._refresh_cloudsync()
+        await self._refresh_locked(self._cloudsync_push, self._refresh_cloudsync)
         self.async_set_updated_data(self.ds)
 
     async def stop_cloudsync_push(self) -> None:
@@ -2723,7 +2752,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["replication"] = {}
             await self._stop_push_subscription(self._replication_push)
             return
-        await self._refresh_replication()
+        await self._refresh_locked(self._replication_push, self._refresh_replication)
         await self._ensure_push_subscription(
             self._replication_push,
             self._REPLICATION_EVENT,
@@ -2733,7 +2762,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_replication_push(self, _batch: list[Any]) -> None:
         """Immediately refresh replication state on push notification."""
-        await self._refresh_replication()
+        await self._refresh_locked(self._replication_push, self._refresh_replication)
         self.async_set_updated_data(self.ds)
 
     async def stop_replication_push(self) -> None:
@@ -2792,7 +2821,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["rsynctask"] = {}
             await self._stop_push_subscription(self._rsync_push)
             return
-        await self._refresh_rsync()
+        await self._refresh_locked(self._rsync_push, self._refresh_rsync)
         await self._ensure_push_subscription(
             self._rsync_push,
             self._RSYNC_EVENT,
@@ -2802,7 +2831,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_rsync_push(self, _batch: list[Any]) -> None:
         """Immediately refresh rsync task state on push notification."""
-        await self._refresh_rsync()
+        await self._refresh_locked(self._rsync_push, self._refresh_rsync)
         self.async_set_updated_data(self.ds)
 
     async def stop_rsync_push(self) -> None:
@@ -2891,7 +2920,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def get_app(self) -> None:
         """Refresh apps, then ensure the push subscription is active."""
-        await self._refresh_app()
+        await self._refresh_locked(self._app_push, self._refresh_app)
         await self._ensure_push_subscription(
             self._app_push,
             self._APP_EVENT,
@@ -2901,7 +2930,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_app_push(self, _batch: list[Any]) -> None:
         """Immediately refresh app state on push notification."""
-        await self._refresh_app()
+        await self._refresh_locked(self._app_push, self._refresh_app)
         self.async_set_updated_data(self.ds)
 
     async def stop_app_push(self) -> None:

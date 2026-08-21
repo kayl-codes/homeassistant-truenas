@@ -2613,6 +2613,7 @@ async def test_ensure_push_subscription_noop_when_already_active() -> None:
     coord.api.subscribe_events = AsyncMock()
     state = _PushSourceState()
     state.sub_id = "sub-existing"
+    state.event = "svc.query"
 
     await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
 
@@ -2634,6 +2635,30 @@ async def test_ensure_push_subscription_resubscribes_when_stale() -> None:
 
     coord.api.subscribe_events.assert_awaited_once_with("svc.query")
     assert state.sub_id == "sub-new"
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_resubscribes_when_topic_changes() -> None:
+    """A source's event topic changing (e.g. mid-session API upgrade) must
+    tear down the old subscription and establish a new one for the new
+    topic, not silently keep listening on the old one (#101 review)."""
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    state = _PushSourceState()
+    state.sub_id = "sub-old"
+    state.event = "virt.instance.query"
+
+    await coord._ensure_push_subscription(
+        state, "container.query", AsyncMock(), label="container"
+    )
+
+    coord.api.subscribe_events.assert_awaited_once_with("container.query")
+    assert state.sub_id == "sub-new"
+    assert state.event == "container.query"
     await state.consumer.stop()
 
 
@@ -2741,6 +2766,33 @@ async def test_on_service_push_refreshes_and_notifies() -> None:
 
     assert coord.ds["service"][1]["running"] is True
     coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_refresh_locked_serializes_concurrent_refreshes() -> None:
+    """A slower poll refresh must not clobber a faster, later-started push
+    refresh of the same source once it has already applied its result
+    (#101 review: push vs. poll race on ``self.ds``)."""
+    coord = _bare_coordinator()
+    state = _PushSourceState()
+    order: list[str] = []
+
+    async def slow_refresh() -> None:
+        order.append("slow-start")
+        await asyncio.sleep(0.02)
+        order.append("slow-end")
+
+    async def fast_refresh() -> None:
+        order.append("fast-start")
+        order.append("fast-end")
+
+    slow_task = asyncio.create_task(coord._refresh_locked(state, slow_refresh))
+    await asyncio.sleep(0)  # let slow_refresh acquire the lock and start
+    fast_task = asyncio.create_task(coord._refresh_locked(state, fast_refresh))
+
+    await asyncio.gather(slow_task, fast_task)
+
+    # fast_refresh must wait for slow_refresh to fully finish, not interleave.
+    assert order == ["slow-start", "slow-end", "fast-start", "fast-end"]
 
 
 async def test_stop_service_push_unsubscribes_and_clears() -> None:
