@@ -59,6 +59,7 @@ from custom_components.truenas_ce.coordinator import (
     _is_truenas_sensor_id,
     _median,
     _netdata_mean_value,
+    _PushSourceState,
     _stat_name_similar,
     _to_int,
 )
@@ -72,6 +73,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._alerts_sub_id = None
     coord._alerts_push_consumer = None
     coord._alerts_breaker = SubscriptionCircuitBreaker()
+    coord._service_push = _PushSourceState()
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -2539,6 +2541,7 @@ async def test_get_service_derives_running_and_display_name() -> None:
     coord = _bare_coordinator()
     coord.ds = {"service": {}}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2561,6 +2564,196 @@ async def test_get_service_derives_running_and_display_name() -> None:
     assert coord.ds["service"][1]["running"] is True
     assert coord.ds["service"][1]["display_name"] == "SMB"
     assert coord.ds["service"][2]["display_name"] == "Custom SSH"
+
+
+# ---------------------------
+#   generic push-subscription helpers (_ensure_push_subscription et al.)
+# ---------------------------
+async def test_ensure_push_subscription_noop_when_not_connected() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+async def test_ensure_push_subscription_subscribes_once() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_awaited_once_with("svc.query")
+    assert state.sub_id == "sub-1"
+    assert state.consumer is not None
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_noop_when_already_active() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+    state.sub_id = "sub-existing"
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id == "sub-existing"
+
+
+async def test_ensure_push_subscription_resubscribes_when_stale() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    state = _PushSourceState()
+    state.sub_id = "sub-stale"
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_awaited_once_with("svc.query")
+    assert state.sub_id == "sub-new"
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_handles_subscribe_failure() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(side_effect=Exception("subscribe failed"))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    assert state.sub_id is None
+    assert state.consumer is None
+
+
+async def test_ensure_push_subscription_handles_no_sub_id_returned() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=(None, None))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    assert state.sub_id is None
+
+
+async def test_ensure_push_subscription_respects_breaker_cooldown() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+    for _ in range(3):  # default config trips after 3 consecutive breaches
+        state.breaker.record_batch(9999)
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+async def test_stop_push_subscription_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    state = _PushSourceState()
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    await coord._stop_push_subscription(state)
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert state.sub_id is None
+    assert state.consumer is None
+
+
+async def test_stop_push_subscription_noop_when_not_subscribed() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    state = _PushSourceState()
+
+    await coord._stop_push_subscription(state)
+
+    coord.api.unsubscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+# ---------------------------
+#   get_service push subscription wiring
+# ---------------------------
+async def test_get_service_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"service": {}}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_service()
+
+    coord.api.subscribe_events.assert_awaited_once_with("service.query")
+    assert coord._service_push.sub_id == "sub-1"
+    await coord._service_push.consumer.stop()
+
+
+async def test_on_service_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"service": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "service": "ssh", "name": "", "enable": True, "state": "RUNNING"}
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_service_push([{"msg": "changed"}])
+
+    assert coord.ds["service"][1]["running"] is True
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_service_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._service_push,
+        coord._SERVICE_EVENT,
+        coord._on_service_push,
+        label="service",
+    )
+
+    await coord.stop_service_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._service_push.sub_id is None
 
 
 # ---------------------------

@@ -419,6 +419,21 @@ def _unwrap_app_stats_message(msg: dict[str, Any]) -> dict[str, Any] | None:
     return msg if isinstance(msg.get("fields"), list) else None
 
 
+class _PushSourceState:
+    """Per-source push-subscription bookkeeping (sub_id + consumer + breaker).
+
+    One instance per pushed ``coordinator.ds`` source (alerts, service, ...),
+    used by the generic ``_ensure_push_subscription``/``_stop_push_subscription``
+    helpers below so each new source only wires a handful of lines instead of
+    duplicating the full subscribe/consume/breaker lifecycle.
+    """
+
+    def __init__(self) -> None:
+        self.sub_id: str | None = None
+        self.consumer: SubscriptionPushConsumer | None = None
+        self.breaker = SubscriptionCircuitBreaker()
+
+
 # ---------------------------
 #   TrueNASControllerData
 # ---------------------------
@@ -504,6 +519,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alerts_sub_id: str | None = None
         self._alerts_push_consumer: SubscriptionPushConsumer | None = None
         self._alerts_breaker = SubscriptionCircuitBreaker()
+
+        self._service_push = _PushSourceState()
 
     # ---------------------------
     #   connected
@@ -1416,8 +1433,35 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_service
     # ---------------------------
+    # Verified against a live TrueNAS instance (2026-08-21): core.subscribe on
+    # "service.query" is accepted and returns a real subscription id. Services
+    # change rarely (start/stop of a handful of daemons), so -- like alerts --
+    # any push message is treated as a pure "something changed, refetch now"
+    # signal and re-runs the same full query _refresh_service already does
+    # every poll tick.
+    _SERVICE_EVENT = "service.query"
+
     async def get_service(self) -> None:
-        """Get service info from TrueNAS."""
+        """Refresh services, then ensure the push subscription is active."""
+        await self._refresh_service()
+        await self._ensure_push_subscription(
+            self._service_push,
+            self._SERVICE_EVENT,
+            self._on_service_push,
+            label="service",
+        )
+
+    async def _on_service_push(self, _batch: list[Any]) -> None:
+        """Immediately refresh service state on push notification."""
+        await self._refresh_service()
+        self.async_set_updated_data(self.ds)
+
+    async def stop_service_push(self) -> None:
+        """Stop the service push subscription, e.g. on unload."""
+        await self._stop_push_subscription(self._service_push)
+
+    async def _refresh_service(self) -> None:
+        """Query service.query and recompute the service state."""
         service_names = {
             "afp": "AFP",
             "cifs": "SMB",
@@ -2175,6 +2219,84 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["directoryservices"][uid]["healthy"] = (
                 vals.get("status") == "HEALTHY"
             )
+
+    # ---------------------------
+    #   generic push-subscription helpers
+    # ---------------------------
+    # Shared by every push-subscribed source added after alerts (the pilot,
+    # which keeps its own hand-rolled/tested implementation below rather than
+    # being retrofitted onto this, to avoid touching already live-verified
+    # code). New sources should follow the ``get_service``/``_refresh_service``
+    # pattern near the end of this file: a ``_PushSourceState`` instance field,
+    # an ``_EVENT`` constant, a thin ``get_<name>`` wrapper calling
+    # ``_refresh_<name>`` + ``_ensure_push_subscription``, an
+    # ``_on_<name>_push`` callback, and a ``stop_<name>_push`` for unload.
+    async def _ensure_push_subscription(
+        self,
+        state: _PushSourceState,
+        event: str,
+        on_push: Callable[[list[Any]], Awaitable[None]],
+        *,
+        label: str,
+    ) -> None:
+        """(Re-)establish a push subscription for one source if not active."""
+        if not self.api.connected():
+            return
+
+        if state.sub_id and not await self.api.is_subscribed(state.sub_id):
+            self._clear_push_subscription(state)
+
+        if state.sub_id:
+            return
+
+        if state.breaker.tripped:
+            if not state.breaker.should_attempt_reset():
+                return
+            state.breaker.reset()
+
+        try:
+            sub_id, queue = await self.api.subscribe_events(event)
+        except Exception as err:
+            _LOGGER.exception("Failed to establish %s subscription: %s", label, err)
+            return
+
+        if not sub_id or queue is None:
+            _LOGGER.debug("%s subscription failed: no sub_id/queue returned", label)
+            return
+
+        async def _on_trip() -> None:
+            _LOGGER.warning(
+                "TrueNAS %s subscription falling back to polling after circuit "
+                "breaker trip",
+                label,
+            )
+            await self._stop_push_subscription(state)
+
+        consumer = SubscriptionPushConsumer(
+            queue, on_push, breaker=state.breaker, on_trip=_on_trip
+        )
+        consumer.start(task_factory=self.hass.async_create_background_task)
+        state.sub_id = sub_id
+        state.consumer = consumer
+        _LOGGER.debug("TrueNAS %s push subscription established: %s", label, sub_id)
+
+    def _clear_push_subscription(self, state: _PushSourceState) -> None:
+        """Clear local subscription state for one source."""
+        state.sub_id = None
+        state.consumer = None
+
+    async def _stop_push_subscription(self, state: _PushSourceState) -> None:
+        """Stop one source's push subscription, e.g. on unload/breaker trip."""
+        if state.consumer is not None:
+            await state.consumer.stop()
+        if state.sub_id and self.api.connected():
+            try:
+                await self.api.unsubscribe_events(state.sub_id)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "TrueNAS failed to unsubscribe %s (%s)", state.sub_id, exc
+                )
+        self._clear_push_subscription(state)
 
     # ---------------------------
     #   get_alerts
