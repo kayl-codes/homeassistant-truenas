@@ -14,7 +14,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 
 from custom_components.truenas_ce import config_flow
 from custom_components.truenas_ce.config_flow import (
@@ -22,11 +22,9 @@ from custom_components.truenas_ce.config_flow import (
     _map_error_to_ha,
     _sanitize_host,
     _text_to_passphrases,
-    configured_instances,
 )
 from custom_components.truenas_ce.const import (
     CONF_SYSTEM_ID,
-    DOMAIN,
     ERR_CERT_VERIFY_FAILED,
     ERR_CONNECTION_REFUSED,
     ERR_INVALID_KEY,
@@ -158,25 +156,6 @@ def test_guess_ip_returns_default_host_when_none_resolve() -> None:
         config_flow.socket, "gethostbyname", side_effect=OSError("not found")
     ):
         assert config_flow._guess_ip() == config_flow.DEFAULT_HOST
-
-
-# ---------------------------
-#   configured_instances
-# ---------------------------
-def test_configured_instances_returns_names() -> None:
-    hass = MagicMock()
-    hass.config_entries.async_entries.return_value = [
-        MagicMock(data={CONF_NAME: "nas1"}),
-        MagicMock(data={CONF_NAME: "nas2"}),
-    ]
-    assert configured_instances(hass) == {"nas1", "nas2"}
-    hass.config_entries.async_entries.assert_called_once_with(DOMAIN)
-
-
-def test_configured_instances_empty() -> None:
-    hass = MagicMock()
-    hass.config_entries.async_entries.return_value = []
-    assert configured_instances(hass) == set()
 
 
 # ---------------------------

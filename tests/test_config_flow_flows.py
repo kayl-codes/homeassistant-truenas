@@ -185,7 +185,17 @@ async def test_user_flow_aborts_on_duplicate_system_id(hass: HomeAssistant) -> N
     assert existing.data[CONF_HOST] == "new-host.example.com"
 
 
-async def test_user_flow_name_already_exists(hass: HomeAssistant) -> None:
+@pytest.mark.usefixtures("_mock_connection_ok")
+async def test_user_flow_allows_duplicate_name_for_distinct_host(
+    hass: HomeAssistant,
+) -> None:
+    """Two different devices sharing the same display name may both be added.
+
+    Real duplicate-device protection is host/system_id based (see the
+    duplicate-host and duplicate-system_id tests), so a name collision alone
+    must not block setup -- the user may legitimately want two boxes named
+    the same (e.g. "TrueNAS") as long as they live at different hosts.
+    """
     existing = MockConfigEntry(
         domain=DOMAIN, data=_user_input(**{CONF_HOST: "other-host.example.com"})
     )
@@ -197,8 +207,8 @@ async def test_user_flow_name_already_exists(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], _user_input()
     )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "name_exists"}
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOST] == "truenas.example.com"
 
 
 async def test_user_flow_aborts_on_duplicate_host(hass: HomeAssistant) -> None:
@@ -505,6 +515,46 @@ async def test_zeroconf_flow_creates_new_entry_when_system_id_does_not_match(
     assert new_entry.unique_id != entry.unique_id
 
 
+@pytest.mark.usefixtures("_mock_connection_ok")
+async def test_zeroconf_flow_matches_correct_legacy_entry_among_multiple(
+    hass: HomeAssistant,
+) -> None:
+    """With several legacy entries, the discovered host picks the matching one.
+
+    Regression test: the takeover used to always offer the first legacy
+    entry regardless of host, which would have offered the wrong box's
+    entities here.
+    """
+    MockConfigEntry(
+        domain=LEGACY_DOMAIN,
+        data=_legacy_entry().data | {CONF_HOST: "192.168.1.50"},
+    ).add_to_hass(hass)
+    MockConfigEntry(
+        domain=LEGACY_DOMAIN,
+        data=_legacy_entry().data | {CONF_HOST: "192.168.1.51"},
+    ).add_to_hass(hass)
+
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value="192.168.1.51"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(host="192.168.1.51"),
+        )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "migrate"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "migrate_import"}
+    )
+    defaults = result["data_schema"]({})
+    assert defaults[CONF_HOST] == "192.168.1.51"
+
+
 # ---------------------------
 #   migrate step
 # ---------------------------
@@ -534,6 +584,27 @@ async def test_user_flow_offers_migration_when_legacy_exists(
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "migrate"
     assert result["menu_options"] == ["migrate_import", "migrate_manual"]
+
+
+async def test_user_flow_skips_migration_when_legacy_ambiguous(
+    hass: HomeAssistant,
+) -> None:
+    """With no host known yet and more than one legacy entry, none is offered.
+
+    Picking one of several unrelated legacy boxes to take over would be a
+    guess; the user can still migrate manually from the "start fresh" branch.
+    """
+    _legacy_entry().add_to_hass(hass)
+    MockConfigEntry(
+        domain=LEGACY_DOMAIN,
+        data=_legacy_entry().data | {CONF_HOST: "other-legacy.example.com"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
 
 
 @pytest.mark.usefixtures("_mock_connection_ok")

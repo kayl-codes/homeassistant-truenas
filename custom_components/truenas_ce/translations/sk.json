@@ -63,7 +63,6 @@
             }
         },
         "error": {
-            "name_exists": "Názov už existuje.",
             "invalid_key": "Prihlásenie zlyhalo, neplatný kľúč API.",
             "proxy_intercepted": "Spojenie zachytené reverzným proxy alebo SSO portálom (napr. Cloudflare Access). Nasmerujte integráciu priamo na hostiteľa TrueNAS cez vašu LAN/VPN, alebo vyňmite koncový bod WebSocket z autentifikácie proxy.",
             "invalid_hostname": "Neplatný hostiteľ. Zadajte len názov hostiteľa alebo IP adresu — bez \"https://\", cesty alebo koncovej lomky.",

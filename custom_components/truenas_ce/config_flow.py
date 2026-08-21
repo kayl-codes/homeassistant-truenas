@@ -23,7 +23,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -263,17 +263,6 @@ def _map_error_to_ha(errorcode: str) -> str:
         ERR_MALFORMED_RESULT,
     }
     return errorcode if errorcode in valid_errors else "unknown"
-
-
-# ---------------------------
-#   configured_instances
-# ---------------------------
-@callback
-def configured_instances(hass: HomeAssistant) -> set[str]:
-    """Return a set of configured instances."""
-    return {
-        entry.data[CONF_NAME] for entry in hass.config_entries.async_entries(DOMAIN)
-    }
 
 
 # ---------------------------
@@ -554,16 +543,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         truenas_config |= user_input
 
         # The same device must not be configurable twice: abort when another
-        # entry already points at this host (the name check below alone would
-        # let the same host in again under a different name).
+        # entry already points at this host.
         self._async_abort_entries_match({CONF_HOST: truenas_config[CONF_HOST]})
 
-        # Check if instance with this name already exists
-        if truenas_config[CONF_NAME] in configured_instances(self.hass):
-            errors["base"] = "name_exists"
-
-        if not errors:
-            await self._validate_connection(truenas_config, errors)
+        await self._validate_connection(truenas_config, errors)
 
         # Once the box's stable identity is known, key the entry's unique_id
         # on it rather than on the (zeroconf-set) host, so rediscovery and
@@ -664,11 +647,22 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         Only relevant in the renamed (``truenas_ce``) integration; inert while
         ``DOMAIN == LEGACY_DOMAIN`` so the takeover never appears pre-rename.
+        With more than one legacy entry (multiple boxes set up under the old
+        integration), a host already known at this point (e.g. from zeroconf
+        discovery) picks the matching one instead of always offering the
+        first; with no host known yet and more than one legacy entry, none is
+        offered here (ambiguous -- the user can still migrate manually).
         """
         if DOMAIN == LEGACY_DOMAIN:
             return None
         legacy_entries = self.hass.config_entries.async_entries(LEGACY_DOMAIN)
-        return legacy_entries[0] if legacy_entries else None
+        if not legacy_entries:
+            return None
+        if host := self.truenas_config.get(CONF_HOST):
+            for entry in legacy_entries:
+                if entry.data.get(CONF_HOST) == host:
+                    return entry
+        return legacy_entries[0] if len(legacy_entries) == 1 else None
 
     async def async_step_migrate(
         self, user_input: dict[str, Any] | None = None

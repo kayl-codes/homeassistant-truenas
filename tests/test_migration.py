@@ -81,6 +81,16 @@ def test_find_legacy_entry_matches_by_host() -> None:
     assert _find_legacy_entry(hass, entry) is legacy_b
 
 
+def test_find_legacy_entry_matches_regardless_of_host_case() -> None:
+    """A legacy host stored in a different case still matches (e.g. NAS.local)."""
+    hass = MagicMock()
+    legacy = SimpleNamespace(entry_id="a", data={"host": "NAS.local"})
+    hass.config_entries.async_entries.return_value = [legacy]
+
+    entry = _config_entry(data={"host": "nas.local"})
+    assert _find_legacy_entry(hass, entry) is legacy
+
+
 def test_find_legacy_entry_falls_back_to_single_candidate() -> None:
     hass = MagicMock()
     legacy = SimpleNamespace(entry_id="a", data={"host": "renamed.local"})
