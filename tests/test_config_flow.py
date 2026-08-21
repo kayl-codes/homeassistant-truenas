@@ -20,7 +20,6 @@ from custom_components.truenas_ce import config_flow
 from custom_components.truenas_ce.config_flow import (
     TrueNASConfigFlow,
     _map_error_to_ha,
-    _sanitize_host,
     _text_to_passphrases,
 )
 from custom_components.truenas_ce.const import (
@@ -31,31 +30,6 @@ from custom_components.truenas_ce.const import (
     ERR_MALFORMED_RESULT,
     LEGACY_DOMAIN,
 )
-
-
-# ---------------------------
-#   _sanitize_host
-# ---------------------------
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("truenas.local", "truenas.local"),
-        ("  truenas.local  ", "truenas.local"),
-        ("https://nas.example.com", "nas.example.com"),
-        ("http://nas.example.com/ui?tab=1", "nas.example.com"),
-        ("nas.example.com/ui", "nas.example.com"),
-        ("nas.example.com?query=1", "nas.example.com"),
-        ("nas.example.com#frag", "nas.example.com"),
-        ("192.168.1.10", "192.168.1.10"),
-        ("", ""),
-        ("   ", ""),
-        ("https://nas.example.com:8443/", "nas.example.com:8443"),
-        ("NAS.Local", "nas.local"),
-        ("HTTPS://NAS.Example.COM:8443/UI", "nas.example.com:8443"),
-    ],
-)
-def test_sanitize_host(raw: str, expected: str) -> None:
-    assert _sanitize_host(raw) == expected
 
 
 # ---------------------------
@@ -359,6 +333,23 @@ def test_find_legacy_config_none_when_no_legacy_entries() -> None:
     flow.hass = MagicMock()
     flow.hass.config_entries.async_entries.return_value = []
     assert flow._find_legacy_config() is None
+
+
+def test_find_legacy_config_matches_regardless_of_host_case() -> None:
+    """A legacy host stored in a different case still matches (e.g. NAS.local).
+
+    Regression test: host matching here must stay in sync with
+    ``migration._find_legacy_entry``, which normalizes both sides the same way.
+    """
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    legacy_entry = MagicMock()
+    legacy_entry.data = {CONF_HOST: "NAS.Local"}
+    other_entry = MagicMock()
+    other_entry.data = {CONF_HOST: "other.local"}
+    flow.hass.config_entries.async_entries.return_value = [other_entry, legacy_entry]
+    flow.truenas_config[CONF_HOST] = "nas.local"
+    assert flow._find_legacy_config() is legacy_entry
 
 
 # ---------------------------
