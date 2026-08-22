@@ -34,6 +34,7 @@ from .entity import (
     async_add_entities,
     format_device_identifier,
     format_unique_id,
+    resolve_entry_identity,
 )
 
 _LOGGER = getLogger(__name__)
@@ -164,10 +165,11 @@ class TrueNASStatisticsCleanupButton(
         """Initialize the cleanup button."""
         super().__init__(coordinator)
         inst = coordinator.config_entry.data[CONF_NAME]
-        self._attr_unique_id = format_unique_id(inst, BUTTON_STATISTICS_CLEANUP)
+        identity = resolve_entry_identity(coordinator.config_entry)
+        self._attr_unique_id = format_unique_id(identity, BUTTON_STATISTICS_CLEANUP)
         hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(inst, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
         )
 
     @property
@@ -203,10 +205,11 @@ class TrueNASMigrationRollbackButton(
         """Initialize the rollback button."""
         super().__init__(coordinator)
         inst = coordinator.config_entry.data[CONF_NAME]
-        self._attr_unique_id = format_unique_id(inst, BUTTON_MIGRATION_ROLLBACK)
+        identity = resolve_entry_identity(coordinator.config_entry)
+        self._attr_unique_id = format_unique_id(identity, BUTTON_MIGRATION_ROLLBACK)
         hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(inst, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
         )
 
     @property
@@ -239,10 +242,11 @@ class TrueNASRefreshButton(CoordinatorEntity[TrueNASCoordinator], ButtonEntity):
         """Initialize the refresh button."""
         super().__init__(coordinator)
         inst = coordinator.config_entry.data[CONF_NAME]
-        self._attr_unique_id = format_unique_id(inst, BUTTON_SYSTEM_REFRESH)
+        identity = resolve_entry_identity(coordinator.config_entry)
+        self._attr_unique_id = format_unique_id(identity, BUTTON_SYSTEM_REFRESH)
         hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(inst, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
         )
 
     async def async_press(self) -> None:

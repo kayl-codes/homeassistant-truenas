@@ -28,6 +28,7 @@ from .const import (
     ATTRIBUTION,
     BEHAVIOR_REMOVE_INACTIVE_NIC,
     CONF_BEHAVIORS,
+    CONF_SYSTEM_ID,
     DEFAULT_BEHAVIORS,
     DOMAIN,
     SIGNAL_UPDATE_SENSORS,
@@ -41,27 +42,109 @@ _UNKNOWN_KEY = "<unknown>"
 
 
 # ---------------------------
-#   format_unique_id
+#   resolve_entry_identity / format_unique_id
 # ---------------------------
-def format_unique_id(inst: str, key: str, reference: object = None) -> str:
-    """Build an entity unique_id from instance name, description key and reference.
+def resolve_entry_identity(config_entry: ConfigEntry) -> str:
+    """Return a stable per-entry identity string for unique_ids/device identifiers.
 
+    Prefers CONF_SYSTEM_ID (the TrueNAS system.global.id UUID, only populated
+    when that lookup succeeded during setup); falls back to the config
+    entry's own entry_id, which HA guarantees unique and stable for the
+    entry's lifetime. Never use CONF_NAME (the user-editable display name)
+    for this purpose -- two entries can share a display name, which would
+    otherwise collide entities/devices across different TrueNAS servers.
+    """
+    system_id = config_entry.data.get(CONF_SYSTEM_ID)
+    if isinstance(system_id, str) and system_id:
+        return system_id
+    return config_entry.entry_id
+
+
+def format_unique_id(identity: str, key: str, reference: object = None) -> str:
+    """Build an entity unique_id from the entry identity, key and reference.
+
+    ``identity`` must be a stable per-entry identity (see
+    ``resolve_entry_identity``), not the user-editable display name.
     Shared so the migration in __init__.py can resolve the same unique_id an
     entity produces.
     """
-    base = f"{inst.lower()}-{key}"
+    base = f"{identity.lower()}-{key}"
     if reference is None:
         return base
     return f"{base}-{slugify(str(reference).lower())}"
 
 
-def format_device_identifier(inst: str, hostname: str) -> str:
+def format_device_identifier(identity: str, hostname: str) -> str:
     """Build the main TrueNAS ("System") device identifier value.
 
+    ``identity`` must be a stable per-entry identity (see
+    ``resolve_entry_identity``), not the user-editable display name.
     Shared so other platforms (e.g. the diagnostic statistics-cleanup button)
     associate with the existing device instead of duplicating the format.
     """
-    return f"{inst}_{hostname}"
+    return f"{identity}_{hostname}"
+
+
+def migrate_entry_identity_namespace(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Rewrite this entry's registry records from the old name-based identity.
+
+    Before ``resolve_entry_identity`` existed, every unique_id/device
+    identifier was namespaced by ``config_entry.data[CONF_NAME]`` (see
+    ``format_unique_id``/``format_device_identifier``'s history). Every
+    already-registered entity/device for an existing installation therefore
+    still carries that old prefix; left alone, it would never match the new
+    identity-based unique_ids/identifiers the entities compute from now on,
+    producing duplicate entities/devices instead of continuing the old ones.
+    Must run before ``register_system_device`` and any platform setup, so the
+    device/entity lookups in those find the already-renamed records.
+    """
+    old_name = config_entry.data.get(CONF_NAME, "")
+    identity = resolve_entry_identity(config_entry)
+    if not old_name or old_name == identity:
+        return
+
+    old_uid_prefix = f"{old_name.lower()}-"
+    new_uid_prefix = f"{identity.lower()}-"
+    ent_reg = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(
+        ent_reg, config_entry.entry_id
+    ):
+        if entity_entry.unique_id.startswith(old_uid_prefix):
+            ent_reg.async_update_entity(
+                entity_entry.entity_id,
+                new_unique_id=new_uid_prefix
+                + entity_entry.unique_id[len(old_uid_prefix) :],
+            )
+
+    old_dev_prefix = f"{old_name}_"
+    new_dev_prefix = f"{identity}_"
+    dev_reg = dr.async_get(hass)
+    for device_entry in dr.async_entries_for_config_entry(
+        dev_reg, config_entry.entry_id
+    ):
+        if len(device_entry.config_entries) > 1:
+            # Two entries that previously shared this display name (and e.g.
+            # a same-named pool) collided onto the same old, name-based
+            # device record. Renaming it in place for one entry would just
+            # get overwritten by the other entry's own migration pass,
+            # leaving entities misattributed. Leave it as-is: this entry's
+            # entities still get their unique_ids migrated above, so the
+            # normal device_info/get_or_create path in platform setup gives
+            # them a fresh, correctly-identified device instead of reusing
+            # the ambiguous shared one.
+            continue
+        new_identifiers = {
+            (domain, new_dev_prefix + value[len(old_dev_prefix) :])
+            if domain == DOMAIN and value.startswith(old_dev_prefix)
+            else (domain, value)
+            for domain, value in device_entry.identifiers
+        }
+        if new_identifiers != device_entry.identifiers:
+            dev_reg.async_update_device(
+                device_entry.id, new_identifiers=new_identifiers
+            )
 
 
 @lru_cache(maxsize=1)
@@ -94,8 +177,9 @@ def register_system_device(
     unique across config entries.
     """
     inst = coordinator.config_entry.data[CONF_NAME]
+    identity = resolve_entry_identity(coordinator.config_entry)
     system_info = coordinator.data["system_info"]
-    identifier = format_device_identifier(inst, system_info["hostname"])
+    identifier = format_device_identifier(identity, system_info["hostname"])
     http_scheme = "https" if coordinator.api.scheme == "wss" else "http"
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=config_entry.entry_id,
@@ -174,7 +258,7 @@ class TrueNASEntityDescription(EntityDescription):
 
 
 def _composite_references(
-    inst: str,
+    identity: str,
     description: TrueNASEntityDescription,
     data: dict[str, Any],
     honor_exclude: bool = True,
@@ -183,8 +267,10 @@ def _composite_references(
 
     For each top-level uid in ``data``, the leaf value at
     ``data[uid][container_key][item][leaf_key]`` becomes a composite unique_id
-    of the form ``inst-key-uid::ref``. This supports entities like per-NIC
+    of the form ``identity-key-uid::ref``. This supports entities like per-NIC
     network sensors where the interface name lives inside a list of dicts.
+    ``identity`` must be a stable per-entry identity (see
+    ``resolve_entry_identity``), not the user-editable display name.
 
     When ``honor_exclude`` is True, items matching ``description.data_exclude``
     are skipped, mirroring ``_referenced_unique_ids`` behavior.
@@ -200,7 +286,7 @@ def _composite_references(
         for item in container:
             ref = _extract_composite_ref(item, description, honor_exclude, leaf_key)
             if ref is not None:
-                ids.add(format_unique_id(inst, description.key, f"{uid}::{ref}"))
+                ids.add(format_unique_id(identity, description.key, f"{uid}::{ref}"))
     return ids
 
 
@@ -344,8 +430,8 @@ def _cleanup_orphaned_entities(
     if not coordinator.last_update_success:
         return
 
-    inst = config_entry.data[CONF_NAME]
-    active, live_bases = _collect_active_unique_ids(inst, coordinator)
+    identity = resolve_entry_identity(config_entry)
+    active, live_bases = _collect_active_unique_ids(identity, coordinator)
 
     ent_reg = er.async_get(hass)
     for entity_entry in er.async_entries_for_config_entry(
@@ -481,6 +567,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         super().__init__(coordinator)
         self.entity_description = entity_description
         self._inst = coordinator.config_entry.data[CONF_NAME]
+        self._identity = resolve_entry_identity(coordinator.config_entry)
         self._config_entry = self.coordinator.config_entry
         self._attr_extra_state_attributes = {ATTR_ATTRIBUTION: ATTRIBUTION}
         self._uid = uid
@@ -563,27 +650,29 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             data_ref = self.entity_description.data_reference
             value = self._data.get(data_ref) if self._data and data_ref else None
             reference = value if value is not None else self._uid
-            return format_unique_id(self._inst, self.entity_description.key, reference)
+            return format_unique_id(
+                self._identity, self.entity_description.key, reference
+            )
 
-        return format_unique_id(self._inst, self.entity_description.key)
+        return format_unique_id(self._identity, self.entity_description.key)
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return a description for device registry."""
         ha_group = self.entity_description.ha_group or ""
         dev_connection = DOMAIN
-        dev_connection_value = f"{self._inst}_{ha_group}"
+        dev_connection_value = f"{self._identity}_{ha_group}"
         dev_group = ha_group
         if ha_group == "System":
             dev_connection_value = format_device_identifier(
-                self._inst, self.coordinator.data["system_info"]["hostname"]
+                self._identity, self.coordinator.data["system_info"]["hostname"]
             )
 
         if ha_group.startswith("data__"):
             dev_group = ha_group[6:]
             if dev_group in self._data:
                 dev_group = self._data[dev_group]
-                dev_connection_value = f"{self._inst}_{dev_group}"
+                dev_connection_value = f"{self._identity}_{dev_group}"
 
         if self.entity_description.ha_connection:
             dev_connection = self.entity_description.ha_connection
@@ -593,7 +682,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             if dev_connection_value.startswith("data__"):
                 data_key = dev_connection_value[6:]
                 connection_val = self._data.get(data_key, "unknown")
-                dev_connection_value = f"{self._inst}_{connection_val}"
+                dev_connection_value = f"{self._identity}_{connection_val}"
 
         if ha_group == "System":
             http_scheme = "https" if self.coordinator.api.scheme == "wss" else "http"
@@ -630,7 +719,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
             device_info["via_device"] = (
                 DOMAIN,
                 format_device_identifier(
-                    self._inst, self.coordinator.data["system_info"]["hostname"]
+                    self._identity, self.coordinator.data["system_info"]["hostname"]
                 ),
             )
         return cast(DeviceInfo, device_info)

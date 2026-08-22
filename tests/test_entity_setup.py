@@ -27,6 +27,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 import custom_components.truenas_ce as init_module
 from custom_components.truenas_ce.const import (
     CONF_MONITORED_GROUPS,
+    CONF_SYSTEM_ID,
     DOMAIN,
     GROUP_DATA_PATHS,
     MONITOR_GROUP_SNAPSHOTS,
@@ -34,10 +35,102 @@ from custom_components.truenas_ce.const import (
 from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     format_unique_id,
+    migrate_entry_identity_namespace,
+    resolve_entry_identity,
 )
 from custom_components.truenas_ce.sensor_types import SENSOR_TYPES
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+
+
+# ---------------------------
+#   migrate_entry_identity_namespace
+# ---------------------------
+async def test_migrate_entry_identity_namespace_renames_existing_records(
+    hass: HomeAssistant,
+) -> None:
+    """Upgrading past the old CONF_NAME-based identity must not orphan the
+    pre-existing registry records -- they get renamed in place instead of
+    being left behind for new, identity-based duplicates to replace them.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"},
+    )
+    entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "TrueNAS_truenas.local")},
+    )
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, "truenas-uptime", config_entry=entry, device_id=device.id
+    )
+
+    migrate_entry_identity_namespace(hass, entry)
+
+    migrated_entity = ent_reg.async_get(entity.entity_id)
+    assert migrated_entity is not None
+    assert migrated_entity.unique_id == "system-guid-123-uptime"
+
+    migrated_device = dev_reg.async_get(device.id)
+    assert migrated_device is not None
+    assert migrated_device.identifiers == {(DOMAIN, "system-guid-123_truenas.local")}
+
+
+async def test_migrate_entry_identity_namespace_noop_when_identity_unchanged(
+    hass: HomeAssistant,
+) -> None:
+    """No CONF_SYSTEM_ID and entry_id already equal to CONF_NAME: nothing to rename."""
+    entry = MockConfigEntry(
+        entry_id="TrueNAS", domain=DOMAIN, data={CONF_NAME: "TrueNAS"}
+    )
+    entry.add_to_hass(hass)
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, "truenas-uptime", config_entry=entry
+    )
+
+    migrate_entry_identity_namespace(hass, entry)
+
+    migrated_entity = ent_reg.async_get(entity.entity_id)
+    assert migrated_entity is not None
+    assert migrated_entity.unique_id == "truenas-uptime"
+
+
+async def test_migrate_entry_identity_namespace_skips_shared_device(
+    hass: HomeAssistant,
+) -> None:
+    """A device shared by two entries (same old display name + pool name)
+    must not have its identifiers rewritten for just one of them -- that
+    would misattribute it once the other entry's own migration pass runs
+    (Sourcery finding on the initial version of this migration).
+    """
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-aaa"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-bbb"}
+    )
+    entry_b.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    shared_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_a.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+    dev_reg.async_get_or_create(
+        config_entry_id=entry_b.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+
+    migrate_entry_identity_namespace(hass, entry_a)
+
+    untouched_device = dev_reg.async_get(shared_device.id)
+    assert untouched_device is not None
+    assert untouched_device.identifiers == {(DOMAIN, "TrueNAS_tank")}
 
 
 # ---------------------------
@@ -248,7 +341,8 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
         d for d in SENSOR_TYPES if d.data_path == snapshottask_data_path
     )
     ent_reg = er.async_get(hass)
-    unique_id = format_unique_id("TrueNAS", snapshottask_description.key, 1)
+    identity = resolve_entry_identity(entry)
+    unique_id = format_unique_id(identity, snapshottask_description.key, 1)
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     assert entity_id is not None
     assert hass.states.get(entity_id) is not None
