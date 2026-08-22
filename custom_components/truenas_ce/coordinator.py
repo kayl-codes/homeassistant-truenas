@@ -2498,7 +2498,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._alerts_sub_id and not await self.api.is_subscribed(
             self._alerts_sub_id
         ):
-            self._clear_alerts_subscription()
+            await self.stop_alerts()
 
         if self._alerts_sub_id:
             return

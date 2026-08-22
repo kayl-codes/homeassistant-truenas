@@ -802,6 +802,29 @@ async def test_ensure_alerts_subscription_resubscribes_when_stale() -> None:
     await coord._alerts_push_consumer.stop()
 
 
+async def test_ensure_alerts_subscription_stops_orphaned_consumer_when_stale() -> None:
+    """A stale alerts subscription must stop the old consumer's background
+    task, not just drop the local reference, or it keeps running orphaned
+    and delivering duplicate refreshes (#101 review, same bug as the
+    generic _ensure_push_subscription path)."""
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-stale"
+    old_consumer = coord._alerts_push_consumer = MagicMock()
+    old_consumer.stop = AsyncMock()
+
+    await coord._ensure_alerts_subscription()
+
+    old_consumer.stop.assert_awaited_once()
+    assert coord._alerts_push_consumer is not old_consumer
+    await coord._alerts_push_consumer.stop()
+
+
 async def test_ensure_alerts_subscription_handles_subscribe_failure() -> None:
     coord = _bare_coordinator()
     coord.api = MagicMock()

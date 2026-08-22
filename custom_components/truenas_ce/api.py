@@ -488,7 +488,17 @@ class TrueNASAPI:
         """Check if a subscription is currently active in the client."""
         if not self.connected():
             return False
-        return await self._client.is_subscribed(subscription_id)
+        try:
+            return await self._client.is_subscribed(subscription_id)
+        except TrueNASError as exc:
+            self._error = _classify_exception(exc, during_call=True)
+            _LOGGER.warning(
+                "TrueNAS %s unable to check subscription status %s (%s)",
+                self._host,
+                subscription_id,
+                exc,
+            )
+            return False
 
     @property
     def error(self) -> str:

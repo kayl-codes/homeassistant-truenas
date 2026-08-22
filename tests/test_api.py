@@ -681,6 +681,18 @@ async def test_is_subscribed_delegates_when_connected(
     connected_api._client.is_subscribed.assert_called_once_with("sub-123")
 
 
+async def test_is_subscribed_degrades_to_false_on_client_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A transient client/protocol error must degrade to 'not subscribed'
+    (#101 review) so callers fall back to resubscribing/polling instead of
+    letting the exception escape the source getter."""
+    connected_api._client.is_subscribed = AsyncMock(
+        side_effect=TrueNASCallError("boom")
+    )
+    assert await connected_api.is_subscribed("sub-123") is False
+
+
 async def test_subscribe_events_clears_previous_error_on_success(
     connected_api: TrueNASAPI,
 ) -> None:
