@@ -14,6 +14,7 @@ used for ``TrueNASConfigFlow``.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +47,7 @@ from custom_components.truenas_ce.const import (
     MONITOR_GROUP_VMS,
 )
 from custom_components.truenas_ce.coordinator import (
+    SubscriptionCircuitBreaker,
     TrueNASCoordinator,
     _accumulate_vdev_errors,
     _aggregate_topology_errors,
@@ -57,6 +59,7 @@ from custom_components.truenas_ce.coordinator import (
     _is_truenas_sensor_id,
     _median,
     _netdata_mean_value,
+    _PushSourceState,
     _stat_name_similar,
     _to_int,
 )
@@ -67,6 +70,17 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord = TrueNASCoordinator.__new__(TrueNASCoordinator)
     coord._app_stats_event_name = None
     coord._app_stats_sub_id = None
+    coord._alerts_sub_id = None
+    coord._alerts_push_consumer = None
+    coord._alerts_breaker = SubscriptionCircuitBreaker()
+    coord._service_push = _PushSourceState()
+    coord._pool_push = _PushSourceState()
+    coord._cloudsync_push = _PushSourceState()
+    coord._replication_push = _PushSourceState()
+    coord._rsync_push = _PushSourceState()
+    coord._vm_push = _PushSourceState()
+    coord._container_push = _PushSourceState()
+    coord._app_push = _PushSourceState()
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -632,6 +646,7 @@ async def test_get_alerts_malformed_response_resets_to_defaults() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(return_value={"not": "a list"})
     await coord.get_alerts()
     assert coord.ds["alerts"] == {
@@ -648,6 +663,7 @@ async def test_get_alerts_filters_dismissed_and_counts_levels() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -695,6 +711,7 @@ async def test_get_alerts_no_disk_issues_when_unrelated() -> None:
     coord = _bare_coordinator()
     coord.ds = {"alerts": {}}
     coord.api = MagicMock()
+    coord.api.connected.return_value = False
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -708,6 +725,198 @@ async def test_get_alerts_no_disk_issues_when_unrelated() -> None:
     )
     await coord.get_alerts()
     assert coord.ds["alerts"]["disk_issues"] is False
+
+
+# ---------------------------
+#   alerts push subscription
+# ---------------------------
+def _hass_with_background_tasks() -> MagicMock:
+    """A hass stub whose async_create_background_task really schedules the coro.
+
+    A plain MagicMock would return a mock without ever awaiting the passed
+    coroutine, leaving it un-awaited (and the consumer loop never running) --
+    real ``asyncio.create_task`` is needed so ``SubscriptionPushConsumer``
+    behaves like it does in production.
+    """
+    hass = MagicMock()
+    hass.async_create_background_task = lambda coro, name: asyncio.create_task(
+        coro, name=name
+    )
+    return hass
+
+
+async def test_ensure_alerts_subscription_noop_when_not_connected() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock()
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
+
+
+async def test_ensure_alerts_subscription_subscribes_once() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_awaited_once_with("alert.list")
+    assert coord._alerts_sub_id == "sub-1"
+    assert coord._alerts_push_consumer is not None
+    await coord._alerts_push_consumer.stop()
+
+
+async def test_ensure_alerts_subscription_noop_when_already_active() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-existing"
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id == "sub-existing"
+
+
+async def test_ensure_alerts_subscription_resubscribes_when_stale() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    coord._alerts_sub_id = "sub-stale"
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_awaited_once_with("alert.list")
+    assert coord._alerts_sub_id == "sub-new"
+    await coord._alerts_push_consumer.stop()
+
+
+async def test_ensure_alerts_subscription_stops_orphaned_consumer_when_stale() -> None:
+    """A stale alerts subscription must stop the old consumer's background
+    task, not just drop the local reference, or it keeps running orphaned
+    and delivering duplicate refreshes (#101 review, same bug as the
+    generic _ensure_push_subscription path)."""
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-stale"
+    old_consumer = coord._alerts_push_consumer = MagicMock()
+    old_consumer.stop = AsyncMock()
+
+    await coord._ensure_alerts_subscription()
+
+    old_consumer.stop.assert_awaited_once()
+    assert coord._alerts_push_consumer is not old_consumer
+    await coord._alerts_push_consumer.stop()
+
+
+async def test_ensure_alerts_subscription_handles_subscribe_failure() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(side_effect=Exception("subscribe failed"))
+
+    await coord._ensure_alerts_subscription()
+
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_ensure_alerts_subscription_handles_no_sub_id_returned() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=(None, None))
+
+    await coord._ensure_alerts_subscription()
+
+    assert coord._alerts_sub_id is None
+
+
+async def test_ensure_alerts_subscription_respects_breaker_cooldown() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    for _ in range(3):  # default config trips after 3 consecutive breaches
+        coord._alerts_breaker.record_batch(9999)
+
+    await coord._ensure_alerts_subscription()
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
+
+
+async def test_on_alerts_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"alerts": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"dismissed": False, "level": "CRITICAL", "formatted": "x"}]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_alerts_push([{"msg": "removed"}])
+
+    assert coord.ds["alerts"]["count"] == 1
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_on_alerts_breaker_trip_stops_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._alerts_sub_id = "sub-1"
+
+    await coord._on_alerts_breaker_trip()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_stop_alerts_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_alerts_subscription()
+
+    await coord.stop_alerts()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._alerts_sub_id is None
+    assert coord._alerts_push_consumer is None
+
+
+async def test_stop_alerts_noop_when_not_subscribed() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+
+    await coord.stop_alerts()
+
+    coord.api.unsubscribe_events.assert_not_awaited()
+    assert coord._alerts_sub_id is None
 
 
 # ---------------------------
@@ -2362,6 +2571,7 @@ async def test_get_service_derives_running_and_display_name() -> None:
     coord = _bare_coordinator()
     coord.ds = {"service": {}}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2384,6 +2594,406 @@ async def test_get_service_derives_running_and_display_name() -> None:
     assert coord.ds["service"][1]["running"] is True
     assert coord.ds["service"][1]["display_name"] == "SMB"
     assert coord.ds["service"][2]["display_name"] == "Custom SSH"
+
+
+# ---------------------------
+#   generic push-subscription helpers (_ensure_push_subscription et al.)
+# ---------------------------
+async def test_ensure_push_subscription_noop_when_not_connected() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+async def test_ensure_push_subscription_subscribes_once() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_awaited_once_with("svc.query")
+    assert state.sub_id == "sub-1"
+    assert state.consumer is not None
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_noop_when_already_active() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+    state.sub_id = "sub-existing"
+    state.event = "svc.query"
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id == "sub-existing"
+
+
+async def test_ensure_push_subscription_resubscribes_when_stale() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    state = _PushSourceState()
+    state.sub_id = "sub-stale"
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_awaited_once_with("svc.query")
+    assert state.sub_id == "sub-new"
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_resubscribes_when_topic_changes() -> None:
+    """A source's event topic changing (e.g. mid-session API upgrade) must
+    tear down the old subscription and establish a new one for the new
+    topic, not silently keep listening on the old one (#101 review)."""
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-new", asyncio.Queue()))
+    state = _PushSourceState()
+    state.sub_id = "sub-old"
+    state.event = "virt.instance.query"
+
+    await coord._ensure_push_subscription(
+        state, "container.query", AsyncMock(), label="container"
+    )
+
+    coord.api.subscribe_events.assert_awaited_once_with("container.query")
+    assert state.sub_id == "sub-new"
+    assert state.event == "container.query"
+    await state.consumer.stop()
+
+
+async def test_ensure_push_subscription_handles_subscribe_failure() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(side_effect=Exception("subscribe failed"))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    assert state.sub_id is None
+    assert state.consumer is None
+
+
+async def test_ensure_push_subscription_handles_no_sub_id_returned() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=(None, None))
+    state = _PushSourceState()
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    assert state.sub_id is None
+
+
+async def test_ensure_push_subscription_respects_breaker_cooldown() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock()
+    state = _PushSourceState()
+    for _ in range(3):  # default config trips after 3 consecutive breaches
+        state.breaker.record_batch(9999)
+
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    coord.api.subscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+async def test_stop_push_subscription_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    state = _PushSourceState()
+    await coord._ensure_push_subscription(state, "svc.query", AsyncMock(), label="svc")
+
+    await coord._stop_push_subscription(state)
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert state.sub_id is None
+    assert state.consumer is None
+
+
+async def test_stop_push_subscription_noop_when_not_subscribed() -> None:
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    state = _PushSourceState()
+
+    await coord._stop_push_subscription(state)
+
+    coord.api.unsubscribe_events.assert_not_awaited()
+    assert state.sub_id is None
+
+
+# ---------------------------
+#   get_service push subscription wiring
+# ---------------------------
+async def test_get_service_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"service": {}}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_service()
+
+    coord.api.subscribe_events.assert_awaited_once_with("service.query")
+    assert coord._service_push.sub_id == "sub-1"
+    await coord._service_push.consumer.stop()
+
+
+async def test_on_service_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"service": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "service": "ssh", "name": "", "enable": True, "state": "RUNNING"}
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_service_push([{"msg": "changed"}])
+
+    assert coord.ds["service"][1]["running"] is True
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_refresh_locked_serializes_concurrent_refreshes() -> None:
+    """A slower poll refresh must not clobber a faster, later-started push
+    refresh of the same source once it has already applied its result
+    (#101 review: push vs. poll race on ``self.ds``)."""
+    coord = _bare_coordinator()
+    state = _PushSourceState()
+    order: list[str] = []
+
+    async def slow_refresh() -> None:
+        order.append("slow-start")
+        await asyncio.sleep(0.02)
+        order.append("slow-end")
+
+    async def fast_refresh() -> None:
+        order.append("fast-start")
+        order.append("fast-end")
+
+    slow_task = asyncio.create_task(coord._refresh_locked(state, slow_refresh))
+    await asyncio.sleep(0)  # let slow_refresh acquire the lock and start
+    fast_task = asyncio.create_task(coord._refresh_locked(state, fast_refresh))
+
+    await asyncio.gather(slow_task, fast_task)
+
+    # fast_refresh must wait for slow_refresh to fully finish, not interleave.
+    assert order == ["slow-start", "slow-end", "fast-start", "fast-end"]
+
+
+async def test_stop_service_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._service_push,
+        coord._SERVICE_EVENT,
+        coord._on_service_push,
+        label="service",
+    )
+
+    await coord.stop_service_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._service_push.sub_id is None
+
+
+# ---------------------------
+#   get_cloudsync / get_replication / get_rsync push subscription wiring
+# ---------------------------
+async def test_get_cloudsync_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CLOUDSYNC]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_cloudsync()
+
+    coord.api.subscribe_events.assert_awaited_once_with("cloudsync.query")
+    assert coord._cloudsync_push.sub_id == "sub-1"
+    await coord._cloudsync_push.consumer.stop()
+
+
+async def test_on_cloudsync_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": "cs1", "description": "backup"}])
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_cloudsync_push([{"msg": "changed"}])
+
+    assert "cs1" in coord.ds["cloudsync"]
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_cloudsync_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._cloudsync_push,
+        coord._CLOUDSYNC_EVENT,
+        coord._on_cloudsync_push,
+        label="cloudsync",
+    )
+
+    await coord.stop_cloudsync_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._cloudsync_push.sub_id is None
+
+
+async def test_get_replication_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_REPLICATION]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_replication()
+
+    coord.api.subscribe_events.assert_awaited_once_with("replication.query")
+    assert coord._replication_push.sub_id == "sub-1"
+    await coord._replication_push.consumer.stop()
+
+
+async def test_on_replication_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[{"id": 1, "name": "repl1", "job": {"state": "RUNNING"}}]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_replication_push([{"msg": "changed"}])
+
+    assert coord.ds["replication"][1]["state"] == "RUNNING"
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_replication_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._replication_push,
+        coord._REPLICATION_EVENT,
+        coord._on_replication_push,
+        label="replication",
+    )
+
+    await coord.stop_replication_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._replication_push.sub_id is None
+
+
+async def test_get_rsync_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_RSYNC]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_rsync()
+
+    coord.api.subscribe_events.assert_awaited_once_with("rsynctask.query")
+    assert coord._rsync_push.sub_id == "sub-1"
+    await coord._rsync_push.consumer.stop()
+
+
+async def test_on_rsync_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": 1, "path": "/mnt/tank"}])
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_rsync_push([{"msg": "changed"}])
+
+    assert 1 in coord.ds["rsynctask"]
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_rsync_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._rsync_push,
+        coord._RSYNC_EVENT,
+        coord._on_rsync_push,
+        label="rsync",
+    )
+
+    await coord.stop_rsync_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._rsync_push.sub_id is None
 
 
 # ---------------------------
@@ -2474,6 +3084,75 @@ async def test_add_boot_pool_noop_when_absent() -> None:
     coord.api.query = AsyncMock(return_value=None)
     await coord._add_boot_pool()
     assert coord.ds["pool"] == {}
+
+
+# ---------------------------
+#   get_pool push subscription wiring
+# ---------------------------
+async def test_get_pool_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"pool": {}, "dataset": {}}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_pool()
+
+    coord.api.subscribe_events.assert_awaited_once_with("pool.query")
+    assert coord._pool_push.sub_id == "sub-1"
+    await coord._pool_push.consumer.stop()
+
+
+async def test_on_pool_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {
+        "pool": {},
+        "dataset": {"tank": {"mountpoint": "/mnt/tank", "available": 40, "used": 60}},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "guid": "g1",
+                    "name": "tank",
+                    "path": "/mnt/tank",
+                    "fragmentation": "12",
+                    "topology": {},
+                }
+            ],
+            None,  # boot.get_state
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_pool_push([{"msg": "changed"}])
+
+    assert coord.ds["pool"]["g1"]["available"] == 40
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_pool_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._pool_push,
+        coord._POOL_EVENT,
+        coord._on_pool_push,
+        label="pool",
+    )
+
+    await coord.stop_pool_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._pool_push.sub_id is None
 
 
 # ---------------------------
@@ -2750,6 +3429,7 @@ async def test_get_vm_computes_memory_and_running() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_VMS]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2772,6 +3452,7 @@ async def test_get_vm_handles_null_memory() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_VMS]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2788,6 +3469,87 @@ async def test_get_vm_handles_null_memory() -> None:
 
 
 # ---------------------------
+#   get_vm push subscription wiring
+# ---------------------------
+async def test_get_vm_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"vm": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_VMS]}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_vm()
+
+    coord.api.subscribe_events.assert_awaited_once_with("vm.query")
+    assert coord._vm_push.sub_id == "sub-1"
+    await coord._vm_push.consumer.stop()
+
+
+async def test_on_vm_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"vm": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "name": "vm1",
+                "vcpus": 2,
+                "memory": 1024,
+                "status": {"state": "RUNNING"},
+            }
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_vm_push([{"msg": "changed"}])
+
+    assert coord.ds["vm"][1]["running"] is True
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_vm_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._vm_push,
+        coord._VM_EVENT,
+        coord._on_vm_push,
+        label="vm",
+    )
+
+    await coord.stop_vm_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._vm_push.sub_id is None
+
+
+async def test_get_vm_not_monitored_stops_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"vm": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._vm_push.sub_id = "sub-1"
+
+    await coord.get_vm()
+
+    assert coord.ds["vm"] == {}
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._vm_push.sub_id is None
+
+
+# ---------------------------
 #   get_container
 # ---------------------------
 async def test_get_container_filters_container_type_and_computes_fields() -> None:
@@ -2796,6 +3558,7 @@ async def test_get_container_filters_container_type_and_computes_fields() -> Non
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2826,6 +3589,7 @@ async def test_get_container_v26_uses_container_query() -> None:
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
     coord._version_major, coord._version_minor = 26, 0
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -2896,6 +3660,7 @@ async def test_get_container_normalizes_non_numeric_memory() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[{"id": "c1", "name": "app1", "type": "CONTAINER", "memory": None}]
     )
@@ -2922,10 +3687,107 @@ async def test_get_container_logs_when_query_returns_non_list(
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(return_value=None)
     with caplog.at_level("DEBUG"):
         await coord.get_container()
     assert coord.ds["container"] == {}
+
+
+# ---------------------------
+#   get_container push subscription wiring
+# ---------------------------
+async def test_get_container_ensures_push_subscription_legacy_topic() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    coord._version_major, coord._version_minor = 25, 10
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_container()
+
+    coord.api.subscribe_events.assert_awaited_once_with("virt.instance.query")
+    assert coord._container_push.sub_id == "sub-1"
+    await coord._container_push.consumer.stop()
+
+
+async def test_get_container_ensures_push_subscription_v26_topic() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    coord._version_major, coord._version_minor = 26, 0
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_container()
+
+    coord.api.subscribe_events.assert_awaited_once_with("container.query")
+    assert coord._container_push.sub_id == "sub-1"
+    await coord._container_push.consumer.stop()
+
+
+async def test_on_container_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord._version_major, coord._version_minor = 25, 10
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": "c1", "name": "app1", "type": "CONTAINER", "status": "RUNNING"}
+        ]
+    )
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_container_push([{"msg": "changed"}])
+
+    assert coord.ds["container"]["c1"]["running"] is True
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_container_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._container_push,
+        "virt.instance.query",
+        coord._on_container_push,
+        label="container",
+    )
+
+    await coord.stop_container_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._container_push.sub_id is None
+
+
+async def test_get_container_not_monitored_stops_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    coord._container_push.sub_id = "sub-1"
+
+    await coord.get_container()
+
+    assert coord.ds["container"] == {}
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._container_push.sub_id is None
 
 
 # ---------------------------
@@ -3137,9 +3999,31 @@ async def test_get_cloudsync_parses_when_monitored() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CLOUDSYNC]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(return_value=[{"id": "cs1", "description": "backup"}])
     await coord.get_cloudsync()
     assert "cs1" in coord.ds["cloudsync"]
+
+
+async def test_get_cloudsync_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"cloudsync": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._cloudsync_push.sub_id = "sub-1"
+    coord._cloudsync_push.consumer = consumer
+
+    await coord.get_cloudsync()
+
+    assert coord.ds["cloudsync"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._cloudsync_push.sub_id is None
 
 
 async def test_get_replication_falls_back_to_job_state() -> None:
@@ -3148,6 +4032,7 @@ async def test_get_replication_falls_back_to_job_state() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_REPLICATION]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[{"id": 1, "name": "repl1", "job": {"state": "RUNNING"}}]
     )
@@ -3167,6 +4052,27 @@ async def test_get_replication_empty_when_not_monitored() -> None:
     assert coord.ds["replication"] == {}
 
 
+async def test_get_replication_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"replication": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._replication_push.sub_id = "sub-1"
+    coord._replication_push.consumer = consumer
+
+    await coord.get_replication()
+
+    assert coord.ds["replication"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._replication_push.sub_id is None
+
+
 async def test_get_rsync_empty_when_not_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"rsynctask": {"stale": {}}}
@@ -3178,12 +4084,34 @@ async def test_get_rsync_empty_when_not_monitored() -> None:
     assert coord.ds["rsynctask"] == {}
 
 
+async def test_get_rsync_not_monitored_stops_active_push() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {"stale": {}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.unsubscribe_events = AsyncMock()
+    consumer = MagicMock()
+    consumer.stop = AsyncMock()
+    coord._rsync_push.sub_id = "sub-1"
+    coord._rsync_push.consumer = consumer
+
+    await coord.get_rsync()
+
+    assert coord.ds["rsynctask"] == {}
+    consumer.stop.assert_awaited_once()
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._rsync_push.sub_id is None
+
+
 async def test_get_rsync_parses_when_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"rsynctask": {}}
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_RSYNC]}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(return_value=[{"id": 1, "path": "/mnt/tank"}])
     await coord.get_rsync()
     assert 1 in coord.ds["rsynctask"]
@@ -3242,6 +4170,7 @@ async def test_get_app_catalog_update_available() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {}}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -3264,6 +4193,7 @@ async def test_get_app_custom_app_falls_back_to_image_updates() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {}}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -3285,6 +4215,7 @@ async def test_get_app_no_update_for_noncustom_without_upgrade() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {}}
     coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
     coord.api.query = AsyncMock(
         return_value=[
             {
@@ -3300,6 +4231,71 @@ async def test_get_app_no_update_for_noncustom_without_upgrade() -> None:
     coord._refresh_app_update_jobs = AsyncMock()
     await coord.get_app()
     assert coord.ds["app"]["app1"]["update_available"] is False
+
+
+# ---------------------------
+#   get_app push subscription wiring
+# ---------------------------
+async def test_get_app_ensures_push_subscription() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {}}
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.query = AsyncMock(return_value=[])
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord._refresh_app_update_jobs = AsyncMock()
+
+    await coord.get_app()
+
+    coord.api.subscribe_events.assert_awaited_once_with("app.query")
+    assert coord._app_push.sub_id == "sub-1"
+    await coord._app_push.consumer.stop()
+
+
+async def test_on_app_push_refreshes_and_notifies() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": "app1",
+                "name": "app1",
+                "state": "RUNNING",
+                "upgrade_available": False,
+                "custom_app": False,
+                "image_updates_available": False,
+            }
+        ]
+    )
+    coord._refresh_app_update_jobs = AsyncMock()
+    coord.async_set_updated_data = MagicMock()
+
+    await coord._on_app_push([{"msg": "changed"}])
+
+    assert coord.ds["app"]["app1"]["running"] is True
+    coord.async_set_updated_data.assert_called_once_with(coord.ds)
+
+
+async def test_stop_app_push_unsubscribes_and_clears() -> None:
+    coord = _bare_coordinator()
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+    coord.api.unsubscribe_events = AsyncMock()
+    await coord._ensure_push_subscription(
+        coord._app_push,
+        coord._APP_EVENT,
+        coord._on_app_push,
+        label="app",
+    )
+
+    await coord.stop_app_push()
+
+    coord.api.unsubscribe_events.assert_awaited_once_with("sub-1")
+    assert coord._app_push.sub_id is None
 
 
 async def test_refresh_app_update_job_mirrors_running_progress() -> None:
