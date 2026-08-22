@@ -101,6 +101,38 @@ async def test_migrate_entry_identity_namespace_noop_when_identity_unchanged(
     assert migrated_entity.unique_id == "truenas-uptime"
 
 
+async def test_migrate_entry_identity_namespace_skips_shared_device(
+    hass: HomeAssistant,
+) -> None:
+    """A device shared by two entries (same old display name + pool name)
+    must not have its identifiers rewritten for just one of them -- that
+    would misattribute it once the other entry's own migration pass runs
+    (Sourcery finding on the initial version of this migration).
+    """
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-aaa"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-bbb"}
+    )
+    entry_b.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    shared_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_a.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+    dev_reg.async_get_or_create(
+        config_entry_id=entry_b.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+
+    migrate_entry_identity_namespace(hass, entry_a)
+
+    untouched_device = dev_reg.async_get(shared_device.id)
+    assert untouched_device is not None
+    assert untouched_device.identifiers == {(DOMAIN, "TrueNAS_tank")}
+
+
 # ---------------------------
 #   _cleanup_orphaned_entities
 # ---------------------------

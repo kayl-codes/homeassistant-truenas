@@ -124,6 +124,17 @@ def migrate_entry_identity_namespace(
     for device_entry in dr.async_entries_for_config_entry(
         dev_reg, config_entry.entry_id
     ):
+        if len(device_entry.config_entries) > 1:
+            # Two entries that previously shared this display name (and e.g.
+            # a same-named pool) collided onto the same old, name-based
+            # device record. Renaming it in place for one entry would just
+            # get overwritten by the other entry's own migration pass,
+            # leaving entities misattributed. Leave it as-is: this entry's
+            # entities still get their unique_ids migrated above, so the
+            # normal device_info/get_or_create path in platform setup gives
+            # them a fresh, correctly-identified device instead of reusing
+            # the ambiguous shared one.
+            continue
         new_identifiers = {
             (domain, new_dev_prefix + value[len(old_dev_prefix) :])
             if domain == DOMAIN and value.startswith(old_dev_prefix)
