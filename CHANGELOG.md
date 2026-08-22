@@ -14,6 +14,50 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.8.0] — Live Push Updates & Migration/Security Hardening
+
+### Added
+- **Live push updates via TrueNAS event subscriptions:** Alerts, Services, Pools, Cloudsync,
+  Replication and Rsync tasks, VMs, Containers and Apps now update as soon as TrueNAS reports a
+  change instead of waiting for the next poll. Each source keeps polling unconditionally as a
+  safety net, and a shared circuit breaker automatically falls back to plain polling (with cooldown
+  + retry) if a source's subscription turns out to be too noisy or drops. (#101)
+
+### Fixed
+- **Security — API key no longer replayed against an unauthenticated discovered host (#98):**
+  zeroconf rediscovery no longer probes a newly discovered device with every configured entry's
+  real API key; a rediscovered host now always goes through the normal user-facing confirmation
+  step instead.
+- **Security — API key no longer pre-filled during migration takeover (#91):** the config-flow
+  field for adopting a legacy `truenas` entry always starts blank; leaving it blank keeps the
+  previously stored key instead of exposing it in the frontend's form state.
+- **Case-insensitive host handling could create duplicate entries or miss a legacy entry (#90,
+  #100):** hostnames differing only in casing (e.g. `NAS.local` vs `nas.local`) are now recognized
+  as the same device for duplicate detection and for matching a legacy entry during migration.
+- **Device identifier collisions across multiple TrueNAS instances (#94):** device identifiers
+  built from data-prefixed groups (e.g. pools/datasets) now include the instance prefix
+  consistently, preventing two same-named objects on different instances from colliding.
+- **Migration backup collisions with multiple config entries (#95):** the `.storage`
+  migration-backup snapshot key is now namespaced per config entry, so migrating two instances
+  around the same time can no longer overwrite or prune the wrong backup.
+- **Migration flow edge cases:**
+  - A manual "start from scratch" takeover is now recorded as done, so it can no longer be silently
+    overridden by legacy-entity adoption running afterwards. Adoption also now aborts (without
+    marking migration done) if disabling the legacy entry fails, instead of stripping entities out
+    from under a still-active legacy coordinator. (#97)
+  - When multiple old `truenas` entries exist, the correct one is now matched by host instead of
+    always offering the first one found. (#100)
+  - Two distinct TrueNAS boxes sharing the same display name are no longer blocked from both being
+    added — host/system-id already guard against real duplicates. (#100)
+  - A Repairs issue is now raised if the migration-rollback background task fails (#99) or
+    completes without actually rolling anything back (#100), instead of that only being logged
+    (#92, #93 laid the diagnostic-logging groundwork this builds on).
+- **Defensive hardening** surfaced during the Home Assistant Core Bronze-quality-scale submission's
+  review, mirrored back here: guards against non-dict app-stats/unit-of-measurement data, removal
+  of a dead `{port}` translation placeholder and other unreachable fallback code, and a namespaced
+  `update_sensors` dispatcher signal to avoid cross-integration collisions. No user-facing behavior
+  change under normal operation. (#87, #88, #89, #92, #96)
+
 ## [2.7.0] — App Update Progress & TrueNAS 26 Container Support
 
 ### Added

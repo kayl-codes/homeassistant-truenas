@@ -30,6 +30,9 @@
 > repository and don't carry over.
 
 Monitor and control your TrueNAS device from Home Assistant.
+ * **Live push updates** (event-driven) for Alerts, Services, Pools, Cloudsync, Replication,
+   Rsync Tasks, VMs, Containers and Apps — near-instant instead of waiting for the next poll,
+   with automatic fallback to polling
  * Monitor System (CPU, Load, Memory, Temperature, **ARC Hit Ratio**, Uptime)
  * Monitor Network interfaces in a dedicated device group (RX/TX traffic + link connectivity per NIC)
  * Monitor Disks
@@ -116,8 +119,8 @@ actions (target the container's binary sensor).
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
 > On an existing install, enable **Containers** once after upgrading.
 >
-> Note: a restart is a background job, so the brief down-state may not be sampled by the
-> poll — the steady state is always reported correctly.
+> Note: a restart is a background job; its brief down-state is usually caught live via
+> [event push](#live-push-updates), and the steady state is always reported correctly regardless.
 
 ## Apps
 Monitor each running TrueNAS **app** (Kubernetes workload) with live, event-based statistics:
@@ -163,8 +166,9 @@ Replication tasks can be started on demand through the `replication_run` action.
 >
 > Note: triggering a run on demand (the **Run** button or `replication_run`) shows
 > `RUNNING` immediately and re-syncs to the real state on the next poll. A **scheduled**
-> run that finishes between two polls may only be sampled in its final state (e.g.
-> `FINISHED`) — the persistent state always matches the TrueNAS WebUI.
+> run is usually caught live via [event push](#live-push-updates); on the rare miss it's
+> only sampled in its final state (e.g. `FINISHED`) — the persistent state always matches
+> the TrueNAS WebUI.
 
 ## Rsync Tasks
 Monitor status and attributes for each TrueNAS rsync task.
@@ -287,6 +291,24 @@ action: truenas_ce.alert_list
 data:
   properties: "*"
 ```
+
+## Live Push Updates
+Several core groups — **Alerts, Services, Pools, Cloudsync, Replication Tasks, Rsync Tasks,
+Virtual Machines, Containers and Apps** — subscribe to TrueNAS's event stream on top of the
+regular poll. A state change (an alert firing, a task finishing, a VM stopping, …) usually shows
+up in Home Assistant within a second or two instead of waiting for the next poll interval.
+
+Polling never stops — it keeps running unconditionally as a safety net, so nothing depends on the
+push subscription actually working. A shared circuit breaker automatically drops a source back to
+plain polling (with cooldown and retry) if its subscription turns out to be too noisy or drops
+unexpectedly. No configuration is needed, and there's no user-visible change beyond faster updates
+when it works.
+
+App CPU/RAM/network/block-I/O statistics (see [Apps](#apps)) already worked this way before; this
+extends the same mechanism to whole-object state across the groups above.
+
+> **Snapshot Tasks** have no discrete TrueNAS subscribe target and remain poll-only — see
+> [Known Limitations](#known-limitations).
 
 ## Diagnostics
 Monitor overall system health and active alerts directly from the device page. The integration provides a dedicated diagnostic sensor that automatically detects any disk or pool issues.
@@ -425,11 +447,13 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   corresponding sensor (e.g. scrub state, snapshot task state) does reflect an optimistic `RUNNING`
   state right away and re-syncs to the real TrueNAS state on the next poll.
 * **A background job that starts and finishes between two polls may only be sampled in its final
-  state.** This applies to container restarts, and to Replication/Rsync/Snapshot tasks that run on a
-  *TrueNAS schedule* rather than through the integration's own Run button/action — the transient
-  "running" state can be missed if it starts and ends inside one poll interval. The persistent end
-  state always matches TrueNAS's own WebUI; only interim progress can be missed if it's fast enough.
-  Lowering the poll interval (see [Options](#options)) reduces the chance of missing it.
+  state.** Since v2.8.0, VM/Container restarts and Replication/Rsync task runs are also pushed via
+  TrueNAS event subscriptions (see [Live Push Updates](#live-push-updates)) and usually caught live,
+  so this mainly still applies to **Snapshot Tasks** running on a *TrueNAS schedule* — TrueNAS has
+  no discrete subscribe target for them, so they remain poll-only and a transient "running" state
+  can be missed if it starts and ends inside one poll interval. The persistent end state always
+  matches TrueNAS's own WebUI; only interim progress can be missed if it's fast enough. Lowering the
+  poll interval (see [Options](#options)) reduces the chance of missing it.
 * **The on-demand pool-scrub button has no threshold guard.** Pressing it starts a scrub immediately
   regardless of how recently the pool was last scrubbed — TrueNAS's own scheduled-scrub frequency
   setting is not checked. Use it deliberately, not as a substitute for a properly scheduled scrub.
