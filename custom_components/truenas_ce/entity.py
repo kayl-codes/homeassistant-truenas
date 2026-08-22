@@ -85,6 +85,57 @@ def format_device_identifier(identity: str, hostname: str) -> str:
     return f"{identity}_{hostname}"
 
 
+def migrate_entry_identity_namespace(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Rewrite this entry's registry records from the old name-based identity.
+
+    Before ``resolve_entry_identity`` existed, every unique_id/device
+    identifier was namespaced by ``config_entry.data[CONF_NAME]`` (see
+    ``format_unique_id``/``format_device_identifier``'s history). Every
+    already-registered entity/device for an existing installation therefore
+    still carries that old prefix; left alone, it would never match the new
+    identity-based unique_ids/identifiers the entities compute from now on,
+    producing duplicate entities/devices instead of continuing the old ones.
+    Must run before ``register_system_device`` and any platform setup, so the
+    device/entity lookups in those find the already-renamed records.
+    """
+    old_name = config_entry.data.get(CONF_NAME, "")
+    identity = resolve_entry_identity(config_entry)
+    if not old_name or old_name == identity:
+        return
+
+    old_uid_prefix = f"{old_name.lower()}-"
+    new_uid_prefix = f"{identity.lower()}-"
+    ent_reg = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(
+        ent_reg, config_entry.entry_id
+    ):
+        if entity_entry.unique_id.startswith(old_uid_prefix):
+            ent_reg.async_update_entity(
+                entity_entry.entity_id,
+                new_unique_id=new_uid_prefix
+                + entity_entry.unique_id[len(old_uid_prefix) :],
+            )
+
+    old_dev_prefix = f"{old_name}_"
+    new_dev_prefix = f"{identity}_"
+    dev_reg = dr.async_get(hass)
+    for device_entry in dr.async_entries_for_config_entry(
+        dev_reg, config_entry.entry_id
+    ):
+        new_identifiers = {
+            (domain, new_dev_prefix + value[len(old_dev_prefix) :])
+            if domain == DOMAIN and value.startswith(old_dev_prefix)
+            else (domain, value)
+            for domain, value in device_entry.identifiers
+        }
+        if new_identifiers != device_entry.identifiers:
+            dev_reg.async_update_device(
+                device_entry.id, new_identifiers=new_identifiers
+            )
+
+
 @lru_cache(maxsize=1)
 def _supports_via_device_id() -> bool:
     """Whether the running HA Core's device registry accepts via_device_id.
