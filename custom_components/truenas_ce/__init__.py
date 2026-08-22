@@ -8,7 +8,6 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_NAME
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -60,6 +59,7 @@ from .entity import (
     _is_uid_excluded,
     format_unique_id,
     register_system_device,
+    resolve_entry_identity,
 )
 from .helper import alert_action, scaled_data_unit
 from .migration import (
@@ -105,18 +105,18 @@ def _migrate_data_size_units(
         CONF_DATA_UNIT, config_entry.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT)
     )
     binary = data_unit == "GiB"
-    inst = config_entry.data[CONF_NAME]
+    identity = resolve_entry_identity(config_entry)
     ent_reg = er.async_get(hass)
 
     for description in SENSOR_TYPES:
         if getattr(description, "device_class", None) == SensorDeviceClass.DATA_SIZE:
-            _migrate_description(ent_reg, coordinator, inst, description, binary)
+            _migrate_description(ent_reg, coordinator, identity, description, binary)
 
 
 def _migrate_description(
     ent_reg: er.EntityRegistry,
     coordinator: TrueNASCoordinator,
-    inst: str,
+    identity: str,
     description: TrueNASSensorEntityDescription,
     binary: bool,
 ) -> None:
@@ -127,7 +127,7 @@ def _migrate_description(
 
     if not description.data_reference:
         value = data.get(description.data_attribute or "")
-        _force_entity_unit(ent_reg, inst, description, None, value, binary)
+        _force_entity_unit(ent_reg, identity, description, None, value, binary)
         return
 
     for uid, vals in data.items():
@@ -136,7 +136,7 @@ def _migrate_description(
         ref = vals.get(description.data_reference)
         _force_entity_unit(
             ent_reg,
-            inst,
+            identity,
             description,
             ref if ref is not None else uid,
             vals.get(description.data_attribute),
@@ -146,7 +146,7 @@ def _migrate_description(
 
 def _force_entity_unit(
     ent_reg: er.EntityRegistry,
-    inst: str,
+    identity: str,
     description: TrueNASSensorEntityDescription,
     reference: Any,
     value: Any,
@@ -154,7 +154,7 @@ def _force_entity_unit(
 ) -> None:
     """Write the magnitude-appropriate display unit of one entity to the registry."""
     entity_id = ent_reg.async_get_entity_id(
-        "sensor", DOMAIN, format_unique_id(inst, description.key, reference)
+        "sensor", DOMAIN, format_unique_id(identity, description.key, reference)
     )
     if entity_id is None:
         return
@@ -181,7 +181,7 @@ def _handle_keyless(
 
 
 def _referenced_unique_ids(
-    inst: str,
+    identity: str,
     description: TrueNASEntityDescription,
     data: dict[str, Any],
     honor_exclude: bool = True,
@@ -197,13 +197,13 @@ def _referenced_unique_ids(
             continue
         ref = vals.get(description.data_reference)
         reference = ref if ref is not None else uid
-        ids.add(format_unique_id(inst, description.key, reference))
+        ids.add(format_unique_id(identity, description.key, reference))
 
     return ids
 
 
 def _collect_active_unique_ids(
-    inst: str, coordinator: TrueNASCoordinator
+    identity: str, coordinator: TrueNASCoordinator
 ) -> tuple[set[str], set[str]]:
     """Return (active unique_ids, live bases) for the current TrueNAS objects.
 
@@ -228,7 +228,7 @@ def _collect_active_unique_ids(
 
     for description in _ALL_DESCRIPTIONS:
         _process_static_description(
-            inst,
+            identity,
             description,
             disabled_data_paths,
             honor_exclude,
@@ -239,7 +239,7 @@ def _collect_active_unique_ids(
 
     for description in _ALL_DESCRIPTIONS:
         new_active, new_live_bases = _process_dynamic_description(
-            inst,
+            identity,
             description,
             coordinator.data,
             honor_exclude,
@@ -266,7 +266,7 @@ def _build_disabled_data_paths(monitored: list[str]) -> set[str]:
 
 
 def _process_static_description(
-    inst: str,
+    identity: str,
     description: TrueNASEntityDescription,
     disabled_data_paths: set[str],
     honor_exclude: bool,
@@ -281,7 +281,7 @@ def _process_static_description(
     present. Keyless descriptions are handled by ``_handle_keyless``; referenced
     descriptions are expanded via ``_referenced_unique_ids``.
     """
-    base = format_unique_id(inst, description.key)
+    base = format_unique_id(identity, description.key)
     is_disabled_group = description.data_path in disabled_data_paths
 
     if not getattr(description, "data_reference", None):
@@ -294,11 +294,11 @@ def _process_static_description(
 
     live_bases.add(base)
     if sub_data and not is_disabled_group:
-        active |= _referenced_unique_ids(inst, description, sub_data, honor_exclude)
+        active |= _referenced_unique_ids(identity, description, sub_data, honor_exclude)
 
 
 def _process_dynamic_description(
-    inst: str,
+    identity: str,
     description: TrueNASEntityDescription,
     data: dict[str, Any],
     honor_exclude: bool,
@@ -314,7 +314,7 @@ def _process_dynamic_description(
     if not getattr(description, "data_dynamic_keys", False):
         return set(), set()
 
-    base = format_unique_id(inst, description.key)
+    base = format_unique_id(identity, description.key)
     live_bases: set[str] = {base}
 
     is_disabled_group = description.data_path in disabled_data_paths
@@ -336,9 +336,9 @@ def _process_dynamic_description(
 
     active: set[str] = set()
     if getattr(description, "data_composite_references", ()):
-        active |= _composite_references(inst, description, sub_data, honor_exclude)
+        active |= _composite_references(identity, description, sub_data, honor_exclude)
     else:
-        active |= _referenced_unique_ids(inst, description, sub_data, honor_exclude)
+        active |= _referenced_unique_ids(identity, description, sub_data, honor_exclude)
 
     return active, live_bases
 
