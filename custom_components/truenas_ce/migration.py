@@ -27,6 +27,7 @@ from logging import getLogger
 from typing import Any
 
 from homeassistant.components import persistent_notification
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry, ConfigEntryDisabler
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
@@ -42,6 +43,7 @@ from .const import (
     MIGRATION_LEGACY_CONFIG,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
+    TO_REDACT,
 )
 from .helper import sanitize_host
 
@@ -207,6 +209,21 @@ def _remove_legacy_entities(
         ent_reg.async_remove(record[_R_ENTITY_ID])
 
 
+def _redacted_legacy_config(legacy_entry: ConfigEntry) -> dict[str, Any]:
+    """Return the legacy entry's data/options with sensitive fields redacted.
+
+    Used everywhere a legacy snapshot is persisted (the migration backup file,
+    the reverse map on the new entry) — neither is ever read back to actually
+    restore anything (:func:`async_rollback_to_legacy` re-enables the
+    still-existing legacy entry instead), so there's no reason for either copy
+    to carry a live API key.
+    """
+    return {
+        "data": async_redact_data(dict(legacy_entry.data), TO_REDACT),
+        "options": async_redact_data(dict(legacy_entry.options), TO_REDACT),
+    }
+
+
 def _entry_backup_prefix(entry_id: str) -> str:
     """Return the per-entry ``.storage`` key prefix for migration backups.
 
@@ -238,10 +255,7 @@ async def _write_migration_backup(
         "created": now.isoformat(),
         "ce_entry_id": config_entry.entry_id,
         "legacy_entry_id": legacy_entry.entry_id,
-        "legacy_config": {
-            "data": dict(legacy_entry.data),
-            "options": dict(legacy_entry.options),
-        },
+        "legacy_config": _redacted_legacy_config(legacy_entry),
         "records": records,
     }
     try:
@@ -303,10 +317,7 @@ def _persist_migration_state(
     }
     if legacy_entry is not None:
         new_data[MIGRATION_LEGACY_ENTRY_ID] = legacy_entry.entry_id
-        new_data[MIGRATION_LEGACY_CONFIG] = {
-            "data": dict(legacy_entry.data),
-            "options": dict(legacy_entry.options),
-        }
+        new_data[MIGRATION_LEGACY_CONFIG] = _redacted_legacy_config(legacy_entry)
     if backup_key:
         new_data[MIGRATION_BACKUP_KEY] = backup_key
     hass.config_entries.async_update_entry(config_entry, data=new_data)

@@ -30,6 +30,7 @@ from custom_components.truenas_ce.migration import (
     _find_legacy_entry,
     _log_reconnection,
     _persist_migration_state,
+    _redacted_legacy_config,
     _remap_and_restore,
     _remove_legacy_entities,
     _restore_overrides,
@@ -191,10 +192,27 @@ def test_persist_migration_state_with_legacy_entry_and_backup() -> None:
     assert new_data[MIGRATION_RECORDS] == records
     assert new_data[MIGRATION_LEGACY_ENTRY_ID] == "legacy-1"
     assert new_data[MIGRATION_LEGACY_CONFIG] == {
-        "data": {"host": "x"},
+        "data": {"host": "**REDACTED**"},
         "options": {"opt": 1},
     }
     assert new_data[MIGRATION_BACKUP_KEY] == "backup-key-1"
+
+
+# ---------------------------
+#   _redacted_legacy_config
+# ---------------------------
+def test_redacted_legacy_config_redacts_sensitive_fields() -> None:
+    legacy_entry = SimpleNamespace(
+        entry_id="legacy-1",
+        data={"host": "truenas.local", "api_key": "secret-key"},
+        options={"poll_interval": 60},
+    )
+
+    result = _redacted_legacy_config(legacy_entry)
+
+    assert result["data"]["host"] == "**REDACTED**"
+    assert result["data"]["api_key"] == "**REDACTED**"
+    assert result["options"] == {"poll_interval": 60}
 
 
 def test_persist_migration_state_without_legacy_entry() -> None:
@@ -587,7 +605,9 @@ def test_finalize_legacy_adoption_skips_unmatched_records() -> None:
 async def test_write_migration_backup_success() -> None:
     hass = MagicMock()
     entry = _config_entry()
-    legacy_entry = SimpleNamespace(entry_id="legacy-1", data={}, options={})
+    legacy_entry = SimpleNamespace(
+        entry_id="legacy-1", data={"api_key": "secret-key"}, options={}
+    )
 
     store_instance = MagicMock()
     store_instance.async_save = AsyncMock()
@@ -605,6 +625,8 @@ async def test_write_migration_backup_success() -> None:
 
     assert key == store_instance.key
     store_instance.async_save.assert_awaited_once()
+    saved_payload = store_instance.async_save.call_args[0][0]
+    assert saved_payload["legacy_config"]["data"]["api_key"] == "**REDACTED**"
     remove_mock.assert_awaited_once_with(
         hass, migration_module._entry_backup_prefix(entry.entry_id), store_instance.key
     )
