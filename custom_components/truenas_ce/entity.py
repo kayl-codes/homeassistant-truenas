@@ -67,6 +67,25 @@ def format_unique_id(identity: str, key: str, reference: object = None) -> str:
     ``resolve_entry_identity``), not the user-editable display name.
     Shared so the migration in __init__.py can resolve the same unique_id an
     entity produces.
+
+    ``reference`` is lowercased but not slugified: unique_id has no character
+    restrictions in HA, and slugify's lossy '/'/'-'/'_' collapsing would let
+    distinct references (e.g. ZFS datasets "tank/a-b" and "tank/a_b") collide
+    and silently drop one entity as a duplicate. See
+    ``migrate_slugified_unique_ids`` for the one-time rename this requires on
+    existing installations.
+    """
+    base = f"{identity.lower()}-{key}"
+    if reference is None:
+        return base
+    return f"{base}-{str(reference).lower()}"
+
+
+def _legacy_format_unique_id(identity: str, key: str, reference: object = None) -> str:
+    """Pre-2.10 unique_id format (lossy ``slugify()`` of the reference).
+
+    Only used by ``migrate_slugified_unique_ids`` to locate registry entries
+    created under the old format; entities themselves use ``format_unique_id``.
     """
     base = f"{identity.lower()}-{key}"
     if reference is None:
@@ -145,6 +164,156 @@ def migrate_entry_identity_namespace(
             dev_reg.async_update_device(
                 device_entry.id, new_identifiers=new_identifiers
             )
+
+
+def _referenced_id_pairs(
+    identity: str, description: TrueNASEntityDescription, data: Mapping[str, Any]
+) -> set[tuple[str, str]]:
+    """Return (old, new) format_unique_id pairs for one referenced description."""
+    pairs: set[tuple[str, str]] = set()
+    for uid, vals in data.items():
+        if not isinstance(vals, dict):
+            continue
+        ref = vals.get(description.data_reference)
+        reference = ref if ref is not None else uid
+        pairs.add(
+            (
+                _legacy_format_unique_id(identity, description.key, reference),
+                format_unique_id(identity, description.key, reference),
+            )
+        )
+    return pairs
+
+
+def _composite_id_pairs(
+    identity: str, description: TrueNASEntityDescription, data: Mapping[str, Any]
+) -> set[tuple[str, str]]:
+    """Return (old, new) format_unique_id pairs for one composite-ref description."""
+    pairs: set[tuple[str, str]] = set()
+    if len(description.data_composite_references) != 2:
+        return pairs
+    container_key, leaf_key = description.data_composite_references
+    for uid, vals in data.items():
+        container = _get_composite_container(vals, container_key)
+        if container is None:
+            continue
+        for item in container:
+            ref = _extract_composite_ref(item, description, False, leaf_key)
+            if ref is None:
+                continue
+            composed = f"{uid}::{ref}"
+            pairs.add(
+                (
+                    _legacy_format_unique_id(identity, description.key, composed),
+                    format_unique_id(identity, description.key, composed),
+                )
+            )
+    return pairs
+
+
+def _merge_rename_candidates(
+    pairs: set[tuple[str, str]], candidates: dict[str, set[str]]
+) -> None:
+    """Record one description's (old, new) unique_id pairs by legacy id.
+
+    Every candidate new id is recorded here, including ones that equal the
+    old id -- an unaffected reference (unchanged by the fix) can still share
+    its legacy slug with a different, affected reference, so an early
+    old == new skip here would hide that collision instead of flagging it
+    (Sourcery finding on an earlier version of this migration).
+    """
+    for old, new in pairs:
+        candidates.setdefault(old, set()).add(new)
+
+
+def _resolve_renames(candidates: dict[str, set[str]]) -> dict[str, str]:
+    """Turn old-id -> candidate-new-ids into the final rename map.
+
+    A legacy id with more than one distinct candidate new id (a collision
+    the fix eliminates going forward) is left out entirely rather than
+    arbitrarily renamed to one of them -- see ``migrate_slugified_unique_ids``
+    for why.
+    """
+    renames: dict[str, str] = {}
+    for old, news in candidates.items():
+        if len(news) != 1:
+            continue
+        (new,) = news
+        if new != old:
+            renames[old] = new
+    return renames
+
+
+def _collect_unique_id_renames(
+    identity: str,
+    descriptions: Sequence[TrueNASEntityDescription],
+    coordinator: TrueNASCoordinator,
+) -> dict[str, str]:
+    """Build the old-to-new unique_id rename map across all descriptions.
+
+    A composite-reference description (``data_composite_references`` set,
+    see ``TrueNASEntityDescription.__post_init__``) is valid without a plain
+    ``data_reference`` -- skipping it whenever ``data_reference`` alone was
+    unset silently left its legacy entries (e.g. per-app network sensors)
+    unmigrated (Sourcery finding on an earlier version of this migration).
+    """
+    candidates: dict[str, set[str]] = {}
+    for description in descriptions:
+        has_composite = bool(getattr(description, "data_composite_references", ()))
+        if not getattr(description, "data_reference", None) and not has_composite:
+            continue
+        data = coordinator.data.get(description.data_path or "")
+        if not isinstance(data, dict):
+            continue
+        pairs = (
+            _composite_id_pairs(identity, description, data)
+            if has_composite
+            else _referenced_id_pairs(identity, description, data)
+        )
+        _merge_rename_candidates(pairs, candidates)
+    return _resolve_renames(candidates)
+
+
+def migrate_slugified_unique_ids(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    coordinator: TrueNASCoordinator,
+    descriptions: Sequence[TrueNASEntityDescription],
+) -> None:
+    """Rewrite registry entries from the old lossy-slugified unique_id format.
+
+    ``format_unique_id`` used to run its reference through ``slugify()``,
+    which collapsed distinct references (e.g. ZFS datasets "tank/a-b" and
+    "tank/a_b", or app names like "immich-server" combined with an interface
+    name) onto the same unique_id, silently dropping one entity as a
+    duplicate. The fix stops slugifying, so every already-registered entity
+    for an existing installation must be renamed here -- otherwise HA treats
+    it as gone and creates a fresh, differently-IDed entity, breaking the
+    existing entity_id, history and any automations/dashboards referencing
+    it. Must run before ``register_system_device``, orphaned-entity cleanup
+    and any platform setup, so those find the already-renamed records.
+
+    A single legacy slug can match more than one *current* reference (that
+    is exactly the collision the fix eliminates going forward). Which of
+    those references the one existing legacy entry actually belonged to is
+    unrecoverable, so such an old id is left unrenamed rather than guessed
+    at -- silently reassigning it to the wrong dataset/interface would be
+    worse than leaving a stale entity behind for the existing orphan-cleanup
+    flow to catch (Sourcery finding on the initial version of this
+    migration).
+    """
+    identity = resolve_entry_identity(config_entry)
+    renames = _collect_unique_id_renames(identity, descriptions, coordinator)
+    if not renames:
+        return
+
+    ent_reg = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(
+        ent_reg, config_entry.entry_id
+    ):
+        new_id = renames.get(entity_entry.unique_id)
+        if new_id is not None:
+            ent_reg.async_update_entity(entity_entry.entity_id, new_unique_id=new_id)
 
 
 @lru_cache(maxsize=1)
