@@ -642,21 +642,24 @@ def test_migration_rollback_issue_id_includes_entry_id() -> None:
 # ---------------------------
 #   get_alerts
 # ---------------------------
-async def test_get_alerts_malformed_response_resets_to_defaults() -> None:
+async def test_get_alerts_malformed_response_keeps_previous_state() -> None:
+    """A permission/transport error must not masquerade as "no active alerts"."""
     coord = _bare_coordinator()
-    coord.ds = {"alerts": {}}
+    previous_alerts = {
+        "count": 2,
+        "messages": ["Pool degraded"],
+        "critical": 1,
+        "warning": 1,
+        "info": 0,
+        "disk_issues": True,
+        "uuids": ["u1", "u2"],
+    }
+    coord.ds = {"alerts": dict(previous_alerts)}
     coord.api = MagicMock()
     coord.api.connected.return_value = False
     coord.api.query = AsyncMock(return_value={"not": "a list"})
     await coord.get_alerts()
-    assert coord.ds["alerts"] == {
-        "count": 0,
-        "messages": [],
-        "critical": 0,
-        "warning": 0,
-        "info": 0,
-        "disk_issues": False,
-    }
+    assert coord.ds["alerts"] == previous_alerts
 
 
 async def test_get_alerts_filters_dismissed_and_counts_levels() -> None:
@@ -940,13 +943,13 @@ async def test_get_smb_counts_dict_with_sessions() -> None:
     assert coord.ds["system_info"]["smb_connections"] == 3
 
 
-async def test_get_smb_defaults_to_zero_for_unexpected_shape() -> None:
+async def test_get_smb_keeps_previous_count_for_unexpected_shape() -> None:
     coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
+    coord.ds = {"system_info": {"smb_connections": 3}}
     coord.api = MagicMock()
     coord.api.query = AsyncMock(return_value=None)
     await coord.get_smb()
-    assert coord.ds["system_info"]["smb_connections"] == 0
+    assert coord.ds["system_info"]["smb_connections"] == 3
 
 
 # ---------------------------
