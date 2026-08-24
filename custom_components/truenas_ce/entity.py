@@ -238,19 +238,26 @@ def migrate_slugified_unique_ids(
     worse than leaving a stale entity behind for the existing orphan-cleanup
     flow to catch (Sourcery finding on the initial version of this
     migration).
+
+    A composite-reference description (``data_composite_references`` set,
+    see ``TrueNASEntityDescription.__post_init__``) is valid without a plain
+    ``data_reference`` -- skipping it whenever ``data_reference`` alone was
+    unset silently left its legacy entries (e.g. per-app network sensors)
+    unmigrated (Sourcery finding on the initial version of this migration).
     """
     identity = resolve_entry_identity(config_entry)
     renames: dict[str, str] = {}
     ambiguous: set[str] = set()
     for description in descriptions:
-        if not getattr(description, "data_reference", None):
+        has_composite = bool(getattr(description, "data_composite_references", ()))
+        if not getattr(description, "data_reference", None) and not has_composite:
             continue
         data = coordinator.data.get(description.data_path or "")
         if not isinstance(data, dict):
             continue
         pairs = (
             _composite_id_pairs(identity, description, data)
-            if getattr(description, "data_composite_references", ())
+            if has_composite
             else _referenced_id_pairs(identity, description, data)
         )
         for old, new in pairs:

@@ -34,6 +34,7 @@ from custom_components.truenas_ce.const import (
 )
 from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
+    _legacy_format_unique_id,
     format_unique_id,
     migrate_entry_identity_namespace,
     migrate_slugified_unique_ids,
@@ -243,6 +244,51 @@ async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == format_unique_id("system-guid", "dataset_used", "tank")
+
+
+async def test_migrate_slugified_unique_ids_renames_composite_only_reference(
+    hass: HomeAssistant,
+) -> None:
+    """A composite-reference description without a plain ``data_reference``
+    (e.g. per-app network sensors) is a valid configuration -- see
+    ``TrueNASEntityDescription.__post_init__`` -- and must still be migrated
+    (Sourcery finding on the initial version of this migration).
+    """
+    net_desc = TrueNASSensorEntityDescription(
+        key="net_rx",
+        name="RX",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_composite_references=("networks", "interface_name"),
+        func="TrueNASEntity",
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "app_stats": {
+                "immich-server": {"networks": [{"interface_name": "eth0"}]},
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        _legacy_format_unique_id("system-guid", "net_rx", "immich-server::eth0"),
+        config_entry=entry,
+    )
+
+    migrate_slugified_unique_ids(hass, entry, coordinator, [net_desc])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id(
+        "system-guid", "net_rx", "immich-server::eth0"
+    )
 
 
 # ---------------------------
