@@ -221,6 +221,44 @@ async def test_migrate_slugified_unique_ids_leaves_previous_collision_unrenamed(
     assert migrated.unique_id == "system-guid-dataset_used-tank_a_b"
 
 
+async def test_migrate_slugified_unique_ids_leaves_partial_collision_unrenamed(
+    hass: HomeAssistant,
+) -> None:
+    """A collision is still a collision when one of the two live references
+    happens to already equal its own legacy slug (e.g. "tank_a_b", unaffected
+    by the fix) while the other one ("tank/a-b") collides onto that same
+    slug. Skipping the unaffected side early must not hide that collision --
+    the shared legacy entry must be left unrenamed either way (Sourcery
+    finding on an earlier version of this migration).
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "dataset": {
+                "tank/a-b": {"id": "tank/a-b"},
+                "tank_a_b": {"id": "tank_a_b"},
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "system-guid-dataset_used-tank_a_b",
+        config_entry=entry,
+    )
+
+    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == "system-guid-dataset_used-tank_a_b"
+
+
 async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
     hass: HomeAssistant,
 ) -> None:

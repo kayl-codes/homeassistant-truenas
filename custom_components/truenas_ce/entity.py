@@ -211,6 +211,69 @@ def _composite_id_pairs(
     return pairs
 
 
+def _merge_rename_candidates(
+    pairs: set[tuple[str, str]], candidates: dict[str, set[str]]
+) -> None:
+    """Record one description's (old, new) unique_id pairs by legacy id.
+
+    Every candidate new id is recorded here, including ones that equal the
+    old id -- an unaffected reference (unchanged by the fix) can still share
+    its legacy slug with a different, affected reference, so an early
+    old == new skip here would hide that collision instead of flagging it
+    (Sourcery finding on an earlier version of this migration).
+    """
+    for old, new in pairs:
+        candidates.setdefault(old, set()).add(new)
+
+
+def _resolve_renames(candidates: dict[str, set[str]]) -> dict[str, str]:
+    """Turn old-id -> candidate-new-ids into the final rename map.
+
+    A legacy id with more than one distinct candidate new id (a collision
+    the fix eliminates going forward) is left out entirely rather than
+    arbitrarily renamed to one of them -- see ``migrate_slugified_unique_ids``
+    for why.
+    """
+    renames: dict[str, str] = {}
+    for old, news in candidates.items():
+        if len(news) != 1:
+            continue
+        (new,) = news
+        if new != old:
+            renames[old] = new
+    return renames
+
+
+def _collect_unique_id_renames(
+    identity: str,
+    descriptions: Sequence[TrueNASEntityDescription],
+    coordinator: TrueNASCoordinator,
+) -> dict[str, str]:
+    """Build the old-to-new unique_id rename map across all descriptions.
+
+    A composite-reference description (``data_composite_references`` set,
+    see ``TrueNASEntityDescription.__post_init__``) is valid without a plain
+    ``data_reference`` -- skipping it whenever ``data_reference`` alone was
+    unset silently left its legacy entries (e.g. per-app network sensors)
+    unmigrated (Sourcery finding on an earlier version of this migration).
+    """
+    candidates: dict[str, set[str]] = {}
+    for description in descriptions:
+        has_composite = bool(getattr(description, "data_composite_references", ()))
+        if not getattr(description, "data_reference", None) and not has_composite:
+            continue
+        data = coordinator.data.get(description.data_path or "")
+        if not isinstance(data, dict):
+            continue
+        pairs = (
+            _composite_id_pairs(identity, description, data)
+            if has_composite
+            else _referenced_id_pairs(identity, description, data)
+        )
+        _merge_rename_candidates(pairs, candidates)
+    return _resolve_renames(candidates)
+
+
 def migrate_slugified_unique_ids(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -238,38 +301,9 @@ def migrate_slugified_unique_ids(
     worse than leaving a stale entity behind for the existing orphan-cleanup
     flow to catch (Sourcery finding on the initial version of this
     migration).
-
-    A composite-reference description (``data_composite_references`` set,
-    see ``TrueNASEntityDescription.__post_init__``) is valid without a plain
-    ``data_reference`` -- skipping it whenever ``data_reference`` alone was
-    unset silently left its legacy entries (e.g. per-app network sensors)
-    unmigrated (Sourcery finding on the initial version of this migration).
     """
     identity = resolve_entry_identity(config_entry)
-    renames: dict[str, str] = {}
-    ambiguous: set[str] = set()
-    for description in descriptions:
-        has_composite = bool(getattr(description, "data_composite_references", ()))
-        if not getattr(description, "data_reference", None) and not has_composite:
-            continue
-        data = coordinator.data.get(description.data_path or "")
-        if not isinstance(data, dict):
-            continue
-        pairs = (
-            _composite_id_pairs(identity, description, data)
-            if has_composite
-            else _referenced_id_pairs(identity, description, data)
-        )
-        for old, new in pairs:
-            if old == new or old in ambiguous:
-                continue
-            existing = renames.get(old)
-            if existing is None:
-                renames[old] = new
-            elif existing != new:
-                del renames[old]
-                ambiguous.add(old)
-
+    renames = _collect_unique_id_renames(identity, descriptions, coordinator)
     if not renames:
         return
 
