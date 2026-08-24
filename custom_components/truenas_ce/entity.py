@@ -229,9 +229,19 @@ def migrate_slugified_unique_ids(
     existing entity_id, history and any automations/dashboards referencing
     it. Must run before ``register_system_device``, orphaned-entity cleanup
     and any platform setup, so those find the already-renamed records.
+
+    A single legacy slug can match more than one *current* reference (that
+    is exactly the collision the fix eliminates going forward). Which of
+    those references the one existing legacy entry actually belonged to is
+    unrecoverable, so such an old id is left unrenamed rather than guessed
+    at -- silently reassigning it to the wrong dataset/interface would be
+    worse than leaving a stale entity behind for the existing orphan-cleanup
+    flow to catch (Sourcery finding on the initial version of this
+    migration).
     """
     identity = resolve_entry_identity(config_entry)
     renames: dict[str, str] = {}
+    ambiguous: set[str] = set()
     for description in descriptions:
         if not getattr(description, "data_reference", None):
             continue
@@ -243,7 +253,15 @@ def migrate_slugified_unique_ids(
             if getattr(description, "data_composite_references", ())
             else _referenced_id_pairs(identity, description, data)
         )
-        renames |= {old: new for old, new in pairs if old != new}
+        for old, new in pairs:
+            if old == new or old in ambiguous:
+                continue
+            existing = renames.get(old)
+            if existing is None:
+                renames[old] = new
+            elif existing != new:
+                del renames[old]
+                ambiguous.add(old)
 
     if not renames:
         return

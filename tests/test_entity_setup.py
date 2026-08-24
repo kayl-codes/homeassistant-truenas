@@ -180,12 +180,15 @@ async def test_migrate_slugified_unique_ids_renames_lossy_reference(
     )
 
 
-async def test_migrate_slugified_unique_ids_resolves_previous_collision(
+async def test_migrate_slugified_unique_ids_leaves_previous_collision_unrenamed(
     hass: HomeAssistant,
 ) -> None:
     """Two datasets that used to collide onto the same slugified unique_id
-    (only one of which could ever be registered) must resolve to distinct
-    ids after the migration, so the previously-dropped one can now appear.
+    (only one of which could ever be registered) must NOT be guessed at:
+    which live reference the single legacy entry actually belonged to is
+    unrecoverable, so renaming it to either one risks reassigning its
+    history to the wrong dataset. It must be left unrenamed instead
+    (Sourcery finding on the initial version of this migration).
     """
     entry = MockConfigEntry(
         domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
@@ -214,11 +217,7 @@ async def test_migrate_slugified_unique_ids_resolves_previous_collision(
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
-    new_ids = {
-        format_unique_id("system-guid", "dataset_used", "tank/a-b"),
-        format_unique_id("system-guid", "dataset_used", "tank/a_b"),
-    }
-    assert migrated.unique_id in new_ids
+    assert migrated.unique_id == "system-guid-dataset_used-tank_a_b"
 
 
 async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
