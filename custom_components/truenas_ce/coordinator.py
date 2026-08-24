@@ -2440,17 +2440,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         alerts = await self.api.query("alert.list")
         if not isinstance(alerts, list):
             _LOGGER.warning(
-                "Unexpected response from alert.list (expected list, got %s)",
+                "Unexpected response from alert.list (expected list, got %s); "
+                "keeping previous alerts state",
                 type(alerts).__name__,
             )
-            self.ds["alerts"] = {
-                "count": 0,
-                "messages": [],
-                "critical": 0,
-                "warning": 0,
-                "info": 0,
-                "disk_issues": False,
-            }
             return
 
         active_alerts = [alert for alert in alerts if not alert.get("dismissed", False)]
@@ -2628,8 +2621,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.ds["system_info"]["smb_connections"] = len(
                 smb_status.get("sessions", [])
             )
-        else:
-            self.ds["system_info"]["smb_connections"] = 0
+        # else: unexpected/failed response -- keep the previous count instead
+        # of masquerading a query error as "0 connections".
 
     # ---------------------------
     #   get_ups

@@ -263,10 +263,16 @@ def test_parse_api_empty_source_fills_defaults(ap: ModuleType) -> None:
     assert ap.parse_api(source=None, vals=vals) == {"label": "n/a"}
 
 
-def test_parse_api_empty_source_with_key_returns_data_unchanged(
+def test_parse_api_none_source_with_key_returns_data_unchanged(
     ap: ModuleType,
 ) -> None:
-    assert ap.parse_api(data={"existing": {}}, source=[], key="id") == {"existing": {}}
+    assert ap.parse_api(data={"existing": {}}, source=None, key="id") == {
+        "existing": {}
+    }
+
+
+def test_parse_api_empty_list_source_with_key_prunes_data(ap: ModuleType) -> None:
+    assert ap.parse_api(data={"existing": {}}, source=[], key="id") == {}
 
 
 def test_parse_api_single_dict_source_is_wrapped(ap: ModuleType) -> None:
