@@ -36,9 +36,13 @@ from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     format_unique_id,
     migrate_entry_identity_namespace,
+    migrate_slugified_unique_ids,
     resolve_entry_identity,
 )
-from custom_components.truenas_ce.sensor_types import SENSOR_TYPES
+from custom_components.truenas_ce.sensor_types import (
+    SENSOR_TYPES,
+    TrueNASSensorEntityDescription,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -131,6 +135,115 @@ async def test_migrate_entry_identity_namespace_skips_shared_device(
     untouched_device = dev_reg.async_get(shared_device.id)
     assert untouched_device is not None
     assert untouched_device.identifiers == {(DOMAIN, "TrueNAS_tank")}
+
+
+# ---------------------------
+#   migrate_slugified_unique_ids
+# ---------------------------
+_DATASET_DESC = TrueNASSensorEntityDescription(
+    key="dataset_used",
+    name="Used",
+    data_path="dataset",
+    data_reference="id",
+    func="TrueNASEntity",
+)
+
+
+async def test_migrate_slugified_unique_ids_renames_lossy_reference(
+    hass: HomeAssistant,
+) -> None:
+    """A dataset unique_id built with the old slugify()-based format must be
+    renamed in place to the new format -- otherwise the entity_id, history
+    and any automations referencing it would be silently replaced by a new,
+    differently-IDed entity on upgrade.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(data={"dataset": {"tank/a-b": {"id": "tank/a-b"}}})
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "system-guid-dataset_used-tank_a_b",  # old slugify()-based id
+        config_entry=entry,
+    )
+
+    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id(
+        "system-guid", "dataset_used", "tank/a-b"
+    )
+
+
+async def test_migrate_slugified_unique_ids_resolves_previous_collision(
+    hass: HomeAssistant,
+) -> None:
+    """Two datasets that used to collide onto the same slugified unique_id
+    (only one of which could ever be registered) must resolve to distinct
+    ids after the migration, so the previously-dropped one can now appear.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "dataset": {
+                "tank/a-b": {"id": "tank/a-b"},
+                "tank/a_b": {"id": "tank/a_b"},
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    # Only "tank/a-b" ever made it into the registry; "tank/a_b" was silently
+    # dropped as a duplicate under the old algorithm.
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "system-guid-dataset_used-tank_a_b",
+        config_entry=entry,
+    )
+
+    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    new_ids = {
+        format_unique_id("system-guid", "dataset_used", "tank/a-b"),
+        format_unique_id("system-guid", "dataset_used", "tank/a_b"),
+    }
+    assert migrated.unique_id in new_ids
+
+
+async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
+    hass: HomeAssistant,
+) -> None:
+    """A reference unaffected by the fix (e.g. plain alnum) must not be touched."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(data={"dataset": {"tank": {"id": "tank"}}})
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        format_unique_id("system-guid", "dataset_used", "tank"),
+        config_entry=entry,
+    )
+
+    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id("system-guid", "dataset_used", "tank")
 
 
 # ---------------------------

@@ -16,10 +16,13 @@ from custom_components.truenas_ce.entity import (
     TrueNASEntityDescription,
     _append_if_new,
     _collect_new_entities,
+    _composite_id_pairs,
     _extract_composite_ref,
     _get_composite_container,
     _is_uid_excluded,
+    _legacy_format_unique_id,
     _new_referenced_entities,
+    _referenced_id_pairs,
     _skip_keyless_description,
     format_device_identifier,
     format_unique_id,
@@ -46,13 +49,68 @@ def test_format_unique_id_without_reference() -> None:
     assert format_unique_id("TrueNAS", "system_uptime") == "truenas-system_uptime"
 
 
-def test_format_unique_id_with_reference_slugifies() -> None:
+def test_format_unique_id_with_reference_lowercases_only() -> None:
     result = format_unique_id("TrueNAS", "disk_temp", "Disk One!")
-    assert result == "truenas-disk_temp-disk_one"
+    assert result == "truenas-disk_temp-disk one!"
+
+
+def test_format_unique_id_distinguishes_slash_and_dash_variants() -> None:
+    """Distinct dataset references must not collapse to the same unique id."""
+    assert format_unique_id("TrueNAS", "dataset", "tank/a-b") != format_unique_id(
+        "TrueNAS", "dataset", "tank/a_b"
+    )
 
 
 def test_format_device_identifier() -> None:
     assert format_device_identifier("TrueNAS", "nas.local") == "TrueNAS_nas.local"
+
+
+# ---------------------------
+#   _legacy_format_unique_id / _referenced_id_pairs / _composite_id_pairs
+# ---------------------------
+def test_legacy_format_unique_id_matches_pre_fix_slugify_behavior() -> None:
+    assert (
+        _legacy_format_unique_id("TrueNAS", "disk_temp", "Disk One!")
+        == "truenas-disk_temp-disk_one"
+    )
+
+
+def test_referenced_id_pairs_only_flags_lossy_references() -> None:
+    """Only references that actually differ under slugify vs. lower() need a rename."""
+    data = {
+        "a": {"guid": "tank/a-b"},
+        "b": {"guid": "eth0"},
+    }
+    pairs = _referenced_id_pairs("TrueNAS", _REF_DESC, data)
+    old_new = dict(pairs)
+    assert old_new[_legacy_format_unique_id("TrueNAS", "disk_temp", "tank/a-b")] == (
+        format_unique_id("TrueNAS", "disk_temp", "tank/a-b")
+    )
+    assert old_new[_legacy_format_unique_id("TrueNAS", "disk_temp", "eth0")] == (
+        format_unique_id("TrueNAS", "disk_temp", "eth0")
+    )
+    # "eth0" is unaffected by the fix, so its old and new ids are identical.
+    assert old_new[
+        _legacy_format_unique_id("TrueNAS", "disk_temp", "eth0")
+    ] == _legacy_format_unique_id("TrueNAS", "disk_temp", "eth0")
+
+
+def test_composite_id_pairs_covers_nested_network_references() -> None:
+    desc = TrueNASSensorEntityDescription(
+        key="net_rx",
+        name="RX",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_composite_references=("networks", "interface_name"),
+    )
+    data = {"immich-server": {"networks": [{"interface_name": "eth0"}]}}
+    pairs = _composite_id_pairs("TrueNAS", desc, data)
+    assert pairs == {
+        (
+            _legacy_format_unique_id("TrueNAS", "net_rx", "immich-server::eth0"),
+            format_unique_id("TrueNAS", "net_rx", "immich-server::eth0"),
+        )
+    }
 
 
 # ---------------------------
