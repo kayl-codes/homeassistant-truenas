@@ -134,7 +134,7 @@ def _legacy_format_device_identifier(identity: str, hostname: str) -> str:
 
 
 def migrate_legacy_device_identifier(
-    hass: HomeAssistant, config_entry: ConfigEntry, identity: str, hostname: str
+    hass: HomeAssistant, identity: str, hostname: str
 ) -> None:
     """Rewrite the System device's registry identifier from the earlier format.
 

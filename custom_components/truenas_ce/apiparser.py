@@ -178,6 +178,7 @@ def parse_api(
     ensure_vals: list[ApiValueSpec] | None = None,
     only: list[dict[str, Any]] | None = None,
     skip: list[dict[str, Any]] | None = None,
+    prune: bool = True,
 ) -> dict[str, Any]:
     """Get data from API.
 
@@ -187,6 +188,11 @@ def parse_api(
     exists, so keeping it would leave a stale entity behind indefinitely.
     See ``_empty_source_result`` for the None-source (query failed) and
     empty-list-source (nothing left at all) cases.
+
+    ``prune=False`` opts out of that dropping for callers that intentionally
+    pass a partial ``source`` covering only a subset of ``data`` (e.g. adding
+    a single extra record to an already-populated map) -- otherwise every
+    uid outside that subset would be misread as removed and deleted.
     """
     if data is None:
         data = {}
@@ -215,7 +221,7 @@ def parse_api(
 
         data = _apply_entry(data, entry, uid, vals, ensure_vals, val_proc)
 
-    if key or key_search:
+    if prune and (key or key_search):
         for stale_uid in set(data) - seen_uids:
             del data[stale_uid]
 

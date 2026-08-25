@@ -294,6 +294,24 @@ def test_parse_api_prunes_uid_missing_from_key_search_source(ap: ModuleType) -> 
     assert result == {"uid-1": {"guid": "guid-1", "name": "new"}}
 
 
+def test_parse_api_prune_false_keeps_uids_absent_from_partial_source(
+    ap: ModuleType,
+) -> None:
+    """A caller merging one extra record into an already-populated map (e.g.
+    adding the boot-pool to the regular pools) must not have that unrelated
+    subset misread as "everything else was removed"."""
+    data = {"1": {"name": "pool0"}, "2": {"name": "pool1"}}
+    source = [{"id": "boot-pool", "name": "boot-pool"}]
+    result = ap.parse_api(
+        data=data, source=source, key="id", vals=[{"name": "name"}], prune=False
+    )
+    assert result == {
+        "1": {"name": "pool0"},
+        "2": {"name": "pool1"},
+        "boot-pool": {"name": "boot-pool"},
+    }
+
+
 def test_parse_api_keyless_source_does_not_prune(ap: ModuleType) -> None:
     """Keyless (single-object) data has no per-uid identity to prune by."""
     result = ap.parse_api(

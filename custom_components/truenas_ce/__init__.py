@@ -573,7 +573,6 @@ async def async_setup_entry(
     migrate_legacy_unique_ids(hass, config_entry, coordinator, _ALL_DESCRIPTIONS)
     migrate_legacy_device_identifier(
         hass,
-        config_entry,
         resolve_entry_identity(config_entry),
         coordinator.data["system_info"]["hostname"],
     )

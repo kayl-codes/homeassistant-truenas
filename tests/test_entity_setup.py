@@ -162,7 +162,7 @@ async def test_migrate_legacy_device_identifier_renames_existing_record(
         identifiers={(DOMAIN, "system-guid-123_truenas.local")},
     )
 
-    migrate_legacy_device_identifier(hass, entry, "system-guid-123", "truenas.local")
+    migrate_legacy_device_identifier(hass, "system-guid-123", "truenas.local")
 
     migrated_device = dev_reg.async_get(device.id)
     assert migrated_device is not None
@@ -186,7 +186,7 @@ async def test_migrate_legacy_device_identifier_noop_when_no_legacy_record(
         identifiers={(DOMAIN, "system-guid-123")},
     )
 
-    migrate_legacy_device_identifier(hass, entry, "system-guid-123", "truenas.local")
+    migrate_legacy_device_identifier(hass, "system-guid-123", "truenas.local")
 
     untouched_device = dev_reg.async_get(device.id)
     assert untouched_device is not None
