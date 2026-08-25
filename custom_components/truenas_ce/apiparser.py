@@ -221,11 +221,23 @@ def parse_api(
 
         data = _apply_entry(data, entry, uid, vals, ensure_vals, val_proc)
 
-    if prune and (key or key_search):
-        for stale_uid in set(data) - seen_uids:
-            del data[stale_uid]
+    if prune:
+        _prune_stale_uids(data, key, key_search, seen_uids)
 
     return data
+
+
+# ---------------------------
+#   _prune_stale_uids
+# ---------------------------
+def _prune_stale_uids(
+    data: dict[str, Any], key: str | None, key_search: str | None, seen_uids: set[str]
+) -> None:
+    """Drop keyed/key_search'd entries no longer present in the current source."""
+    if not (key or key_search):
+        return
+    for stale_uid in set(data) - seen_uids:
+        del data[stale_uid]
 
 
 # ---------------------------
