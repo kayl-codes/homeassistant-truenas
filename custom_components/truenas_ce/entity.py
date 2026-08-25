@@ -188,7 +188,7 @@ def _referenced_id_pairs(
     data: Mapping[str, Any],
     legacy_formatter: _LegacyFormatter = _legacy_format_unique_id,
 ) -> set[tuple[str, str]]:
-    """Return (old, new) format_unique_id pairs for one referenced description."""
+    """Return (legacy_unique_id, current_unique_id) pairs for one reference."""
     pairs: set[tuple[str, str]] = set()
     for uid, vals in data.items():
         if not isinstance(vals, dict):
@@ -210,7 +210,7 @@ def _composite_id_pairs(
     data: Mapping[str, Any],
     legacy_formatter: _LegacyFormatter = _legacy_format_unique_id,
 ) -> set[tuple[str, str]]:
-    """Return (old, new) format_unique_id pairs for one composite-ref description."""
+    """Return (legacy_unique_id, current_unique_id) pairs for one composite ref."""
     pairs: set[tuple[str, str]] = set()
     if len(description.data_composite_references) != 2:
         return pairs
