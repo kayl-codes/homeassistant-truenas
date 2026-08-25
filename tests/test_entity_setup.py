@@ -342,7 +342,7 @@ async def test_migrate_legacy_unique_ids_renames_lowercased_reference(
         domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
     )
     entry.add_to_hass(hass)
-    coordinator = SimpleNamespace(data={"tank/Data": {"id": "tank/Data"}})
+    coordinator = SimpleNamespace(data={"dataset": {"tank/Data": {"id": "tank/Data"}}})
 
     ent_reg = er.async_get(hass)
     entity = ent_reg.async_get_or_create(
