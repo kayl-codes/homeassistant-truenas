@@ -71,7 +71,7 @@ def test_format_unique_id_distinguishes_case_variants() -> None:
 
 
 def test_format_device_identifier() -> None:
-    assert format_device_identifier("TrueNAS", "nas.local") == "TrueNAS_nas.local"
+    assert format_device_identifier("TrueNAS") == "TrueNAS"
 
 
 # ---------------------------
@@ -530,7 +530,7 @@ def test_device_info_non_system_group_falls_back_to_via_device() -> None:
     ):
         info = entity.device_info
     assert info["name"] == "TrueNAS Disks"
-    assert info["via_device"] == ("truenas_ce", "TrueNAS_truenas.local")
+    assert info["via_device"] == ("truenas_ce", "TrueNAS")
     assert "via_device_id" not in info
 
 

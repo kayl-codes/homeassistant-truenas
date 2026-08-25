@@ -106,15 +106,53 @@ def _lowercased_unique_id(identity: str, key: str, reference: object = None) -> 
     return f"{base}-{str(reference).lower()}"
 
 
-def format_device_identifier(identity: str, hostname: str) -> str:
+def format_device_identifier(identity: str) -> str:
     """Build the main TrueNAS ("System") device identifier value.
 
     ``identity`` must be a stable per-entry identity (see
-    ``resolve_entry_identity``), not the user-editable display name.
-    Shared so other platforms (e.g. the diagnostic statistics-cleanup button)
-    associate with the existing device instead of duplicating the format.
+    ``resolve_entry_identity``), not the user-editable display name. Uses
+    ``identity`` alone -- an earlier format also appended the TrueNAS
+    hostname, but hostname is user-editable (System Settings > General)
+    while identity is already stable, so renaming the TrueNAS host silently
+    orphaned this device and created a duplicate. Shared so other platforms
+    (e.g. the diagnostic statistics-cleanup button) associate with the
+    existing device instead of duplicating the format. See
+    ``migrate_legacy_device_identifier`` for the one-time rename this
+    requires on existing installations.
+    """
+    return identity
+
+
+def _legacy_format_device_identifier(identity: str, hostname: str) -> str:
+    """Pre-2.9 device identifier format (``identity`` plus the TrueNAS hostname).
+
+    Only used by ``migrate_legacy_device_identifier`` to locate the registry
+    entry created under this old format; devices themselves use
+    ``format_device_identifier``.
     """
     return f"{identity}_{hostname}"
+
+
+def migrate_legacy_device_identifier(
+    hass: HomeAssistant, config_entry: ConfigEntry, identity: str, hostname: str
+) -> None:
+    """Rewrite the System device's registry identifier from the earlier format.
+
+    Must run before ``register_system_device`` so it finds the
+    already-renamed record instead of creating a second device. ``hostname``
+    is the *current* TrueNAS hostname: if it already changed on an existing
+    installation before this migration shipped, the old device under the
+    stale hostname is unrecoverable here (same tradeoff as
+    ``migrate_legacy_unique_ids`` -- nothing to guess from, so it is left
+    alone for the existing orphaned-device situation rather than misapplied).
+    """
+    legacy_identifier = _legacy_format_device_identifier(identity, hostname)
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, legacy_identifier)})
+    if device is not None:
+        dev_reg.async_update_device(
+            device.id, new_identifiers={(DOMAIN, format_device_identifier(identity))}
+        )
 
 
 def migrate_entry_identity_namespace(
@@ -390,8 +428,8 @@ def register_system_device(
     """
     inst = coordinator.config_entry.data[CONF_NAME]
     identity = resolve_entry_identity(coordinator.config_entry)
+    identifier = format_device_identifier(identity)
     system_info = coordinator.data["system_info"]
-    identifier = format_device_identifier(identity, system_info["hostname"])
     http_scheme = "https" if coordinator.api.scheme == "wss" else "http"
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=config_entry.entry_id,
@@ -876,9 +914,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         dev_connection_value = f"{self._identity}_{ha_group}"
         dev_group = ha_group
         if ha_group == "System":
-            dev_connection_value = format_device_identifier(
-                self._identity, self.coordinator.data["system_info"]["hostname"]
-            )
+            dev_connection_value = format_device_identifier(self._identity)
 
         if ha_group.startswith("data__"):
             dev_group = ha_group[6:]
@@ -930,9 +966,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         else:
             device_info["via_device"] = (
                 DOMAIN,
-                format_device_identifier(
-                    self._identity, self.coordinator.data["system_info"]["hostname"]
-                ),
+                format_device_identifier(self._identity),
             )
         return cast(DeviceInfo, device_info)
 

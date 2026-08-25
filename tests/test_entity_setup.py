@@ -38,6 +38,7 @@ from custom_components.truenas_ce.entity import (
     _lowercased_unique_id,
     format_unique_id,
     migrate_entry_identity_namespace,
+    migrate_legacy_device_identifier,
     migrate_legacy_unique_ids,
     resolve_entry_identity,
 )
@@ -137,6 +138,59 @@ async def test_migrate_entry_identity_namespace_skips_shared_device(
     untouched_device = dev_reg.async_get(shared_device.id)
     assert untouched_device is not None
     assert untouched_device.identifiers == {(DOMAIN, "TrueNAS_tank")}
+
+
+# ---------------------------
+#   migrate_legacy_device_identifier
+# ---------------------------
+async def test_migrate_legacy_device_identifier_renames_existing_record(
+    hass: HomeAssistant,
+) -> None:
+    """The System device's old ``identity_hostname`` identifier must be
+    renamed in place to the new hostname-free format -- otherwise every
+    existing installation would get a second, duplicate System device the
+    next time it starts, orphaning the original (area assignment, history).
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "system-guid-123_truenas.local")},
+    )
+
+    migrate_legacy_device_identifier(hass, entry, "system-guid-123", "truenas.local")
+
+    migrated_device = dev_reg.async_get(device.id)
+    assert migrated_device is not None
+    assert migrated_device.identifiers == {(DOMAIN, "system-guid-123")}
+
+
+async def test_migrate_legacy_device_identifier_noop_when_no_legacy_record(
+    hass: HomeAssistant,
+) -> None:
+    """Nothing to rename when the System device already uses the current
+    (hostname-free) identifier, or doesn't exist yet -- must not raise or
+    create a device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "system-guid-123")},
+    )
+
+    migrate_legacy_device_identifier(hass, entry, "system-guid-123", "truenas.local")
+
+    untouched_device = dev_reg.async_get(device.id)
+    assert untouched_device is not None
+    assert untouched_device.identifiers == {(DOMAIN, "system-guid-123")}
 
 
 # ---------------------------

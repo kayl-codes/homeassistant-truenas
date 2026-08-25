@@ -179,7 +179,15 @@ def parse_api(
     only: list[dict[str, Any]] | None = None,
     skip: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Get data from API."""
+    """Get data from API.
+
+    For keyed/key_search'd data, a uid present in ``data`` from a previous
+    call but absent from this (non-empty) ``source`` is dropped: it means
+    the underlying object (disk, pool, task, app, interface, ...) no longer
+    exists, so keeping it would leave a stale entity behind indefinitely.
+    See ``_empty_source_result`` for the None-source (query failed) and
+    empty-list-source (nothing left at all) cases.
+    """
     if data is None:
         data = {}
     if isinstance(source, dict):
@@ -192,6 +200,7 @@ def parse_api(
         return _empty_source_result(data, key, key_search, vals, source is None)
 
     keymap = generate_keymap(data, key_search)
+    seen_uids: set[str] = set()
     for entry in source:
         if _should_skip_entry(entry, only, skip):
             continue
@@ -201,8 +210,14 @@ def parse_api(
         )
         if not matched:
             continue
+        if uid is not None:
+            seen_uids.add(uid)
 
         data = _apply_entry(data, entry, uid, vals, ensure_vals, val_proc)
+
+    if key or key_search:
+        for stale_uid in set(data) - seen_uids:
+            del data[stale_uid]
 
     return data
 

@@ -275,6 +275,35 @@ def test_parse_api_empty_list_source_with_key_prunes_data(ap: ModuleType) -> Non
     assert ap.parse_api(data={"existing": {}}, source=[], key="id") == {}
 
 
+def test_parse_api_prunes_uid_missing_from_nonempty_source(ap: ModuleType) -> None:
+    """A previously-seen object (e.g. a physically removed disk) absent from an
+    otherwise successful, non-empty response must be dropped, not left behind
+    forever alongside the objects that are still present."""
+    data = {"1": {"name": "pool0"}, "2": {"name": "pool1"}}
+    source = [{"id": "2", "name": "pool1"}]
+    result = ap.parse_api(data=data, source=source, key="id", vals=[{"name": "name"}])
+    assert result == {"2": {"name": "pool1"}}
+
+
+def test_parse_api_prunes_uid_missing_from_key_search_source(ap: ModuleType) -> None:
+    data = {"uid-1": {"guid": "guid-1", "name": "old"}, "uid-2": {"guid": "guid-2"}}
+    source = [{"guid": "guid-1", "name": "new"}]
+    result = ap.parse_api(
+        data=data, source=source, key_search="guid", vals=[{"name": "name"}]
+    )
+    assert result == {"uid-1": {"guid": "guid-1", "name": "new"}}
+
+
+def test_parse_api_keyless_source_does_not_prune(ap: ModuleType) -> None:
+    """Keyless (single-object) data has no per-uid identity to prune by."""
+    result = ap.parse_api(
+        data={"total": 42, "stale": "kept"},
+        source=[{"total": 43}],
+        vals=[{"name": "total"}],
+    )
+    assert result == {"total": 43, "stale": "kept"}
+
+
 def test_parse_api_single_dict_source_is_wrapped(ap: ModuleType) -> None:
     result = ap.parse_api(
         source={"id": "1", "name": "pool0"},
