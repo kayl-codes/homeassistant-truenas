@@ -268,10 +268,11 @@ def _resolve_renames(candidates: dict[str, set[str]]) -> dict[str, str]:
 
 # Every unique_id format a registry entry may still carry from before the fix
 # that introduced its successor -- oldest first. ``_legacy_format_unique_id``
-# predates ``_lowercased_unique_id`` was even the default (both were still
-# lowercasing the reference before ``format_unique_id`` stopped doing that
-# too), so an installation that skipped upgrades can have entries in either
-# format; both are checked so it is renamed straight to the current format.
+# is the oldest format, and ``_lowercased_unique_id`` was the subsequent
+# default format (both were still lowercasing the reference before
+# ``format_unique_id`` stopped doing that too), so an installation that
+# skipped upgrades can have entries in either format; both are checked so it
+# is renamed straight to the current format.
 _LEGACY_UNIQUE_ID_FORMATTERS: tuple[_LegacyFormatter, ...] = (
     _legacy_format_unique_id,
     _lowercased_unique_id,
