@@ -319,7 +319,7 @@ async def test_connection_test_connects_before_querying(api: TrueNASAPI) -> None
         api._client.connected = True
 
     api._client.connect.side_effect = _mark_connected
-    api._client.call.return_value = {"version": "25.04"}
+    api._client.call.return_value = {"version": "25.04", "hostname": "truenas.local"}
     ok, error = await api.connection_test()
     assert ok is True
     assert error == ""
@@ -328,10 +328,23 @@ async def test_connection_test_connects_before_querying(api: TrueNASAPI) -> None
 
 
 async def test_connection_test_succeeds(connected_api: TrueNASAPI) -> None:
-    connected_api._client.call.return_value = {"version": "25.04"}
+    connected_api._client.call.return_value = {
+        "version": "25.04",
+        "hostname": "truenas.local",
+    }
     ok, error = await connected_api.connection_test()
     assert ok is True
     assert error == ""
+
+
+async def test_connection_test_fails_when_hostname_missing(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A truthy-but-malformed payload (e.g. ``{}``) must not pass as success."""
+    connected_api._client.call.return_value = {"version": "25.04"}
+    ok, error = await connected_api.connection_test()
+    assert ok is False
+    assert error == ERR_MALFORMED_RESULT
 
 
 # ---------------------------

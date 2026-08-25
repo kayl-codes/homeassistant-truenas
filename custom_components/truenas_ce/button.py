@@ -6,7 +6,7 @@ from logging import getLogger
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -164,12 +164,10 @@ class TrueNASStatisticsCleanupButton(
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the cleanup button."""
         super().__init__(coordinator)
-        inst = coordinator.config_entry.data[CONF_NAME]
         identity = resolve_entry_identity(coordinator.config_entry)
         self._attr_unique_id = format_unique_id(identity, BUTTON_STATISTICS_CLEANUP)
-        hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity))},
         )
 
     @property
@@ -204,12 +202,10 @@ class TrueNASMigrationRollbackButton(
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the rollback button."""
         super().__init__(coordinator)
-        inst = coordinator.config_entry.data[CONF_NAME]
         identity = resolve_entry_identity(coordinator.config_entry)
         self._attr_unique_id = format_unique_id(identity, BUTTON_MIGRATION_ROLLBACK)
-        hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity))},
         )
 
     @property
@@ -241,12 +237,10 @@ class TrueNASRefreshButton(CoordinatorEntity[TrueNASCoordinator], ButtonEntity):
     def __init__(self, coordinator: TrueNASCoordinator) -> None:
         """Initialize the refresh button."""
         super().__init__(coordinator)
-        inst = coordinator.config_entry.data[CONF_NAME]
         identity = resolve_entry_identity(coordinator.config_entry)
         self._attr_unique_id = format_unique_id(identity, BUTTON_SYSTEM_REFRESH)
-        hostname = coordinator.data.get("system_info", {}).get("hostname", inst)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, format_device_identifier(identity, hostname))},
+            identifiers={(DOMAIN, format_device_identifier(identity))},
         )
 
     async def async_press(self) -> None:
