@@ -21,6 +21,7 @@ from custom_components.truenas_ce.entity import (
     _get_composite_container,
     _is_uid_excluded,
     _legacy_format_unique_id,
+    _lowercased_unique_id,
     _new_referenced_entities,
     _referenced_id_pairs,
     _skip_keyless_description,
@@ -49,15 +50,23 @@ def test_format_unique_id_without_reference() -> None:
     assert format_unique_id("TrueNAS", "system_uptime") == "truenas-system_uptime"
 
 
-def test_format_unique_id_with_reference_lowercases_only() -> None:
+def test_format_unique_id_preserves_reference_case() -> None:
+    """Only ``identity`` is lowercased -- the reference keeps its own case."""
     result = format_unique_id("TrueNAS", "disk_temp", "Disk One!")
-    assert result == "truenas-disk_temp-disk one!"
+    assert result == "truenas-disk_temp-Disk One!"
 
 
 def test_format_unique_id_distinguishes_slash_and_dash_variants() -> None:
     """Distinct dataset references must not collapse to the same unique id."""
     assert format_unique_id("TrueNAS", "dataset", "tank/a-b") != format_unique_id(
         "TrueNAS", "dataset", "tank/a_b"
+    )
+
+
+def test_format_unique_id_distinguishes_case_variants() -> None:
+    """Case-sensitive dataset references must not collapse to the same unique id."""
+    assert format_unique_id("TrueNAS", "dataset", "tank/Data") != format_unique_id(
+        "TrueNAS", "dataset", "tank/data"
     )
 
 
@@ -72,6 +81,13 @@ def test_legacy_format_unique_id_matches_pre_fix_slugify_behavior() -> None:
     assert (
         _legacy_format_unique_id("TrueNAS", "disk_temp", "Disk One!")
         == "truenas-disk_temp-disk_one"
+    )
+
+
+def test_lowercased_unique_id_matches_pre_case_fix_behavior() -> None:
+    assert (
+        _lowercased_unique_id("TrueNAS", "disk_temp", "Disk One!")
+        == "truenas-disk_temp-disk one!"
     )
 
 
@@ -93,6 +109,20 @@ def test_referenced_id_pairs_only_flags_lossy_references() -> None:
     assert old_new[
         _legacy_format_unique_id("TrueNAS", "disk_temp", "eth0")
     ] == _legacy_format_unique_id("TrueNAS", "disk_temp", "eth0")
+
+
+def test_referenced_id_pairs_accepts_alternate_legacy_formatter() -> None:
+    """A different ``legacy_formatter`` (e.g. the lowercase-only era) is honored."""
+    data = {"a": {"guid": "tank/Data"}}
+    pairs = _referenced_id_pairs(
+        "TrueNAS", _REF_DESC, data, legacy_formatter=_lowercased_unique_id
+    )
+    assert pairs == {
+        (
+            _lowercased_unique_id("TrueNAS", "disk_temp", "tank/Data"),
+            format_unique_id("TrueNAS", "disk_temp", "tank/Data"),
+        )
+    }
 
 
 def test_composite_id_pairs_covers_nested_network_references() -> None:

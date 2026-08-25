@@ -59,7 +59,7 @@ from .entity import (
     _is_uid_excluded,
     format_unique_id,
     migrate_entry_identity_namespace,
-    migrate_slugified_unique_ids,
+    migrate_legacy_unique_ids,
     register_system_device,
     resolve_entry_identity,
 )
@@ -569,7 +569,7 @@ async def async_setup_entry(
     await coordinator.async_config_entry_first_refresh()
     config_entry.runtime_data = coordinator
     migrate_entry_identity_namespace(hass, config_entry)
-    migrate_slugified_unique_ids(hass, config_entry, coordinator, _ALL_DESCRIPTIONS)
+    migrate_legacy_unique_ids(hass, config_entry, coordinator, _ALL_DESCRIPTIONS)
     coordinator.system_device_id = register_system_device(
         hass, config_entry, coordinator
     )

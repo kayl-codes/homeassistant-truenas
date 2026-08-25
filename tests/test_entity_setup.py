@@ -35,9 +35,10 @@ from custom_components.truenas_ce.const import (
 from custom_components.truenas_ce.entity import (
     _cleanup_orphaned_entities,
     _legacy_format_unique_id,
+    _lowercased_unique_id,
     format_unique_id,
     migrate_entry_identity_namespace,
-    migrate_slugified_unique_ids,
+    migrate_legacy_unique_ids,
     resolve_entry_identity,
 )
 from custom_components.truenas_ce.sensor_types import (
@@ -139,7 +140,7 @@ async def test_migrate_entry_identity_namespace_skips_shared_device(
 
 
 # ---------------------------
-#   migrate_slugified_unique_ids
+#   migrate_legacy_unique_ids
 # ---------------------------
 _DATASET_DESC = TrueNASSensorEntityDescription(
     key="dataset_used",
@@ -150,7 +151,7 @@ _DATASET_DESC = TrueNASSensorEntityDescription(
 )
 
 
-async def test_migrate_slugified_unique_ids_renames_lossy_reference(
+async def test_migrate_legacy_unique_ids_renames_lossy_reference(
     hass: HomeAssistant,
 ) -> None:
     """A dataset unique_id built with the old slugify()-based format must be
@@ -172,7 +173,7 @@ async def test_migrate_slugified_unique_ids_renames_lossy_reference(
         config_entry=entry,
     )
 
-    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
@@ -181,7 +182,7 @@ async def test_migrate_slugified_unique_ids_renames_lossy_reference(
     )
 
 
-async def test_migrate_slugified_unique_ids_leaves_previous_collision_unrenamed(
+async def test_migrate_legacy_unique_ids_leaves_previous_collision_unrenamed(
     hass: HomeAssistant,
 ) -> None:
     """Two datasets that used to collide onto the same slugified unique_id
@@ -214,14 +215,14 @@ async def test_migrate_slugified_unique_ids_leaves_previous_collision_unrenamed(
         config_entry=entry,
     )
 
-    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == "system-guid-dataset_used-tank_a_b"
 
 
-async def test_migrate_slugified_unique_ids_leaves_partial_collision_unrenamed(
+async def test_migrate_legacy_unique_ids_leaves_partial_collision_unrenamed(
     hass: HomeAssistant,
 ) -> None:
     """A collision is still a collision when one of the two live references
@@ -252,14 +253,14 @@ async def test_migrate_slugified_unique_ids_leaves_partial_collision_unrenamed(
         config_entry=entry,
     )
 
-    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == "system-guid-dataset_used-tank_a_b"
 
 
-async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
+async def test_migrate_legacy_unique_ids_noop_for_unaffected_reference(
     hass: HomeAssistant,
 ) -> None:
     """A reference unaffected by the fix (e.g. plain alnum) must not be touched."""
@@ -277,14 +278,14 @@ async def test_migrate_slugified_unique_ids_noop_for_unaffected_reference(
         config_entry=entry,
     )
 
-    migrate_slugified_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == format_unique_id("system-guid", "dataset_used", "tank")
 
 
-async def test_migrate_slugified_unique_ids_renames_composite_only_reference(
+async def test_migrate_legacy_unique_ids_renames_composite_only_reference(
     hass: HomeAssistant,
 ) -> None:
     """A composite-reference description without a plain ``data_reference``
@@ -320,12 +321,82 @@ async def test_migrate_slugified_unique_ids_renames_composite_only_reference(
         config_entry=entry,
     )
 
-    migrate_slugified_unique_ids(hass, entry, coordinator, [net_desc])
+    migrate_legacy_unique_ids(hass, entry, coordinator, [net_desc])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == format_unique_id(
         "system-guid", "net_rx", "immich-server::eth0"
+    )
+
+
+async def test_migrate_legacy_unique_ids_renames_lowercased_reference(
+    hass: HomeAssistant,
+) -> None:
+    """A dataset unique_id built with the previous lowercased-only format
+    must be renamed in place to the case-preserving format -- otherwise the
+    entity_id, history and any automations referencing it would be silently
+    replaced by a new, differently-IDed entity on upgrade.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(data={"dataset": {"tank/Data": {"id": "tank/Data"}}})
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        _lowercased_unique_id("system-guid", "dataset_used", "tank/Data"),
+        config_entry=entry,
+    )
+
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id(
+        "system-guid", "dataset_used", "tank/Data"
+    )
+
+
+async def test_migrate_legacy_unique_ids_leaves_case_collision_unrenamed(
+    hass: HomeAssistant,
+) -> None:
+    """Two datasets that used to collide onto the same lowercased unique_id
+    (only one of which could ever be registered) must NOT be guessed at --
+    left unrenamed instead, same as a slugify collision.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "dataset": {
+                "tank/Data": {"id": "tank/Data"},
+                "tank/data": {"id": "tank/data"},
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    # Only "tank/Data" ever made it into the registry; "tank/data" was
+    # silently dropped as a duplicate under the old algorithm.
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        _lowercased_unique_id("system-guid", "dataset_used", "tank/Data"),
+        config_entry=entry,
+    )
+
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == _lowercased_unique_id(
+        "system-guid", "dataset_used", "tank/Data"
     )
 
 

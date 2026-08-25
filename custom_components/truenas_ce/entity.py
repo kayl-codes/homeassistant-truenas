@@ -68,29 +68,42 @@ def format_unique_id(identity: str, key: str, reference: object = None) -> str:
     Shared so the migration in __init__.py can resolve the same unique_id an
     entity produces.
 
-    ``reference`` is lowercased but not slugified: unique_id has no character
-    restrictions in HA, and slugify's lossy '/'/'-'/'_' collapsing would let
-    distinct references (e.g. ZFS datasets "tank/a-b" and "tank/a_b") collide
-    and silently drop one entity as a duplicate. See
-    ``migrate_slugified_unique_ids`` for the one-time rename this requires on
-    existing installations.
+    ``reference`` keeps its original case and is not slugified: unique_id has
+    no character restrictions in HA, and both slugify() and lower() are lossy
+    -- slugify's '/'/'-'/'_' collapsing and lower()'s case-folding would each
+    let distinct references (e.g. ZFS datasets "tank/a-b" vs "tank/a_b", or
+    "tank/Data" vs "tank/data") collide and silently drop one entity as a
+    duplicate. See ``migrate_legacy_unique_ids`` for the one-time rename this
+    requires on existing installations.
     """
     base = f"{identity.lower()}-{key}"
     if reference is None:
         return base
-    return f"{base}-{str(reference).lower()}"
+    return f"{base}-{reference!s}"
 
 
 def _legacy_format_unique_id(identity: str, key: str, reference: object = None) -> str:
-    """Pre-2.10 unique_id format (lossy ``slugify()`` of the reference).
+    """Pre-2.9 unique_id format (lossy ``slugify()`` of the lowercased reference).
 
-    Only used by ``migrate_slugified_unique_ids`` to locate registry entries
-    created under the old format; entities themselves use ``format_unique_id``.
+    Only used by ``migrate_legacy_unique_ids`` to locate registry entries
+    created under this old format; entities themselves use ``format_unique_id``.
     """
     base = f"{identity.lower()}-{key}"
     if reference is None:
         return base
     return f"{base}-{slugify(str(reference).lower())}"
+
+
+def _lowercased_unique_id(identity: str, key: str, reference: object = None) -> str:
+    """2.9/2.10-era unique_id format (lowercased but not slugified reference).
+
+    Only used by ``migrate_legacy_unique_ids`` to locate registry entries
+    created under this old format; entities themselves use ``format_unique_id``.
+    """
+    base = f"{identity.lower()}-{key}"
+    if reference is None:
+        return base
+    return f"{base}-{str(reference).lower()}"
 
 
 def format_device_identifier(identity: str, hostname: str) -> str:
@@ -166,10 +179,16 @@ def migrate_entry_identity_namespace(
             )
 
 
+_LegacyFormatter = Callable[[str, str, object], str]
+
+
 def _referenced_id_pairs(
-    identity: str, description: TrueNASEntityDescription, data: Mapping[str, Any]
+    identity: str,
+    description: TrueNASEntityDescription,
+    data: Mapping[str, Any],
+    legacy_formatter: _LegacyFormatter = _legacy_format_unique_id,
 ) -> set[tuple[str, str]]:
-    """Return (old, new) format_unique_id pairs for one referenced description."""
+    """Return (legacy_unique_id, current_unique_id) pairs for one reference."""
     pairs: set[tuple[str, str]] = set()
     for uid, vals in data.items():
         if not isinstance(vals, dict):
@@ -178,7 +197,7 @@ def _referenced_id_pairs(
         reference = ref if ref is not None else uid
         pairs.add(
             (
-                _legacy_format_unique_id(identity, description.key, reference),
+                legacy_formatter(identity, description.key, reference),
                 format_unique_id(identity, description.key, reference),
             )
         )
@@ -186,9 +205,12 @@ def _referenced_id_pairs(
 
 
 def _composite_id_pairs(
-    identity: str, description: TrueNASEntityDescription, data: Mapping[str, Any]
+    identity: str,
+    description: TrueNASEntityDescription,
+    data: Mapping[str, Any],
+    legacy_formatter: _LegacyFormatter = _legacy_format_unique_id,
 ) -> set[tuple[str, str]]:
-    """Return (old, new) format_unique_id pairs for one composite-ref description."""
+    """Return (legacy_unique_id, current_unique_id) pairs for one composite ref."""
     pairs: set[tuple[str, str]] = set()
     if len(description.data_composite_references) != 2:
         return pairs
@@ -204,7 +226,7 @@ def _composite_id_pairs(
             composed = f"{uid}::{ref}"
             pairs.add(
                 (
-                    _legacy_format_unique_id(identity, description.key, composed),
+                    legacy_formatter(identity, description.key, composed),
                     format_unique_id(identity, description.key, composed),
                 )
             )
@@ -231,7 +253,7 @@ def _resolve_renames(candidates: dict[str, set[str]]) -> dict[str, str]:
 
     A legacy id with more than one distinct candidate new id (a collision
     the fix eliminates going forward) is left out entirely rather than
-    arbitrarily renamed to one of them -- see ``migrate_slugified_unique_ids``
+    arbitrarily renamed to one of them -- see ``migrate_legacy_unique_ids``
     for why.
     """
     renames: dict[str, str] = {}
@@ -242,6 +264,19 @@ def _resolve_renames(candidates: dict[str, set[str]]) -> dict[str, str]:
         if new != old:
             renames[old] = new
     return renames
+
+
+# Every unique_id format a registry entry may still carry from before the fix
+# that introduced its successor -- oldest first. ``_legacy_format_unique_id``
+# is the oldest format, and ``_lowercased_unique_id`` was the subsequent
+# default format (both were still lowercasing the reference before
+# ``format_unique_id`` stopped doing that too), so an installation that
+# skipped upgrades can have entries in either format; both are checked so it
+# is renamed straight to the current format.
+_LEGACY_UNIQUE_ID_FORMATTERS: tuple[_LegacyFormatter, ...] = (
+    _legacy_format_unique_id,
+    _lowercased_unique_id,
+)
 
 
 def _collect_unique_id_renames(
@@ -256,46 +291,54 @@ def _collect_unique_id_renames(
     ``data_reference`` -- skipping it whenever ``data_reference`` alone was
     unset silently left its legacy entries (e.g. per-app network sensors)
     unmigrated (Sourcery finding on an earlier version of this migration).
+
+    Checked against every format in ``_LEGACY_UNIQUE_ID_FORMATTERS``, merged
+    into one candidate map so a legacy id ambiguous under one format still
+    correctly blocks renaming under another (see ``_merge_rename_candidates``).
     """
     candidates: dict[str, set[str]] = {}
-    for description in descriptions:
-        has_composite = bool(getattr(description, "data_composite_references", ()))
-        if not getattr(description, "data_reference", None) and not has_composite:
-            continue
-        data = coordinator.data.get(description.data_path or "")
-        if not isinstance(data, dict):
-            continue
-        pairs = (
-            _composite_id_pairs(identity, description, data)
-            if has_composite
-            else _referenced_id_pairs(identity, description, data)
-        )
-        _merge_rename_candidates(pairs, candidates)
+    for legacy_formatter in _LEGACY_UNIQUE_ID_FORMATTERS:
+        for description in descriptions:
+            has_composite = bool(getattr(description, "data_composite_references", ()))
+            if not getattr(description, "data_reference", None) and not has_composite:
+                continue
+            data = coordinator.data.get(description.data_path or "")
+            if not isinstance(data, dict):
+                continue
+            pairs = (
+                _composite_id_pairs(identity, description, data, legacy_formatter)
+                if has_composite
+                else _referenced_id_pairs(identity, description, data, legacy_formatter)
+            )
+            _merge_rename_candidates(pairs, candidates)
     return _resolve_renames(candidates)
 
 
-def migrate_slugified_unique_ids(
+def migrate_legacy_unique_ids(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     coordinator: TrueNASCoordinator,
     descriptions: Sequence[TrueNASEntityDescription],
 ) -> None:
-    """Rewrite registry entries from the old lossy-slugified unique_id format.
+    """Rewrite registry entries from an earlier unique_id format.
 
-    ``format_unique_id`` used to run its reference through ``slugify()``,
-    which collapsed distinct references (e.g. ZFS datasets "tank/a-b" and
-    "tank/a_b", or app names like "immich-server" combined with an interface
-    name) onto the same unique_id, silently dropping one entity as a
-    duplicate. The fix stops slugifying, so every already-registered entity
-    for an existing installation must be renamed here -- otherwise HA treats
-    it as gone and creates a fresh, differently-IDed entity, breaking the
-    existing entity_id, history and any automations/dashboards referencing
-    it. Must run before ``register_system_device``, orphaned-entity cleanup
-    and any platform setup, so those find the already-renamed records.
+    ``format_unique_id``'s reference handling has tightened twice: it first
+    stopped running the reference through ``slugify()`` (which collapsed
+    distinct references like ZFS datasets "tank/a-b" and "tank/a_b", or app
+    names like "immich-server" combined with an interface name, onto the same
+    unique_id), then stopped lowercasing it too (which just as lossily
+    collapsed case-sensitive references like "tank/Data" and "tank/data").
+    Each tightening silently dropped one colliding entity as a duplicate, so
+    every already-registered entity for an existing installation must be
+    renamed here -- otherwise HA treats it as gone and creates a fresh,
+    differently-IDed entity, breaking the existing entity_id, history and any
+    automations/dashboards referencing it. Must run before
+    ``register_system_device``, orphaned-entity cleanup and any platform
+    setup, so those find the already-renamed records.
 
-    A single legacy slug can match more than one *current* reference (that
-    is exactly the collision the fix eliminates going forward). Which of
-    those references the one existing legacy entry actually belonged to is
+    A single legacy id can match more than one *current* reference (that is
+    exactly the collision each fix eliminates going forward). Which of those
+    references the one existing legacy entry actually belonged to is
     unrecoverable, so such an old id is left unrenamed rather than guessed
     at -- silently reassigning it to the wrong dataset/interface would be
     worse than leaving a stale entity behind for the existing orphan-cleanup
