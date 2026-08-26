@@ -133,6 +133,50 @@ def _legacy_format_device_identifier(identity: str, hostname: str) -> str:
     return f"{identity}_{hostname}"
 
 
+def _rename_device_identifiers(
+    dev_reg: dr.DeviceRegistry,
+    ent_reg: er.EntityRegistry,
+    device_entry: dr.DeviceEntry,
+    new_identifiers: set[tuple[str, str]],
+) -> None:
+    """Update a device's identifiers, resolving collisions from stale duplicates.
+
+    A duplicate device can exist when an older integration version
+    recreated it under an earlier identifier format (e.g. a
+    downgrade-then-upgrade cycle -- see ``migrate_entry_identity_namespace``
+    and ``migrate_legacy_device_identifier``). If the target identifiers are
+    already owned by a *different* device, that other device is the real
+    one: remove this duplicate if it is now empty, or leave it unmigrated
+    (better a stale leftover than a crashed config entry) when entities are
+    still attached, logging either outcome for follow-up.
+    """
+    colliding_device = dev_reg.async_get_device(identifiers=new_identifiers)
+    if colliding_device is None or colliding_device.id == device_entry.id:
+        dev_reg.async_update_device(device_entry.id, new_identifiers=new_identifiers)
+        return
+    remaining = er.async_entries_for_device(
+        ent_reg, device_entry.id, include_disabled_entities=True
+    )
+    if remaining:
+        _LOGGER.warning(
+            "CE migration: leaving duplicate device %s unmigrated (identifiers "
+            "%s already claimed by %s, still has %d entities attached)",
+            device_entry.id,
+            sorted(new_identifiers),
+            colliding_device.id,
+            len(remaining),
+        )
+        return
+    _LOGGER.warning(
+        "CE migration: removing duplicate device %s (identifiers %s already "
+        "claimed by %s)",
+        device_entry.id,
+        sorted(new_identifiers),
+        colliding_device.id,
+    )
+    dev_reg.async_remove_device(device_entry.id)
+
+
 def migrate_legacy_device_identifier(
     hass: HomeAssistant, identity: str, hostname: str
 ) -> None:
@@ -150,8 +194,9 @@ def migrate_legacy_device_identifier(
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_device(identifiers={(DOMAIN, legacy_identifier)})
     if device is not None:
-        dev_reg.async_update_device(
-            device.id, new_identifiers={(DOMAIN, format_device_identifier(identity))}
+        ent_reg = er.async_get(hass)
+        _rename_device_identifiers(
+            dev_reg, ent_reg, device, {(DOMAIN, format_device_identifier(identity))}
         )
 
 
@@ -181,12 +226,30 @@ def migrate_entry_identity_namespace(
     for entity_entry in er.async_entries_for_config_entry(
         ent_reg, config_entry.entry_id
     ):
-        if entity_entry.unique_id.startswith(old_uid_prefix):
-            ent_reg.async_update_entity(
+        if not entity_entry.unique_id.startswith(old_uid_prefix):
+            continue
+        new_unique_id = new_uid_prefix + entity_entry.unique_id[len(old_uid_prefix) :]
+        colliding_entity_id = ent_reg.async_get_entity_id(
+            entity_entry.domain, DOMAIN, new_unique_id
+        )
+        if colliding_entity_id not in (None, entity_entry.entity_id):
+            # A duplicate left behind by an older integration version (e.g. a
+            # downgrade-then-upgrade cycle where that version never learned
+            # the identity-based unique_id scheme and recreated this entity
+            # under the old name-based one). The real entity already owns
+            # the target unique_id, so this one is redundant -- drop it
+            # instead of letting async_update_entity raise ValueError and
+            # abort the whole config entry setup.
+            _LOGGER.warning(
+                "CE migration: removing duplicate entity %s (unique_id %s "
+                "already claimed by %s)",
                 entity_entry.entity_id,
-                new_unique_id=new_uid_prefix
-                + entity_entry.unique_id[len(old_uid_prefix) :],
+                new_unique_id,
+                colliding_entity_id,
             )
+            ent_reg.async_remove(entity_entry.entity_id)
+            continue
+        ent_reg.async_update_entity(entity_entry.entity_id, new_unique_id=new_unique_id)
 
     old_dev_prefix = f"{old_name}_"
     new_dev_prefix = f"{identity}_"
@@ -212,9 +275,7 @@ def migrate_entry_identity_namespace(
             for domain, value in device_entry.identifiers
         }
         if new_identifiers != device_entry.identifiers:
-            dev_reg.async_update_device(
-                device_entry.id, new_identifiers=new_identifiers
-            )
+            _rename_device_identifiers(dev_reg, ent_reg, device_entry, new_identifiers)
 
 
 _LegacyFormatter = Callable[[str, str, object], str]
@@ -393,8 +454,25 @@ def migrate_legacy_unique_ids(
         ent_reg, config_entry.entry_id
     ):
         new_id = renames.get(entity_entry.unique_id)
-        if new_id is not None:
-            ent_reg.async_update_entity(entity_entry.entity_id, new_unique_id=new_id)
+        if new_id is None:
+            continue
+        colliding_entity_id = ent_reg.async_get_entity_id(
+            entity_entry.domain, DOMAIN, new_id
+        )
+        if colliding_entity_id not in (None, entity_entry.entity_id):
+            # Same duplicate-from-an-older-version situation as
+            # migrate_entry_identity_namespace: the real entity already owns
+            # the target unique_id, so this one is redundant.
+            _LOGGER.warning(
+                "CE migration: removing duplicate entity %s (unique_id %s "
+                "already claimed by %s)",
+                entity_entry.entity_id,
+                new_id,
+                colliding_entity_id,
+            )
+            ent_reg.async_remove(entity_entry.entity_id)
+            continue
+        ent_reg.async_update_entity(entity_entry.entity_id, new_unique_id=new_id)
 
 
 @lru_cache(maxsize=1)
