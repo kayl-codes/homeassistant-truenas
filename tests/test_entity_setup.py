@@ -454,6 +454,85 @@ async def test_migrate_legacy_unique_ids_leaves_case_collision_unrenamed(
     )
 
 
+async def test_migrate_covers_every_reference_bearing_description_in_prod(
+    hass: HomeAssistant,
+) -> None:
+    """A 2.8.0-shaped registry must upgrade cleanly for every description.
+
+    Regression coverage for the incident where per-app network sensors
+    (``data_composite_references``) were silently skipped by an earlier
+    version of this migration and got orphaned on upgrade: instead of
+    hand-picking one or two example descriptions like the tests above, this
+    walks the *real*, current ``_ALL_DESCRIPTIONS`` (every sensor,
+    binary_sensor, switch and update description actually shipped) and
+    proves each reference-bearing one -- scalar (``data_reference``) or
+    composite (``data_composite_references``) alike -- gets renamed from its
+    old, pre-2.9 unique_id to its current one by
+    ``migrate_entry_identity_namespace`` + ``migrate_legacy_unique_ids``
+    (the same two passes ``async_setup_entry`` runs, in the same order,
+    before orphan cleanup ever sees the registry). If a future description
+    reintroduces the same gap, this fails without needing a new hand-written
+    case.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"},
+    )
+    entry.add_to_hass(hass)
+    old_identity = "TrueNAS"
+    new_identity = resolve_entry_identity(entry)
+
+    data: dict[str, dict[str, Any]] = {}
+    ent_reg = er.async_get(hass)
+    # entity_id -> (old unique_id it was created with, new unique_id it must
+    # carry after both migration passes)
+    expected: dict[str, tuple[str, str]] = {}
+
+    for description in init_module._ALL_DESCRIPTIONS:
+        if not description.data_path:
+            continue
+        uid = f"test-uid-{description.key}"
+        if description.data_composite_references:
+            container_key, leaf_key = description.data_composite_references
+            data.setdefault(description.data_path, {})[uid] = {
+                container_key: [{leaf_key: "Test-Ref"}]
+            }
+            reference: str = f"{uid}::Test-Ref"
+        elif description.data_reference:
+            reference = f"Test-Ref-{description.key}"
+            data.setdefault(description.data_path, {})[uid] = {
+                description.data_reference: reference
+            }
+        else:
+            continue
+
+        old_uid = _legacy_format_unique_id(old_identity, description.key, reference)
+        new_uid = format_unique_id(new_identity, description.key, reference)
+        registry_entry = ent_reg.async_get_or_create(
+            "sensor", DOMAIN, old_uid, config_entry=entry
+        )
+        expected[registry_entry.entity_id] = (old_uid, new_uid)
+
+    # Sanity check the fixture actually exercised a meaningful cross-section
+    # of the codebase (scalar *and* composite descriptions), not zero.
+    assert len(expected) > 10
+
+    coordinator = SimpleNamespace(data=data)
+    migrate_entry_identity_namespace(hass, entry)
+    migrate_legacy_unique_ids(hass, entry, coordinator, init_module._ALL_DESCRIPTIONS)
+
+    for entity_id, (old_uid, new_uid) in expected.items():
+        migrated = ent_reg.async_get(entity_id)
+        assert migrated is not None, (
+            f"registry record for legacy unique_id {old_uid!r} was removed "
+            "instead of renamed -- this would orphan its history on upgrade"
+        )
+        assert migrated.unique_id == new_uid, (
+            f"legacy unique_id {old_uid!r} migrated to "
+            f"{migrated.unique_id!r}, expected {new_uid!r}"
+        )
+
+
 # ---------------------------
 #   _cleanup_orphaned_entities
 # ---------------------------
