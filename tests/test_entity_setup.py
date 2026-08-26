@@ -487,6 +487,8 @@ async def test_migrate_covers_every_reference_bearing_description_in_prod(
     # entity_id -> (old unique_id it was created with, new unique_id it must
     # carry after both migration passes)
     expected: dict[str, tuple[str, str]] = {}
+    scalar_count = 0
+    composite_count = 0
 
     for description in init_module._ALL_DESCRIPTIONS:
         if not description.data_path:
@@ -498,11 +500,13 @@ async def test_migrate_covers_every_reference_bearing_description_in_prod(
                 container_key: [{leaf_key: "Test-Ref"}]
             }
             reference: str = f"{uid}::Test-Ref"
+            composite_count += 1
         elif description.data_reference:
             reference = f"Test-Ref-{description.key}"
             data.setdefault(description.data_path, {})[uid] = {
                 description.data_reference: reference
             }
+            scalar_count += 1
         else:
             continue
 
@@ -513,9 +517,11 @@ async def test_migrate_covers_every_reference_bearing_description_in_prod(
         )
         expected[registry_entry.entity_id] = (old_uid, new_uid)
 
-    # Sanity check the fixture actually exercised a meaningful cross-section
-    # of the codebase (scalar *and* composite descriptions), not zero.
-    assert len(expected) > 10
+    # Sanity check the fixture actually exercised both reference categories,
+    # not just a nonzero total -- a fixed size threshold on the combined
+    # count would silently pass even if one category dropped to zero.
+    assert scalar_count > 0
+    assert composite_count > 0
 
     coordinator = SimpleNamespace(data=data)
     migrate_entry_identity_namespace(hass, entry)
