@@ -170,23 +170,37 @@ _CERTIFICATE_VALS: list[ApiValueSpec] = [
 ]
 
 
-def _assign_certificate_identities(certificates: list[Any]) -> None:
+def _assign_certificate_identities(
+    certificates: list[Any], poisoned_commons: set[str]
+) -> None:
     """Set each raw certificate entry's ``_identity`` key in place.
 
-    Uses ``common`` when it is both non-empty and unique across this poll's
-    certificates, else falls back to the always-unique ``name`` -- see
+    Uses ``common`` when it is both non-empty and has never collided across
+    a poll, else falls back to the always-unique ``name`` -- see
     ``get_certificates`` for why a shared ``common`` cannot be used as-is.
+
+    A common shared by more than one certificate in this poll is added to
+    ``poisoned_commons`` (mutated in place) and stays poisoned on every
+    later poll, even once the collision disappears (e.g. one of the
+    certificates is deleted). Without that persistence, the surviving
+    certificate's identity would flip from ``name`` back to ``common`` as
+    soon as it becomes unique again, changing its unique_id and orphaning
+    its own recorder statistics -- the exact failure this migration exists
+    to prevent (Sourcery finding on an earlier version of this fix).
     """
     common_counts: dict[str, int] = {}
     for cert in certificates:
         if isinstance(cert, dict) and cert.get("common"):
             common_counts[cert["common"]] = common_counts.get(cert["common"], 0) + 1
+    poisoned_commons.update(
+        common for common, count in common_counts.items() if count > 1
+    )
     for cert in certificates:
         if not isinstance(cert, dict):
             continue
         common = cert.get("common")
         cert["_identity"] = (
-            common if common and common_counts.get(common) == 1 else cert.get("name")
+            common if common and common not in poisoned_commons else cert.get("name")
         )
 
 
@@ -532,6 +546,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._version_major: int = 0
         self._version_minor: int = 0
         self._unknown_system_stat_names: set[str] = set()
+
+        # Common names that have ever been shared by more than one certificate
+        # in a poll -- see ``_assign_certificate_identities`` for why this
+        # must persist across polls instead of being recomputed each time.
+        self._poisoned_certificate_commons: set[str] = set()
 
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
@@ -2599,7 +2618,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         certificates = await self.api.query("certificate.query")
         if isinstance(certificates, list):
-            _assign_certificate_identities(certificates)
+            _assign_certificate_identities(
+                certificates, self._poisoned_certificate_commons
+            )
         self.ds["certificate"] = parse_api(
             data={},
             source=certificates,

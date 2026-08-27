@@ -86,6 +86,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord.host = "truenas.local"
     coord._version_major = 0
     coord._version_minor = 0
+    coord._poisoned_certificate_commons = set()
     return coord
 
 
@@ -3923,6 +3924,37 @@ async def test_get_certificates_falls_back_to_name_on_shared_common() -> None:
     )
     await coord.get_certificates()
     assert set(coord.ds["certificate"].keys()) == {"cert-a", "cert-b"}
+
+
+async def test_get_certificates_keeps_name_fallback_once_common_has_collided() -> None:
+    """A common name that collided once must not flip back to identity later.
+
+    If cert-b (sharing cert-a's common) disappears on the next poll, cert-a's
+    common becomes unique again. Without persisting the collision, cert-a's
+    identity would flip from ``name`` back to ``common``, changing its dict
+    key/unique_id and orphaning its own recorder statistics -- the exact
+    failure this migration exists to prevent (Sourcery finding on an earlier
+    version of ``_assign_certificate_identities``).
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+            {"id": 2, "name": "cert-b", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a", "cert-b"}
+
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a"}
 
 
 async def test_get_certificates_survives_name_rotation_with_stable_common() -> None:
