@@ -477,11 +477,17 @@ async def test_migrate_legacy_unique_ids_renames_moved_reference_field(
         domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
     )
     entry.add_to_hass(hass)
+    # The current poll's "name" must match what the not-yet-migrated live
+    # entity's unique_id was built from -- migration runs right after
+    # upgrading, using the current data, so it can only reverse-map a
+    # reference that is still present in this same poll (see the
+    # module docstring on ``migrate_legacy_unique_ids`` for the equivalent
+    # tradeoff on a reference that already vanished before the upgrade).
     coordinator = SimpleNamespace(
         data={
             "certificate": {
                 "nas.example.com": {
-                    "name": "letsencrypt-2026-11-27-090000",
+                    "name": "letsencrypt-2026-08-27-090000",
                     "identity": "nas.example.com",
                 }
             }

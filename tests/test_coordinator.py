@@ -3891,10 +3891,9 @@ async def test_get_certificates_keyed_by_common_name_when_present() -> None:
         ]
     )
     await coord.get_certificates()
-    assert "nas.example.com" in coord.ds["certificate"]
-    assert coord.ds["certificate"]["nas.example.com"]["name"] == (
-        "letsencrypt-2026-08-27-172301"
-    )
+    cert = coord.ds["certificate"].get("nas.example.com")
+    assert cert is not None
+    assert cert["name"] == "letsencrypt-2026-08-27-172301"
 
 
 async def test_get_certificates_falls_back_to_name_when_common_empty() -> None:
