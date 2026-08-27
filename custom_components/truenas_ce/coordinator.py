@@ -157,6 +157,7 @@ _JOB_STATUS_VALS: list[ApiValueSpec] = [
 _CERTIFICATE_VALS: list[ApiValueSpec] = [
     {"name": "id", "default": 0},
     {"name": "name", "default": "unknown"},
+    {"name": "identity", "source": "_identity", "default": "unknown"},
     {"name": "cert_type", "default": "unknown"},
     {"name": "common", "default": ""},
     {
@@ -167,6 +168,40 @@ _CERTIFICATE_VALS: list[ApiValueSpec] = [
     {"name": "expired", "type": "bool", "default": False},
     {"name": "renew_days", "default": 0},
 ]
+
+
+def _assign_certificate_identities(
+    certificates: list[Any], poisoned_commons: set[str]
+) -> None:
+    """Set each raw certificate entry's ``_identity`` key in place.
+
+    Uses ``common`` when it is both non-empty and has never collided across
+    a poll, else falls back to the always-unique ``name`` -- see
+    ``get_certificates`` for why a shared ``common`` cannot be used as-is.
+
+    A common shared by more than one certificate in this poll is added to
+    ``poisoned_commons`` (mutated in place) and stays poisoned on every
+    later poll, even once the collision disappears (e.g. one of the
+    certificates is deleted). Without that persistence, the surviving
+    certificate's identity would flip from ``name`` back to ``common`` as
+    soon as it becomes unique again, changing its unique_id and orphaning
+    its own recorder statistics -- the exact failure this migration exists
+    to prevent (Sourcery finding on an earlier version of this fix).
+    """
+    common_counts: dict[str, int] = {}
+    for cert in certificates:
+        if isinstance(cert, dict) and cert.get("common"):
+            common_counts[cert["common"]] = common_counts.get(cert["common"], 0) + 1
+    poisoned_commons.update(
+        common for common, count in common_counts.items() if count > 1
+    )
+    for cert in certificates:
+        if not isinstance(cert, dict):
+            continue
+        common = cert.get("common")
+        cert["_identity"] = (
+            common if common and common not in poisoned_commons else cert.get("name")
+        )
 
 
 # ---------------------------
@@ -511,6 +546,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._version_major: int = 0
         self._version_minor: int = 0
         self._unknown_system_stat_names: set[str] = set()
+
+        # Common names that have ever been shared by more than one certificate
+        # in a poll -- see ``_assign_certificate_identities`` for why this
+        # must persist across polls instead of being recomputed each time.
+        self._poisoned_certificate_commons: set[str] = set()
 
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
@@ -2562,17 +2602,29 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def get_certificates(self) -> None:
         """Get TrueNAS certificates.
 
-        Keyed by ``name`` (DB-unique in TrueNAS) rather than the raw ``id``:
-        replacing a certificate's content (e.g. a manual renewal/reissue, as
-        opposed to TrueNAS's own in-place scheduled auto-renewal) deletes the
-        old database row and creates a new one with a fresh ``id`` but the
-        same ``name``, which otherwise made the sensor look orphaned (#61).
+        Keyed by ``identity`` -- the certificate's subject common name
+        (``common``), falling back to ``name`` when that is empty or shared
+        by more than one certificate in this poll -- rather than ``name``
+        itself. ``name`` is DB-unique in TrueNAS and stable across TrueNAS's
+        own in-place scheduled auto-renewal (#61), but tools that rotate
+        certificates via ``certificate.create`` (e.g. the deploy-freenas ACME
+        helper) mint a fresh, timestamped ``name`` on every run, which still
+        orphaned the sensor on every renewal (#113). The common name
+        identifies the underlying domain and stays stable across such
+        rotations -- unless it collides with another certificate's, in which
+        case keying by it would silently drop one of them (each new entry
+        overwriting the previous one under the same dict key), so those fall
+        back to the always-unique ``name`` instead.
         """
         certificates = await self.api.query("certificate.query")
+        if isinstance(certificates, list):
+            _assign_certificate_identities(
+                certificates, self._poisoned_certificate_commons
+            )
         self.ds["certificate"] = parse_api(
             data={},
             source=certificates,
-            key="name",
+            key="_identity",
             vals=_CERTIFICATE_VALS,
         )
         now = dt_util.utcnow()

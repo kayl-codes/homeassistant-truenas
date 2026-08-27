@@ -790,7 +790,8 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_attribute="days_until_expiry",
         data_name="name",
         data_uid=None,
-        data_reference="name",
+        data_reference="identity",
+        data_legacy_reference="name",
         func="TrueNASCertExpirySensor",
     ),
     TrueNASSensorEntityDescription(
@@ -805,7 +806,8 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_attribute="until",
         data_name="name",
         data_uid=None,
-        data_reference="name",
+        data_reference="identity",
+        data_legacy_reference="name",
     ),
     TrueNASSensorEntityDescription(
         key="arc_data_hit_percent",

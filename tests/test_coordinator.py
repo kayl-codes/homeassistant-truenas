@@ -86,6 +86,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord.host = "truenas.local"
     coord._version_major = 0
     coord._version_minor = 0
+    coord._poisoned_certificate_commons = set()
     return coord
 
 
@@ -3875,6 +3876,122 @@ async def test_get_certificates_none_expiry_when_until_missing() -> None:
     coord.api.query = AsyncMock(return_value=[{"id": 1, "name": "cert1"}])
     await coord.get_certificates()
     assert coord.ds["certificate"]["cert1"]["days_until_expiry"] is None
+
+
+async def test_get_certificates_keyed_by_common_name_when_present() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "name": "letsencrypt-2026-08-27-172301",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    cert = coord.ds["certificate"].get("nas.example.com")
+    assert cert is not None
+    assert cert["name"] == "letsencrypt-2026-08-27-172301"
+
+
+async def test_get_certificates_falls_back_to_name_when_common_empty() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": 1, "name": "cert1", "common": ""}])
+    await coord.get_certificates()
+    assert "cert1" in coord.ds["certificate"]
+
+
+async def test_get_certificates_falls_back_to_name_on_shared_common() -> None:
+    """Two certificates sharing a common name must not collapse into one.
+
+    Keying both by the shared ``common`` would make the second entry
+    overwrite the first under the same dict key, silently dropping one
+    certificate's sensors -- see ``_assign_certificate_identities``.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+            {"id": 2, "name": "cert-b", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a", "cert-b"}
+
+
+async def test_get_certificates_keeps_name_fallback_once_common_has_collided() -> None:
+    """A common name that collided once must not flip back to identity later.
+
+    If cert-b (sharing cert-a's common) disappears on the next poll, cert-a's
+    common becomes unique again. Without persisting the collision, cert-a's
+    identity would flip from ``name`` back to ``common``, changing its dict
+    key/unique_id and orphaning its own recorder statistics -- the exact
+    failure this migration exists to prevent (Sourcery finding on an earlier
+    version of ``_assign_certificate_identities``).
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+            {"id": 2, "name": "cert-b", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a", "cert-b"}
+
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a"}
+
+
+async def test_get_certificates_survives_name_rotation_with_stable_common() -> None:
+    """A rotating ACME-style tool renaming the cert on every renewal (#113).
+
+    Keeping ``common`` stable across polls must keep the same dict key/entity
+    (rather than orphaning the previous name-keyed entry), even though the
+    underlying ``id``/``name`` change on every run.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "name": "letsencrypt-2026-08-27-090000",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 2,
+                "name": "letsencrypt-2026-11-27-090000",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    assert list(coord.ds["certificate"].keys()) == ["nas.example.com"]
+    assert coord.ds["certificate"]["nas.example.com"]["name"] == (
+        "letsencrypt-2026-11-27-090000"
+    )
+    assert coord.ds["certificate"]["nas.example.com"]["id"] == 2
 
 
 # ---------------------------
