@@ -318,7 +318,10 @@ SCHEMA_SERVICE_VM_START = {
     vol.Optional(SERVICE_VM_START_OVERCOMMIT, default=False): cv.boolean
 }
 SERVICE_VM_STOP = "vm_stop"
-SCHEMA_SERVICE_VM_STOP: VolDictType = {}
+SERVICE_VM_STOP_FORCE = "force"
+SCHEMA_SERVICE_VM_STOP = {
+    vol.Optional(SERVICE_VM_STOP_FORCE, default=False): cv.boolean
+}
 SERVICE_VM_RESTART = "vm_restart"
 SCHEMA_SERVICE_VM_RESTART: VolDictType = {}
 
