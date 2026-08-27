@@ -170,6 +170,26 @@ _CERTIFICATE_VALS: list[ApiValueSpec] = [
 ]
 
 
+def _assign_certificate_identities(certificates: list[Any]) -> None:
+    """Set each raw certificate entry's ``_identity`` key in place.
+
+    Uses ``common`` when it is both non-empty and unique across this poll's
+    certificates, else falls back to the always-unique ``name`` -- see
+    ``get_certificates`` for why a shared ``common`` cannot be used as-is.
+    """
+    common_counts: dict[str, int] = {}
+    for cert in certificates:
+        if isinstance(cert, dict) and cert.get("common"):
+            common_counts[cert["common"]] = common_counts.get(cert["common"], 0) + 1
+    for cert in certificates:
+        if not isinstance(cert, dict):
+            continue
+        common = cert.get("common")
+        cert["_identity"] = (
+            common if common and common_counts.get(common) == 1 else cert.get("name")
+        )
+
+
 # ---------------------------
 #   _stat_name_similar
 # ---------------------------
@@ -2564,21 +2584,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Get TrueNAS certificates.
 
         Keyed by ``identity`` -- the certificate's subject common name
-        (``common``), falling back to ``name`` when that is empty -- rather
-        than ``name`` itself. ``name`` is DB-unique in TrueNAS and stable
-        across TrueNAS's own in-place scheduled auto-renewal (#61), but tools
-        that rotate certificates via ``certificate.create`` (e.g. the
-        deploy-freenas ACME helper) mint a fresh, timestamped ``name`` on
-        every run, which still orphaned the sensor on every renewal (#113).
-        The common name identifies the underlying domain and stays stable
-        across such rotations.
+        (``common``), falling back to ``name`` when that is empty or shared
+        by more than one certificate in this poll -- rather than ``name``
+        itself. ``name`` is DB-unique in TrueNAS and stable across TrueNAS's
+        own in-place scheduled auto-renewal (#61), but tools that rotate
+        certificates via ``certificate.create`` (e.g. the deploy-freenas ACME
+        helper) mint a fresh, timestamped ``name`` on every run, which still
+        orphaned the sensor on every renewal (#113). The common name
+        identifies the underlying domain and stays stable across such
+        rotations -- unless it collides with another certificate's, in which
+        case keying by it would silently drop one of them (each new entry
+        overwriting the previous one under the same dict key), so those fall
+        back to the always-unique ``name`` instead.
         """
         certificates = await self.api.query("certificate.query")
         if isinstance(certificates, list):
-            for cert in certificates:
-                if isinstance(cert, dict):
-                    common = cert.get("common")
-                    cert["_identity"] = common if common else cert.get("name")
+            _assign_certificate_identities(certificates)
         self.ds["certificate"] = parse_api(
             data={},
             source=certificates,

@@ -3905,6 +3905,26 @@ async def test_get_certificates_falls_back_to_name_when_common_empty() -> None:
     assert "cert1" in coord.ds["certificate"]
 
 
+async def test_get_certificates_falls_back_to_name_on_shared_common() -> None:
+    """Two certificates sharing a common name must not collapse into one.
+
+    Keying both by the shared ``common`` would make the second entry
+    overwrite the first under the same dict key, silently dropping one
+    certificate's sensors -- see ``_assign_certificate_identities``.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "cert-a", "common": "shared.example.com"},
+            {"id": 2, "name": "cert-b", "common": "shared.example.com"},
+        ]
+    )
+    await coord.get_certificates()
+    assert set(coord.ds["certificate"].keys()) == {"cert-a", "cert-b"}
+
+
 async def test_get_certificates_survives_name_rotation_with_stable_common() -> None:
     """A rotating ACME-style tool renaming the cert on every renewal (#113).
 
