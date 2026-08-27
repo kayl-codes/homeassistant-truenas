@@ -157,6 +157,7 @@ _JOB_STATUS_VALS: list[ApiValueSpec] = [
 _CERTIFICATE_VALS: list[ApiValueSpec] = [
     {"name": "id", "default": 0},
     {"name": "name", "default": "unknown"},
+    {"name": "identity", "source": "_identity", "default": "unknown"},
     {"name": "cert_type", "default": "unknown"},
     {"name": "common", "default": ""},
     {
@@ -2562,17 +2563,26 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def get_certificates(self) -> None:
         """Get TrueNAS certificates.
 
-        Keyed by ``name`` (DB-unique in TrueNAS) rather than the raw ``id``:
-        replacing a certificate's content (e.g. a manual renewal/reissue, as
-        opposed to TrueNAS's own in-place scheduled auto-renewal) deletes the
-        old database row and creates a new one with a fresh ``id`` but the
-        same ``name``, which otherwise made the sensor look orphaned (#61).
+        Keyed by ``identity`` -- the certificate's subject common name
+        (``common``), falling back to ``name`` when that is empty -- rather
+        than ``name`` itself. ``name`` is DB-unique in TrueNAS and stable
+        across TrueNAS's own in-place scheduled auto-renewal (#61), but tools
+        that rotate certificates via ``certificate.create`` (e.g. the
+        deploy-freenas ACME helper) mint a fresh, timestamped ``name`` on
+        every run, which still orphaned the sensor on every renewal (#113).
+        The common name identifies the underlying domain and stays stable
+        across such rotations.
         """
         certificates = await self.api.query("certificate.query")
+        if isinstance(certificates, list):
+            for cert in certificates:
+                if isinstance(cert, dict):
+                    common = cert.get("common")
+                    cert["_identity"] = common if common else cert.get("name")
         self.ds["certificate"] = parse_api(
             data={},
             source=certificates,
-            key="name",
+            key="_identity",
             vals=_CERTIFICATE_VALS,
         )
         now = dt_util.utcnow()

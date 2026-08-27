@@ -3877,6 +3877,72 @@ async def test_get_certificates_none_expiry_when_until_missing() -> None:
     assert coord.ds["certificate"]["cert1"]["days_until_expiry"] is None
 
 
+async def test_get_certificates_keyed_by_common_name_when_present() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "name": "letsencrypt-2026-08-27-172301",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    assert "nas.example.com" in coord.ds["certificate"]
+    assert coord.ds["certificate"]["nas.example.com"]["name"] == (
+        "letsencrypt-2026-08-27-172301"
+    )
+
+
+async def test_get_certificates_falls_back_to_name_when_common_empty() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[{"id": 1, "name": "cert1", "common": ""}])
+    await coord.get_certificates()
+    assert "cert1" in coord.ds["certificate"]
+
+
+async def test_get_certificates_survives_name_rotation_with_stable_common() -> None:
+    """A rotating ACME-style tool renaming the cert on every renewal (#113).
+
+    Keeping ``common`` stable across polls must keep the same dict key/entity
+    (rather than orphaning the previous name-keyed entry), even though the
+    underlying ``id``/``name`` change on every run.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "name": "letsencrypt-2026-08-27-090000",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    coord.api.query = AsyncMock(
+        return_value=[
+            {
+                "id": 2,
+                "name": "letsencrypt-2026-11-27-090000",
+                "common": "nas.example.com",
+            }
+        ]
+    )
+    await coord.get_certificates()
+    assert list(coord.ds["certificate"].keys()) == ["nas.example.com"]
+    assert coord.ds["certificate"]["nas.example.com"]["name"] == (
+        "letsencrypt-2026-11-27-090000"
+    )
+    assert coord.ds["certificate"]["nas.example.com"]["id"] == 2
+
+
 # ---------------------------
 #   get_arc
 # ---------------------------

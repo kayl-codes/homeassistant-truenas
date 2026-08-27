@@ -303,6 +303,42 @@ def _referenced_id_pairs(
     return pairs
 
 
+def _legacy_reference_id_pairs(
+    identity: str,
+    description: TrueNASEntityDescription,
+    data: Mapping[str, Any],
+) -> set[tuple[str, str]]:
+    """Return (old, new) unique_id pairs for a description whose reference field moved.
+
+    Unlike ``_referenced_id_pairs``, both sides run through the *current*
+    ``format_unique_id`` -- only the underlying field differs
+    (``data_legacy_reference`` vs ``data_reference``), not the value
+    formatting the legacy formatters guard against. Used e.g. by the
+    certificate descriptions after #113, which moved from keying on the
+    volatile ``name`` field to the stable ``identity`` (common name) field.
+    """
+    pairs: set[tuple[str, str]] = set()
+    legacy_field = description.data_legacy_reference
+    if not legacy_field:
+        return pairs
+    for uid, vals in data.items():
+        if not isinstance(vals, dict):
+            continue
+        old_ref = vals.get(legacy_field)
+        new_ref = vals.get(description.data_reference)
+        pairs.add(
+            (
+                format_unique_id(
+                    identity, description.key, old_ref if old_ref is not None else uid
+                ),
+                format_unique_id(
+                    identity, description.key, new_ref if new_ref is not None else uid
+                ),
+            )
+        )
+    return pairs
+
+
 def _composite_id_pairs(
     identity: str,
     description: TrueNASEntityDescription,
@@ -394,6 +430,11 @@ def _collect_unique_id_renames(
     Checked against every format in ``_LEGACY_UNIQUE_ID_FORMATTERS``, merged
     into one candidate map so a legacy id ambiguous under one format still
     correctly blocks renaming under another (see ``_merge_rename_candidates``).
+
+    A description also carrying ``data_legacy_reference`` additionally
+    contributes the (old-field, new-field) rename pair described in
+    ``_legacy_reference_id_pairs``, merged into the same candidate map so the
+    same collision-safety applies.
     """
     candidates: dict[str, set[str]] = {}
     for legacy_formatter in _LEGACY_UNIQUE_ID_FORMATTERS:
@@ -410,6 +451,15 @@ def _collect_unique_id_renames(
                 else _referenced_id_pairs(identity, description, data, legacy_formatter)
             )
             _merge_rename_candidates(pairs, candidates)
+    for description in descriptions:
+        if not getattr(description, "data_legacy_reference", None):
+            continue
+        data = coordinator.data.get(description.data_path or "")
+        if not isinstance(data, dict):
+            continue
+        _merge_rename_candidates(
+            _legacy_reference_id_pairs(identity, description, data), candidates
+        )
     return _resolve_renames(candidates)
 
 
@@ -544,6 +594,7 @@ class TrueNASEntityDescription(EntityDescription):
     data_name: str | None = None
     data_uid: str | None = None
     data_reference: str | None = None
+    data_legacy_reference: str | None = None
     data_attributes_list: tuple[str, ...] = ()
     data_dynamic_keys: bool = False
     data_composite_references: tuple[str, ...] = ()

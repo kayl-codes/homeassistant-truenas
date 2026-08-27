@@ -454,6 +454,101 @@ async def test_migrate_legacy_unique_ids_leaves_case_collision_unrenamed(
     )
 
 
+_CERT_DESC = TrueNASSensorEntityDescription(
+    key="certificate_expiry",
+    name="Certificate expiry",
+    data_path="certificate",
+    data_reference="identity",
+    data_legacy_reference="name",
+    func="TrueNASEntity",
+)
+
+
+async def test_migrate_legacy_unique_ids_renames_moved_reference_field(
+    hass: HomeAssistant,
+) -> None:
+    """A description whose reference field moved (#113: certificates keyed by
+    ``name`` moved to the stable ``identity``/common-name field) must rename
+    the registry entry built from the old field to the new field's value --
+    otherwise every certificate rotated by an external ACME tool would keep
+    orphaning its sensor on every renewal, even after the fix ships.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "certificate": {
+                "nas.example.com": {
+                    "name": "letsencrypt-2026-11-27-090000",
+                    "identity": "nas.example.com",
+                }
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        format_unique_id(
+            "system-guid", "certificate_expiry", "letsencrypt-2026-08-27-090000"
+        ),
+        config_entry=entry,
+    )
+
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_CERT_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id(
+        "system-guid", "certificate_expiry", "nas.example.com"
+    )
+
+
+async def test_migrate_legacy_unique_ids_leaves_moved_reference_collision_unrenamed(
+    hass: HomeAssistant,
+) -> None:
+    """Two certificates whose *old* name happens to equal another's must not
+    be guessed at -- same collision-safety as the lossy-reference migration.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={
+            "certificate": {
+                "nas.example.com": {
+                    "name": "shared-name",
+                    "identity": "nas.example.com",
+                },
+                "other.example.com": {
+                    "name": "shared-name",
+                    "identity": "other.example.com",
+                },
+            }
+        }
+    )
+
+    ent_reg = er.async_get(hass)
+    entity = ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        format_unique_id("system-guid", "certificate_expiry", "shared-name"),
+        config_entry=entry,
+    )
+
+    migrate_legacy_unique_ids(hass, entry, coordinator, [_CERT_DESC])
+
+    migrated = ent_reg.async_get(entity.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == format_unique_id(
+        "system-guid", "certificate_expiry", "shared-name"
+    )
+
+
 async def test_migrate_covers_every_reference_bearing_description_in_prod(
     hass: HomeAssistant,
 ) -> None:
