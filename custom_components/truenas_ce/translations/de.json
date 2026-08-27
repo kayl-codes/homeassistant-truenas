@@ -462,7 +462,13 @@
         },
         "vm_stop": {
             "name": "VM stoppen",
-            "description": "Stoppt eine virtuelle Maschine (VM-Binärsensor als Ziel)."
+            "description": "Stoppt eine virtuelle Maschine (VM-Binärsensor als Ziel).",
+            "fields": {
+                "force": {
+                    "name": "Erzwingen",
+                    "description": "Erzwingt ein sofortiges Ausschalten anstelle eines geordneten ACPI-Shutdowns."
+                }
+            }
         },
         "vm_restart": {
             "name": "VM neu starten",

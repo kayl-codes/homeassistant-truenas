@@ -97,7 +97,7 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
         )
         self._raise_if_api_error("start")
 
-    async def stop(self) -> None:
+    async def stop(self, force: bool = False) -> None:
         """Stop a VM."""
         tmp_vm = await self.coordinator.api.query("vm.get_instance", [self._data["id"]])
         self._raise_if_api_error("stop")
@@ -116,7 +116,7 @@ class TrueNASVMBinarySensor(TrueNASBinarySensor):
             return
 
         await self.coordinator.api.query(
-            "vm.stop", [self._data["id"], {"force": True, "force_after_timeout": True}]
+            "vm.stop", [self._data["id"], {"force": force, "force_after_timeout": True}]
         )
         self._raise_if_api_error("stop")
 

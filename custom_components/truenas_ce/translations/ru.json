@@ -462,7 +462,13 @@
         },
         "vm_stop": {
             "name": "VM stop",
-            "description": "Stop a virtual machine (target the VM binary sensor)."
+            "description": "Stop a virtual machine (target the VM binary sensor).",
+            "fields": {
+                "force": {
+                    "name": "Force",
+                    "description": "Force an immediate power-off instead of a graceful ACPI shutdown."
+                }
+            }
         },
         "vm_restart": {
             "name": "VM restart",

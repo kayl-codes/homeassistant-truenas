@@ -98,6 +98,15 @@ async def test_vm_stop_success() -> None:
     vm.coordinator.api.query.side_effect = [{"status": {"state": "RUNNING"}}, None]
     await vm.stop()
     vm.coordinator.api.query.assert_awaited_with(
+        "vm.stop", [1, {"force": False, "force_after_timeout": True}]
+    )
+
+
+async def test_vm_stop_force() -> None:
+    vm = _make_vm({})
+    vm.coordinator.api.query.side_effect = [{"status": {"state": "RUNNING"}}, None]
+    await vm.stop(force=True)
+    vm.coordinator.api.query.assert_awaited_with(
         "vm.stop", [1, {"force": True, "force_after_timeout": True}]
     )
 

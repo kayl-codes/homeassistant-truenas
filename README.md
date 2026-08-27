@@ -329,7 +329,7 @@ TrueNAS object they act on). Each action has a name and description in
 
 | Action | Target entity | What it does |
 | --- | --- | --- |
-| `vm_start` · `vm_stop` · `vm_restart` | VM binary sensor | Start / stop / restart a virtual machine (`vm_start` has an optional `overcommit` field) |
+| `vm_start` · `vm_stop` · `vm_restart` | VM binary sensor | Start / stop / restart a virtual machine (`vm_start` has an optional `overcommit` field; `vm_stop` has an optional `force` field, default `false` for a graceful ACPI shutdown) |
 | `container_start` · `container_stop` · `container_restart` | Container binary sensor | Start / stop / restart a container (Incus instance) |
 | `app_start` · `app_stop` | App binary sensor | Start / stop an app |
 | `service_start` · `service_stop` · `service_restart` · `service_reload` | Service binary sensor | Control a TrueNAS service |
