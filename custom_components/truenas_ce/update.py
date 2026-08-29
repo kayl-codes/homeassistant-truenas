@@ -178,7 +178,7 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         self, version: str | None, backup: bool, **kwargs: Any
     ) -> None:
         """Install an update."""
-        app_data = self.coordinator.data.get("app", {}).get(self._data["id"], {})
+        app_data = self.coordinator.data.get("app", {}).get(str(self._data["id"]), {})
         if app_data.get("state") != "RUNNING":
             _LOGGER.error(
                 "In order to upgrade the app %s, it must be in the RUNNING state.",
@@ -228,7 +228,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         deadline = monotonic() + APP_UPDATE_JOB_TIMEOUT
         while self._data.get("update_jobid"):
             await asyncio.sleep(APP_UPDATE_JOB_POLL_INTERVAL)
-            job = await self.coordinator.async_refresh_app_update_job(self._data["id"])
+            job = await self.coordinator.async_refresh_app_update_job(
+                str(self._data["id"])
+            )
             self.async_write_ha_state()
             if job is not None and job.get("state") not in APP_UPDATE_JOB_ACTIVE_STATES:
                 return job

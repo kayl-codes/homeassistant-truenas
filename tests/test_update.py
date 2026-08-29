@@ -165,6 +165,21 @@ async def test_app_update_async_install_failure_raises() -> None:
     }
 
 
+async def test_app_update_async_install_matches_int_id_against_str_keyed_app_map() -> (
+    None
+):
+    """The ``id`` field copied into entity data can still be int-typed (e.g.
+    TrueNAS returns a numeric app id), while ``coordinator.data["app"]`` is
+    str-keyed end to end -- the RUNNING-state lookup must convert, not miss."""
+    update = _make_app_update({"id": 5})
+    update.coordinator.data["app"] = {"5": {"state": "RUNNING"}}
+    update.coordinator.api.query.return_value = 99
+    update.async_write_ha_state = MagicMock()
+    update._async_track_upgrade_job = AsyncMock(return_value={"state": "SUCCESS"})
+    await update.async_install(version=None, backup=False)
+    update.coordinator.api.query.assert_awaited_once_with("app.upgrade", [5])
+
+
 # ---------------------------
 #   App update job progress tracking
 # ---------------------------
@@ -212,6 +227,26 @@ def _install_ready_update(job_states: list[dict]) -> TrueNASAppUpdate:
 
     update.coordinator.async_refresh_app_update_job = AsyncMock(side_effect=_refresh)
     return update
+
+
+async def test_app_update_async_install_tracks_job_with_int_id_converted_to_str() -> (
+    None
+):
+    """``async_refresh_app_update_job`` takes a str uid (matching the str-keyed
+    ``self.ds["app"]``); the entity must convert its raw ``id`` field before
+    calling it, even when that field is still int-typed at the API level."""
+    update = _make_app_update({"id": 5})
+    update.coordinator.data["app"] = {"5": update._data}
+    update._data["state"] = "RUNNING"
+    update.coordinator.api.query.return_value = 99
+    update.async_write_ha_state = MagicMock()
+    update.coordinator.async_refresh_app_update_job = AsyncMock(
+        return_value={"state": "SUCCESS", "progress": {"percent": 100}}
+    )
+    with patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()):
+        await update.async_install(version=None, backup=False)
+
+    update.coordinator.async_refresh_app_update_job.assert_awaited_once_with("5")
 
 
 async def test_app_update_async_install_tracks_job_until_success() -> None:
