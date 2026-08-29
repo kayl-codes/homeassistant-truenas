@@ -2280,8 +2280,8 @@ async def test_refresh_service_delegates_to_state() -> None:
         return_value={1: {"running": True, "display_name": "SMB"}}
     )
     await coord._refresh_service()
-    assert coord.ds["service"][1]["running"] is True
-    assert coord.ds["service"][1]["display_name"] == "SMB"
+    assert coord.ds["service"]["1"]["running"] is True
+    assert coord.ds["service"]["1"]["display_name"] == "SMB"
 
 
 # ---------------------------
@@ -2474,7 +2474,7 @@ async def test_on_service_push_refreshes_and_notifies() -> None:
 
     await coord._on_service_push([{"msg": "changed"}])
 
-    assert coord.ds["service"][1]["running"] is True
+    assert coord.ds["service"]["1"]["running"] is True
     coord.async_set_updated_data.assert_called_once_with(coord.ds)
 
 
@@ -2612,7 +2612,7 @@ async def test_on_replication_push_refreshes_and_notifies() -> None:
 
     await coord._on_replication_push([{"msg": "changed"}])
 
-    assert coord.ds["replication"][1]["state"] == "RUNNING"
+    assert coord.ds["replication"]["1"]["state"] == "RUNNING"
     coord.async_set_updated_data.assert_called_once_with(coord.ds)
 
 
@@ -2664,7 +2664,7 @@ async def test_on_rsync_push_refreshes_and_notifies() -> None:
 
     await coord._on_rsync_push([{"msg": "changed"}])
 
-    assert 1 in coord.ds["rsynctask"]
+    assert "1" in coord.ds["rsynctask"]
     coord.async_set_updated_data.assert_called_once_with(coord.ds)
 
 
@@ -2844,8 +2844,8 @@ async def test_refresh_vm_delegates_to_state() -> None:
     coord.state = MagicMock()
     coord.state.get_vm = AsyncMock(return_value={1: {"memory": 2, "running": True}})
     await coord._refresh_vm()
-    assert coord.ds["vm"][1]["memory"] == 2
-    assert coord.ds["vm"][1]["running"] is True
+    assert coord.ds["vm"]["1"]["memory"] == 2
+    assert coord.ds["vm"]["1"]["running"] is True
 
 
 # ---------------------------
@@ -2879,7 +2879,7 @@ async def test_on_vm_push_refreshes_and_notifies() -> None:
 
     await coord._on_vm_push([{"msg": "changed"}])
 
-    assert coord.ds["vm"][1]["running"] is True
+    assert coord.ds["vm"]["1"]["running"] is True
     coord.async_set_updated_data.assert_called_once_with(coord.ds)
 
 
@@ -3081,7 +3081,7 @@ async def test_refresh_directoryservices_delegates_to_state() -> None:
     coord.state = MagicMock()
     coord.state.get_directoryservices = AsyncMock(return_value={1: {"healthy": True}})
     await coord.get_directoryservices()
-    assert coord.ds["directoryservices"][1]["healthy"] is True
+    assert coord.ds["directoryservices"]["1"]["healthy"] is True
 
 
 # ---------------------------
@@ -3336,7 +3336,7 @@ async def test_refresh_replication_delegates_to_state() -> None:
         return_value={1: {"id": 1, "name": "repl1", "state": "RUNNING"}}
     )
     await coord._refresh_replication()
-    assert coord.ds["replication"][1]["state"] == "RUNNING"
+    assert coord.ds["replication"]["1"]["state"] == "RUNNING"
 
 
 async def test_get_replication_empty_when_not_monitored() -> None:
@@ -3413,7 +3413,7 @@ async def test_get_rsync_parses_when_monitored() -> None:
     coord.state = MagicMock()
     coord.state.get_rsync = AsyncMock(return_value={1: {"id": 1, "path": "/mnt/tank"}})
     await coord.get_rsync()
-    assert 1 in coord.ds["rsynctask"]
+    assert "1" in coord.ds["rsynctask"]
 
 
 async def test_get_snapshottask_empty_when_not_monitored() -> None:
@@ -3437,8 +3437,8 @@ async def test_get_snapshottask_delegates_to_state_when_monitored() -> None:
         return_value={1: {"dataset": "tank/data", "schedule": schedule}}
     )
     await coord.get_snapshottask()
-    assert 1 in coord.ds["snapshottask"]
-    assert coord.ds["snapshottask"][1]["schedule"] == schedule
+    assert "1" in coord.ds["snapshottask"]
+    assert coord.ds["snapshottask"]["1"]["schedule"] == schedule
 
 
 async def test_get_scrub_delegates_to_state() -> None:
@@ -3447,7 +3447,7 @@ async def test_get_scrub_delegates_to_state() -> None:
     coord.state = MagicMock()
     coord.state.get_scrub = AsyncMock(return_value={1: {"pool_name": "tank"}})
     await coord.get_scrub()
-    assert 1 in coord.ds["scrub"]
+    assert "1" in coord.ds["scrub"]
 
 
 # ---------------------------
@@ -3848,9 +3848,9 @@ async def test_get_cronjob_skips_disabled_by_default_behavior() -> None:
         }
     )
     await coord.get_cronjob()
-    assert 1 in coord.ds["cronjob"]
-    assert 2 not in coord.ds["cronjob"]
-    assert coord.ds["cronjob"][1]["display_name"] == "Job A"
+    assert "1" in coord.ds["cronjob"]
+    assert "2" not in coord.ds["cronjob"]
+    assert coord.ds["cronjob"]["1"]["display_name"] == "Job A"
 
 
 async def test_get_cronjob_keeps_disabled_when_behavior_off() -> None:
@@ -3866,7 +3866,7 @@ async def test_get_cronjob_keeps_disabled_when_behavior_off() -> None:
         return_value={2: {"enabled": False, "display_name": "ls"}}
     )
     await coord.get_cronjob()
-    assert coord.ds["cronjob"][2]["display_name"] == "ls"
+    assert coord.ds["cronjob"]["2"]["display_name"] == "ls"
 
 
 async def test_get_cronjob_falls_back_to_legacy_option_when_behaviors_absent() -> None:
@@ -3883,7 +3883,7 @@ async def test_get_cronjob_falls_back_to_legacy_option_when_behaviors_absent() -
         return_value={3: {"enabled": False, "display_name": "Cronjob 3"}}
     )
     await coord.get_cronjob()
-    assert coord.ds["cronjob"][3]["display_name"] == "Cronjob 3"
+    assert coord.ds["cronjob"]["3"]["display_name"] == "Cronjob 3"
 
 
 # ---------------------------

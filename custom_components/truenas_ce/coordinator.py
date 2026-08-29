@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Hashable
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from aiotruenas import TrueNASState
 from homeassistant.components.recorder.statistics import (
@@ -175,14 +175,14 @@ def _stat_name_similar(a: str, b: str) -> bool:
 #   misc helpers
 # ---------------------------
 def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, Any]:
-    """Narrow a TrueNASState endpoint map's uid-typed keys to str for self.ds.
+    """Convert a TrueNASState endpoint map's uid-typed keys to str for self.ds.
 
     ``TrueNASState`` types object ids as ``Hashable`` (some uids, e.g. cronjob
     ids, are ints at the API level); ``self.ds`` has always been str-keyed
-    end to end here, so narrow at the boundary rather than widening self.ds's
+    end to end here, so convert at the boundary rather than widening self.ds's
     declared type for every not-yet-migrated endpoint.
     """
-    return cast(dict[str, Any], data)
+    return {str(uid): values for uid, values in data.items()}
 
 
 def _is_truenas_sensor_id(statistic_id: str, device_slug: str) -> bool:
