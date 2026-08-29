@@ -174,7 +174,7 @@ def _stat_name_similar(a: str, b: str) -> bool:
 # ---------------------------
 #   misc helpers
 # ---------------------------
-def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, Any]:
+def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Convert a TrueNASState endpoint map's uid-typed keys to str for self.ds.
 
     ``TrueNASState`` types object ids as ``Hashable`` (some uids, e.g. cronjob
