@@ -758,7 +758,7 @@ def test_extra_state_attributes_includes_attribution_and_listed_fields() -> None
         uid="d1", data={"guid": "g1", "model": "WD Red"}, description=desc
     )
     attrs = entity.extra_state_attributes
-    assert attrs["Model"] == "WD Red"
+    assert attrs["model"] == "WD Red"
     assert "attribution" in attrs
 
 

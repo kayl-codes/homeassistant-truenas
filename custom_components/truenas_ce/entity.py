@@ -34,7 +34,6 @@ from .const import (
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator, get_truenas_coordinator
-from .helper import format_attribute
 
 _LOGGER = getLogger(__name__)
 
@@ -1128,11 +1127,18 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
-        """Return the state attributes."""
+        """Return the state attributes.
+
+        Keys are the raw snake_case ``variable`` names, not humanized display
+        labels: state attributes are meant to be machine-readable for
+        templates/automations, and HA's own ``state_attributes`` strings.json
+        translations (see "uuids") already provide the display label by
+        looking up the literal key.
+        """
         attributes = dict(super().extra_state_attributes or {})
         for variable in self.entity_description.data_attributes_list:
             if variable in self._data:
-                attributes[format_attribute(variable)] = self._data[variable]
+                attributes[variable] = self._data[variable]
 
         return attributes
 
