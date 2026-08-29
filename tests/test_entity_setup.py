@@ -767,11 +767,19 @@ def _fake_api(extra_responses: dict[str, Any] | None = None) -> SimpleNamespace:
             return responses[method]
         return {} if method == "system.info" else None
 
+    # ``TrueNASState`` (aiotruenas's domain layer) calls ``client.call(...)``
+    # directly for migrated endpoints instead of going through
+    # ``TrueNASAPI.query()`` -- route both through the same ``responses``
+    # dict so ``extra_responses`` works regardless of which path a given
+    # endpoint currently uses.
+    fake_client = SimpleNamespace(call=AsyncMock(side_effect=_query))
+
     return SimpleNamespace(
         connected=MagicMock(return_value=True),
         connect=AsyncMock(return_value=True),
         close=AsyncMock(),
         query=AsyncMock(side_effect=_query),
+        client=fake_client,
         error="",
         scheme="ws",
     )
