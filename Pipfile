@@ -15,4 +15,4 @@ pytest-cov = ">=6.0"
 
 
 [packages]
-aiotruenas = ">=1.4.0"
+aiotruenas = ">=1.4.1"
