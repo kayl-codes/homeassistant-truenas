@@ -861,13 +861,14 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
     def _schedule_suffix(self) -> str | None:
         """Return a best-effort Hourly/Daily/Weekly/Monthly label, or None.
 
-        TrueNAS's periodic-snapshot-task presets each pin exactly one of
-        dom/dow/hour plus `minute` to a single fixed number, leaving `month`
-        and the rest wildcarded. A step/range/list value on any field, a
-        pinned `month`, or an all-wildcard schedule (minute included -- a
-        genuine Hourly preset always pins minute to its run time) falls
-        outside every known preset and is left unclassified rather than
-        guessed at.
+        TrueNAS's Daily/Weekly/Monthly periodic-snapshot-task presets each
+        pin exactly one of dom/dow/hour plus `minute` to a single fixed
+        number, leaving `month` and the rest wildcarded. The Hourly preset
+        pins only `minute`; `dom`, `dow`, and `hour` remain wildcarded. A
+        step/range/list value on any field, a pinned `month`, or an
+        all-wildcard schedule (minute included -- a genuine Hourly preset
+        always pins minute to its run time) falls outside every known preset
+        and is left unclassified rather than guessed at.
         """
         schedule = self._data.get("schedule") if self._data else None
         if not isinstance(schedule, dict) or not schedule:
