@@ -14,6 +14,35 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Fixed
+- **Entity identity, unique IDs and device identifiers reworked to prevent silent
+  collisions:** two TrueNAS servers sharing the same display name, or two dataset/app
+  references differing only in case or `-`/`_` (e.g. `tank/Data` vs `tank/data`),
+  previously collided onto the same `unique_id` and silently dropped one entity.
+  Renaming your TrueNAS host also used to orphan the System device. All of this is now
+  keyed off a stable identity instead of the editable name/hostname, and every existing
+  entity/device is **renamed in place on upgrade** (not recreated), so `entity_id`s,
+  history and long-term statistics are preserved — a dedicated test proves the
+  2.8.0 → 2.9.0 upgrade path orphans nothing. If you still see an "orphaned statistics"
+  Repairs card after upgrading, please open an issue. (#103, #107, #108, #109, #110, #111)
+- **VM stop now defaults to a graceful ACPI shutdown** instead of an immediate force
+  power-off, matching the TrueNAS UI's own "Stop" button; opt back into the old behavior
+  with the new `force` field on `vm_stop`. Thanks @Chouffy for reporting! (#112, #114)
+- **Certificates now keyed by common name, surviving external rotation tools** (e.g. ACME
+  renewal scripts) that mint a fresh internal `name` on every run — no more orphaned-
+  statistics prompts on every renewal. Thanks @janusn for reporting! (#113, #115)
+- **Query errors no longer masked as empty/zero state:** a transient API error now
+  preserves the last known good data instead of wiping it. (#106)
+- **Legacy config secrets redacted in migration backup snapshots.** (#104)
+
+### Changed
+- **Coordinator delegates normalization to `aiotruenas`'s new `TrueNASState` domain
+  layer** for 19 endpoints instead of doing it inline — no user-facing behavior change.
+  (#116)
+
+### Notes
+- Bumps `aiotruenas` to `>=1.4.0` (required for the `TrueNASState` domain layer).
+
 ## [2.8.0] — Live Push Updates & Migration/Security Hardening
 
 ### Added
