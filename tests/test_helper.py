@@ -26,6 +26,11 @@ from custom_components.truenas_ce.helper import sanitize_host
         ("https://nas.example.com:8443/", "nas.example.com:8443"),
         ("NAS.Local", "nas.local"),
         ("HTTPS://NAS.Example.COM:8443/UI", "nas.example.com:8443"),
+        ("2001:db8::1", "[2001:db8::1]"),
+        ("2001:DB8::1", "[2001:db8::1]"),
+        ("::1", "[::1]"),
+        ("[2001:db8::1]", "[2001:db8::1]"),
+        ("[2001:db8::1]:8443", "[2001:db8::1]:8443"),
     ],
 )
 def test_sanitize_host(raw: str, expected: str) -> None:
