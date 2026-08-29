@@ -34,7 +34,6 @@ from .const import (
     SIGNAL_UPDATE_SENSORS,
 )
 from .coordinator import TrueNASCoordinator, get_truenas_coordinator
-from .helper import format_attribute
 
 _LOGGER = getLogger(__name__)
 
@@ -1128,11 +1127,21 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
-        """Return the state attributes."""
+        """Return the state attributes.
+
+        Keys are the raw API ``variable`` names, not humanized display
+        labels: state attributes are meant to be machine-readable for
+        templates/automations. Most are snake_case, though a few (e.g.
+        "memory-free_value") keep a literal hyphen from the source field.
+        HA's frontend already humanizes any key without an explicit
+        ``state_attributes`` strings.json entry (e.g. "link_state" ->
+        "Link State"); an explicit entry is only needed to override that
+        generic fallback, as done for "uuids".
+        """
         attributes = dict(super().extra_state_attributes or {})
         for variable in self.entity_description.data_attributes_list:
             if variable in self._data:
-                attributes[format_attribute(variable)] = self._data[variable]
+                attributes[variable] = self._data[variable]
 
         return attributes
 
