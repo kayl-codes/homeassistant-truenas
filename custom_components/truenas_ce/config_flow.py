@@ -573,7 +573,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         ``_async_apply_user_input``) can establish the box's real identity
         and fold a rediscovered host into an existing entry.
         """
-        host = discovery_info.host
+        host = sanitize_host(discovery_info.host)
         self._async_abort_entries_match({CONF_HOST: host})
         await self.async_set_unique_id(host)
         self._abort_if_unique_id_configured()

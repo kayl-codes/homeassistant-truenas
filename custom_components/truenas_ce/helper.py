@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import TYPE_CHECKING
 
@@ -39,11 +40,24 @@ def sanitize_host(host: str) -> str:
 
     Lives here (rather than in ``config_flow``) so both ``config_flow`` and
     ``migration`` can depend on it without either importing the other.
+
+    A bare IPv6 literal is bracketed (e.g. "::1" -> "[::1]") so it combines
+    unambiguously with a scheme/port into a valid WebSocket URL.
     """
     host = host.strip()
     host = _SCHEME_RE.sub("", host)  # drop a leading scheme
     host = _HOST_TAIL_RE.split(host, maxsplit=1)[0]  # drop path/query/fragment
-    return host.strip().lower()
+    host = host.strip().lower()
+    return _bracket_ipv6(host)
+
+
+def _bracket_ipv6(host: str) -> str:
+    """Bracket ``host`` if it is a bare (unbracketed) IPv6 literal."""
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return host
+    return f"[{host}]"
 
 
 # Data-size display tiers as (threshold_in_bytes, unit, precision). The first

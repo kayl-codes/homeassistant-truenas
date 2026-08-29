@@ -350,6 +350,21 @@ def test_systemstats_process_falls_back_to_defaults_without_aggregations() -> No
     assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(0.0)
 
 
+def test_systemstats_process_defaults_use_dedicated_keys() -> None:
+    """Defaults for a malformed graph land under the same key as a real value.
+
+    Regression test for a bug where defaults bypassed the type-specific key
+    mapping in _store_stat_value and were written under the bare var name
+    instead, leaving the actually-exposed sensor keys stale.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}}
+    coord._systemstats_process("size", {}, "arcsize")
+    assert coord.ds["system_info"]["cache_size-arc_value"] == 0.0
+    coord._systemstats_process("available", {}, "memory")
+    assert coord.ds["system_info"]["memory-free_value"] == 0
+
+
 def test_systemstats_process_skips_legend_var_not_in_arr() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}}
@@ -2085,9 +2100,9 @@ def test_process_system_stat_dispatches_by_name() -> None:
     coord.ds = {"system_info": {}, "interface": {}}
     # Missing "aggregations"/"legend" fails the isinstance guard in
     # _systemstats_process, so it falls back to _store_stat_defaults, which
-    # (for t != "cpu") stores the bare arr name, not a "load_"-prefixed one.
+    # routes through _store_stat_value the same as a successful value would.
     coord._process_system_stat({"name": "load"})
-    assert coord.ds["system_info"]["shortterm"] == 0.0
+    assert coord.ds["system_info"]["load_shortterm"] == 0.0
 
 
 def test_process_system_stat_ignores_missing_name() -> None:
@@ -2275,7 +2290,7 @@ async def test_get_systemstats_processes_returned_graphs() -> None:
     coord.api = MagicMock()
     coord.api.query = AsyncMock(return_value=[{"name": "load"}])
     await coord.get_systemstats()
-    assert coord.ds["system_info"]["shortterm"] == 0.0
+    assert coord.ds["system_info"]["load_shortterm"] == 0.0
 
 
 # ---------------------------

@@ -1044,16 +1044,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _fetch_stat_graphs(
         self, graph_names: list[str], graph_query: dict[str, Any]
     ) -> list[Any]:
-        """Query each stat graph, returning combined data and tracking failures."""
+        """Query each stat graph concurrently; return combined data, track failures."""
         reporting_path = _NETDATA_GRAPH
+        results = await asyncio.gather(
+            *(
+                self.api.query(reporting_path, params=[graph_name, graph_query])
+                for graph_name in graph_names
+            )
+        )
+
         tmp_graph: list[Any] = []
         failed_graphs: list[str] = []
-
-        for graph_name in graph_names:
-            graph_data = await self.api.query(
-                reporting_path,
-                params=[graph_name, graph_query],
-            )
+        for graph_name, graph_data in zip(graph_names, results, strict=True):
             if isinstance(graph_data, list):
                 tmp_graph.extend(graph_data)
             else:
@@ -1235,12 +1237,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _store_stat_defaults(self, t: str, arr: tuple[str, ...]) -> None:
         """Store zeroed defaults when a statistic graph has no aggregations."""
-        info = self.ds["system_info"]
-        for tmp_load in arr:
-            if t == "cpu":
-                info[f"cpu_{tmp_load}"] = 0.0
-            else:
-                info[tmp_load] = 0.0
+        for tmp_var in arr:
+            self._store_stat_value(t, tmp_var, 0.0)
 
     # ---------------------------
     #   get_service
