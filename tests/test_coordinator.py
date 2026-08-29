@@ -191,6 +191,19 @@ def test_set_optimistic_running_noop_for_unknown_object_id() -> None:
     coord.async_update_listeners.assert_not_called()
 
 
+def test_set_optimistic_running_matches_int_object_id_against_str_keyed_ds() -> None:
+    """Migrated endpoints (rsynctask, replication, snapshottask, scrub, ...)
+    pass the raw ``id`` field from entity data, which is still int-typed at
+    the API level, while self.ds is str-keyed end to end (see
+    ``_as_str_keyed``) -- the lookup must convert, not fail to match."""
+    coord = _bare_coordinator()
+    coord.ds = {"rsynctask": {"1": {"state": "STOPPED"}}}
+    coord.async_update_listeners = MagicMock()
+    coord.set_optimistic_running("rsynctask", 1)
+    assert coord.ds["rsynctask"]["1"]["state"] == "RUNNING"
+    coord.async_update_listeners.assert_called_once()
+
+
 # ---------------------------
 #   async_run_task
 # ---------------------------

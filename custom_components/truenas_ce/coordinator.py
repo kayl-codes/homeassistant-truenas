@@ -410,10 +410,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         the sensor stays on its previous value with no sign the trigger worked.
         Setting RUNNING in-memory and notifying listeners gives that feedback; the
         next regular poll re-syncs the state to whatever TrueNAS reports.
+
+        ``object_id`` is looked up as a str: callers (button/sensor ``start()``
+        methods) pass the object's raw ``id`` field, which for migrated
+        endpoints (e.g. rsynctask, replication, snapshottask, scrub) is still
+        int-typed at the API level, while ``self.ds`` is str-keyed end to end
+        (see ``_as_str_keyed``) -- the original ``object_id`` is left
+        untouched for the middleware call in ``async_run_task``.
         """
         group = self.ds.get(data_path)
-        if isinstance(group, dict) and isinstance(group.get(object_id), dict):
-            group[object_id]["state"] = "RUNNING"
+        uid = str(object_id)
+        if isinstance(group, dict) and isinstance(group.get(uid), dict):
+            group[uid]["state"] = "RUNNING"
             self.async_update_listeners()
         else:
             _LOGGER.debug(
