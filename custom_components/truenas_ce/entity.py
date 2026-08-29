@@ -1131,9 +1131,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
         Keys are the raw snake_case ``variable`` names, not humanized display
         labels: state attributes are meant to be machine-readable for
-        templates/automations, and HA's own ``state_attributes`` strings.json
-        translations (see "uuids") already provide the display label by
-        looking up the literal key.
+        templates/automations. HA's frontend already humanizes any key
+        without an explicit ``state_attributes`` strings.json entry (e.g.
+        "link_state" -> "Link State"); an explicit entry is only needed to
+        override that generic fallback, as done for "uuids".
         """
         attributes = dict(super().extra_state_attributes or {})
         for variable in self.entity_description.data_attributes_list:
