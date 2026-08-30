@@ -45,9 +45,7 @@ from .const import (
     ERR_INVALID_KEY,
     ISSUE_MIGRATION_ROLLBACK,
     ISSUE_STATISTICS_ORPHANED,
-    KILOBITS_TO_KIBIBYTES_FACTOR,
     LEGACY_DOMAIN,
-    LINK_STATE_UP,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
     MONITOR_GROUP_CLOUDSYNC,
@@ -60,15 +58,10 @@ from .const import (
     MONITOR_GROUP_SNAPSHOTS,
     MONITOR_GROUP_UPS,
     MONITOR_GROUP_VMS,
-    UPTIME_EPOCH_TOLERANCE_SECONDS,
 )
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
-
-# TrueNAS reporting (netdata) API method names.
-_NETDATA_GRAPH = "reporting.netdata_graph"
-_NETDATA_GRAPHS = "reporting.netdata_graphs"
 
 # Job-progress fields shared by the cloudsync, replication and rsync queries.
 _JOB_PROGRESS_VALS: list[ApiValueSpec] = [
@@ -149,26 +142,6 @@ def _assign_certificate_identities(
         cert["_identity"] = (
             common if common and common not in poisoned_commons else cert.get("name")
         )
-
-
-# ---------------------------
-#   _stat_name_similar
-# ---------------------------
-def _stat_name_similar(a: str, b: str) -> bool:
-    """Return True if two stat graph names look like near-misses of each other."""
-    a_l, b_l = a.lower(), b.lower()
-    if a_l == b_l:
-        return False
-    if a_l.replace("_", "") == b_l.replace("_", ""):
-        return True
-    if (
-        a_l.startswith(b_l)
-        or a_l.endswith(b_l)
-        or b_l.startswith(a_l)
-        or b_l.endswith(a_l)
-    ):
-        return True
-    return abs(len(a_l) - len(b_l)) <= 2 and a_l[:3] == b_l[:3]
 
 
 # ---------------------------
@@ -345,15 +318,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # self.ds[...] entries directly below.
         self.state = TrueNASState(self.api.client)
 
-        self._systemstats_errored: dict[str, datetime] = {}
-        self._systemstats_error_cooldown = timedelta(minutes=10)
         self.datasets_hass_device_id = None
         self.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
 
-        self._is_virtual = False
         self._version_major: int = 0
         self._version_minor: int = 0
-        self._unknown_system_stat_names: set[str] = set()
 
         # Common names that have ever been shared by more than one certificate
         # in a poll -- see ``_assign_certificate_identities`` for why this
@@ -521,11 +490,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         err,
                     )
 
-            # get_systeminfo populates ds["interface"] and _is_virtual, which
-            # get_systemstats reads to decide whether to fetch the interface
-            # graph (and to skip cputemp on VMs). Run it before the concurrent
-            # jobs so the first cycle does not skip the interface graph, which
-            # would leave RX/TX at 0 until the next poll.
+            # get_interface (not get_systeminfo) now populates ds["interface"],
+            # and virtualization detection now lives inside TrueNASState itself
+            # rather than a local self._is_virtual. get_systemstats still needs
+            # both ds["system_info"] and a populated ds["interface"] before it
+            # runs (its rx/tx enrichment is a no-op on an empty interface map),
+            # so both are run before the concurrent jobs -- otherwise the first
+            # cycle would skip the interface graph, leaving RX/TX at 0 until
+            # the next poll.
             await _run_job(self.get_systeminfo)
 
             # A middleware error leaves ds["system_info"] at its empty initial
@@ -539,6 +511,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Essential system information (hostname) was not received"
                     " from TrueNAS"
                 )
+
+            await _run_job(self.get_interface)
 
             await asyncio.gather(*(_run_job(job) for job in jobs))
 
@@ -737,46 +711,37 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_systeminfo
     # ---------------------------
-    async def get_systeminfo(self) -> None:
-        """Get system info from TrueNAS."""
-        raw_system_info = await self.api.query("system.info")
+    _SYSTEM_INFO_CARRY_FIELDS = (
+        "update_available",
+        "update_progress",
+        "update_jobid",
+        "update_state",
+        "update_version",
+        "smb_connections",
+    )
+    _SYSTEM_INFO_CARRY_DEFAULTS: dict[str, Any] = {
+        "update_available": False,
+        "update_progress": 0,
+        "update_jobid": 0,
+        "update_state": "unknown",
+        "update_version": "unknown",
+        "smb_connections": 0,
+    }
 
-        if isinstance(raw_system_info, dict):
-            self.ds["system_info"] = parse_api(
-                data=self.ds["system_info"],
-                source=raw_system_info,
-                vals=[
-                    {"name": "version", "default": "unknown"},
-                    {"name": "hostname", "default": "unknown"},
-                    {"name": "uptime_seconds", "default": 0},
-                    {"name": "system_serial", "default": "unknown"},
-                    {"name": "system_product", "default": "unknown"},
-                    {"name": "system_manufacturer", "default": "unknown"},
-                    {"name": "physmem", "default": 0},
-                ],
-                ensure_vals=[
-                    {"name": "uptimeEpoch", "default": 0},
-                    {"name": "cpu_temperature", "default": None},
-                    {"name": "load_shortterm", "default": 0.0},
-                    {"name": "load_midterm", "default": 0.0},
-                    {"name": "load_longterm", "default": 0.0},
-                    {"name": "cpu_usage", "default": 0.0},
-                    {"name": "cache_size-arc_value", "default": 0.0},
-                    {"name": "memory-free_value", "default": 0.0},
-                    {"name": "memory-total_value", "default": 0.0},
-                    {"name": "memory-usage_percent", "default": 0},
-                    {"name": "update_available", "type": "bool", "default": False},
-                    {"name": "update_progress", "default": 0},
-                    {"name": "update_jobid", "default": 0},
-                    {"name": "update_state", "default": "unknown"},
-                    {"name": "update_version", "default": "unknown"},
-                    {"name": "smb_connections", "default": 0},
-                ],
-            )
-        else:
-            _LOGGER.debug(
-                "Skipping system_info update due to invalid/empty API response: %r",
-                raw_system_info,
+    async def get_systeminfo(self) -> None:
+        """Get system info via the aiotruenas domain layer.
+
+        Carries forward the update-job and SMB-connection-count fields that
+        ``TrueNASState.get_systeminfo()`` intentionally does not own (see
+        ``get_updatecheck``/the SMB merge) -- otherwise every poll would reset
+        an in-progress system-update job's tracking state to defaults, exactly
+        the bug already fixed for per-app upgrade jobs in ``_refresh_app``.
+        """
+        previous = self.ds["system_info"]
+        self.ds["system_info"] = await self.state.get_systeminfo()
+        for field in self._SYSTEM_INFO_CARRY_FIELDS:
+            self.ds["system_info"][field] = previous.get(
+                field, self._SYSTEM_INFO_CARRY_DEFAULTS[field]
             )
 
         if not self.api.connected():
@@ -793,9 +758,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         self._parse_version()
-        self._detect_virtualization()
-        self._update_uptime()
-        await self._query_interfaces()
+
+    # ---------------------------
+    #   get_interface
+    # ---------------------------
+    async def get_interface(self) -> None:
+        """Get network interfaces via the aiotruenas domain layer."""
+        self.ds["interface"] = _as_str_keyed(await self.state.get_interface())
 
     # ---------------------------
     #   _handle_update_job
@@ -881,88 +850,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return (self._version_major, self._version_minor) >= (26, 0)
 
     # ---------------------------
-    #   _detect_virtualization
-    # ---------------------------
-    def _detect_virtualization(self) -> None:
-        """Detect whether TrueNAS is running virtualized."""
-        self._is_virtual = self.ds["system_info"].get("system_manufacturer") in [
-            "QEMU",
-            "VMware, Inc.",
-            "Microsoft Corporation",
-            "Xen",
-        ] or self.ds["system_info"].get("system_product") in [
-            "VirtualBox",
-            "Virtual Machine",
-        ]
-
-    # ---------------------------
-    #   _update_uptime
-    # ---------------------------
-    def _update_uptime(self) -> None:
-        """Update the uptime epoch, using a tolerance to avoid sensor jitter."""
-        uptime_seconds = self.ds["system_info"].get("uptime_seconds", 0)
-        if uptime_seconds <= 0:
-            return
-
-        now = datetime.now(UTC).replace(microsecond=0)
-        now_epoch = int(now.timestamp())
-        new_uptime_epoch = now_epoch - int(uptime_seconds)
-
-        old_uptime_epoch = self.ds["system_info"].get("uptimeEpoch", 0)
-        if (
-            old_uptime_epoch == 0
-            or abs(new_uptime_epoch - old_uptime_epoch) > UPTIME_EPOCH_TOLERANCE_SECONDS
-        ):
-            self.ds["system_info"]["uptimeEpoch"] = new_uptime_epoch
-        else:
-            self.ds["system_info"]["uptimeEpoch"] = old_uptime_epoch
-
-    # ---------------------------
-    #   _query_interfaces
-    # ---------------------------
-    async def _query_interfaces(self) -> None:
-        """Query network interfaces from TrueNAS."""
-        self.ds["interface"] = parse_api(
-            data=self.ds["interface"],
-            source=await self.api.query("interface.query"),
-            key="id",
-            vals=[
-                {"name": "id", "default": "unknown"},
-                {"name": "name", "default": "unknown"},
-                {"name": "description", "default": "unknown"},
-                {"name": "mtu", "default": "unknown"},
-                {
-                    "name": "link_state",
-                    "source": "state/link_state",
-                    "default": "unknown",
-                },
-                {
-                    "name": "active_media_type",
-                    "source": "state/active_media_type",
-                    "default": "unknown",
-                },
-                {
-                    "name": "active_media_subtype",
-                    "source": "state/active_media_subtype",
-                    "default": "unknown",
-                },
-                {
-                    "name": "link_address",
-                    "source": "state/link_address",
-                    "default": "unknown",
-                },
-            ],
-            ensure_vals=[
-                {"name": "rx", "default": 0},
-                {"name": "tx", "default": 0},
-            ],
-        )
-
-        # Derive a boolean link state for the connectivity binary sensor.
-        for interface in self.ds["interface"].values():
-            interface["link_up"] = interface.get("link_state") == LINK_STATE_UP
-
-    # ---------------------------
     #   get_updatecheck
     # ---------------------------
     async def get_updatecheck(self) -> None:
@@ -989,256 +876,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   get_systemstats
     # ---------------------------
     async def get_systemstats(self) -> None:
-        """Get system statistics."""
-        report_epoch = int(datetime.now(UTC).replace(microsecond=0).timestamp())
-        graph_names = self._select_stat_graph_names()
-        if not graph_names:
-            return
+        """Get system statistics via the aiotruenas domain layer.
 
-        # Use a window matching the poll interval so interface RX/TX values
-        # reflect current traffic rather than a fixed 60-second average.
-        # A minimum of 5 s keeps the window sane at the shortest poll setting.
-        poll = int(
-            self.config_entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
-        )
-        window = max(poll, 5)
-        graph_query = {
-            "start": report_epoch - window - 2,
-            "end": report_epoch - 2,
-            "aggregate": True,
-        }
-        tmp_graph = await self._fetch_stat_graphs(graph_names, graph_query)
-        if not tmp_graph:
-            return
-
-        for item in tmp_graph:
-            if isinstance(item, dict):
-                self._process_system_stat(item)
-
-    def _select_stat_graph_names(self) -> list[str]:
-        """Build the list of stat graphs to query, honoring the error cooldown."""
-        graph_names = ["load", "cputemp", "cpu", "arcsize", "memory"]
-
-        if self.ds["interface"]:
-            graph_names.append("interface")
-
-        # 2DO: Consider making this a config option. Many hypervisors do not
-        # pass through CPU temperatures, causing API errors. However, some do,
-        # so users might want to explicitly enable 'cputemp' polling even for VMs.
-        if self._is_virtual and "cputemp" in graph_names:
-            graph_names.remove("cputemp")
-
-        now = datetime.now(UTC)
-        self._systemstats_errored = {
-            name: ts
-            for name, ts in self._systemstats_errored.items()
-            if now - ts < self._systemstats_error_cooldown
-        }
-
-        return [
-            graph_name
-            for graph_name in graph_names
-            if graph_name not in self._systemstats_errored
-        ]
-
-    async def _fetch_stat_graphs(
-        self, graph_names: list[str], graph_query: dict[str, Any]
-    ) -> list[Any]:
-        """Query each stat graph concurrently; return combined data, track failures."""
-        reporting_path = _NETDATA_GRAPH
-        results = await asyncio.gather(
-            *(
-                self.api.query(reporting_path, params=[graph_name, graph_query])
-                for graph_name in graph_names
-            )
-        )
-
-        tmp_graph: list[Any] = []
-        failed_graphs: list[str] = []
-        for graph_name, graph_data in zip(graph_names, results, strict=True):
-            if isinstance(graph_data, list):
-                tmp_graph.extend(graph_data)
-            else:
-                failed_graphs.append(graph_name)
-
-        self._record_failed_graphs(failed_graphs)
-        return tmp_graph
-
-    def _record_failed_graphs(self, failed_graphs: list[str]) -> None:
-        """Record failed graphs, logging only newly failed ones to avoid spam."""
-        if not failed_graphs:
-            return
-
-        # Only log when a graph transitions into a failed state (i.e. was not
-        # already in _systemstats_errored), to avoid spamming the log on every
-        # coordinator update while the graph remains broken.
-        newly_failed_graphs: list[str] = []
-        now = datetime.now(UTC)
-        for graph_name in failed_graphs:
-            if graph_name not in self._systemstats_errored:
-                newly_failed_graphs.append(graph_name)
-            self._systemstats_errored[graph_name] = now
-
-        if newly_failed_graphs:
-            _LOGGER.warning(
-                "TrueNAS %s failed to fetch graphs: %s",
-                self.host,
-                newly_failed_graphs,
-            )
-
-    def _process_system_stat(self, item: dict[str, Any]) -> None:
-        """Process a single system statistic item."""
-        name = item.get("name")
-        if not name:
-            return
-
-        if name == "cputemp":
-            self._process_cputemp(item)
-        elif name == "load":
-            self._systemstats_process(
-                ("shortterm", "midterm", "longterm"), item, "load"
-            )
-        elif name == "cpu":
-            self._systemstats_process("cpu", item, "cpu")
-            cpu_cpu = self.ds["system_info"].get("cpu_cpu", 0.0)
-            self.ds["system_info"]["cpu_usage"] = round(cpu_cpu, 2)
-        elif name == "interface":
-            tmp_etc = item["identifier"]
-            if tmp_etc in self.ds["interface"]:
-                self._process_system_stat_interface(item, tmp_etc)
-        elif name == "memory":
-            self._process_memory_stat(item)
-        elif name == "arcsize":
-            # netdata exposes the ARC value under the "size" series, not "arc_size".
-            self._systemstats_process("size", item, "arcsize")
-        else:
-            self._handle_unknown_stat(name)
-
-    def _process_cputemp(self, item: dict[str, Any]) -> None:
-        """Store the CPU temperature from a cputemp graph item."""
-        mean_vals = item.get("aggregations", {}).get("mean", {})
-        valid_means = [v for v in mean_vals.values() if isinstance(v, (int, float))]
-        self.ds["system_info"]["cpu_temperature"] = (
-            round(max(valid_means), 2) if valid_means else None
-        )
-
-    def _process_memory_stat(self, item: dict[str, Any]) -> None:
-        """Store memory totals and usage percentage from a memory graph item."""
-        self.ds["system_info"]["memory-total_value"] = round(
-            self.ds["system_info"].get("physmem", 0)
-        )
-
-        self._systemstats_process("available", item, "memory")
-        total_mem = self.ds["system_info"].get("memory-total_value", 0.0)
-        free_mem = self.ds["system_info"].get("memory-free_value", 0.0)
-        if total_mem > 0:
-            self.ds["system_info"]["memory-usage_percent"] = round(
-                100 * (float(total_mem) - float(free_mem)) / float(total_mem)
-            )
-
-    def _handle_unknown_stat(self, name: str) -> None:
-        """Log an unknown stat graph name once to surface potential API changes."""
-        if name in self._unknown_system_stat_names:
-            return
-
-        self._unknown_system_stat_names.add(name)
-        _LOGGER.warning(
-            "TrueNAS %s returned unknown system stat graph name '%s'; "
-            "this may indicate a TrueNAS API change or misconfiguration",
-            self.host,
-            name,
-        )
-
-        known_names = {"cputemp", "load", "cpu", "interface", "memory", "arcsize"}
-        if near_misses := [k for k in known_names if _stat_name_similar(name, k)]:
-            _LOGGER.debug(
-                "Unknown system stat graph name '%s' from TrueNAS %s "
-                "is similar to known names: %s",
-                name,
-                self.host,
-                ", ".join(sorted(near_misses)),
-            )
-
-    def _process_system_stat_interface(
-        self, item: dict[str, Any], tmp_etc: str
-    ) -> None:
-        """Process interface system statistics."""
-        tmp_arr = ("rx", "tx")
-        legend = item.get("legend")
-        if not isinstance(legend, list):
-            for tmp_load in tmp_arr:
-                self.ds["interface"][tmp_etc][tmp_load] = 0.0
-            return
-
-        item["legend"] = [
-            tmp.replace("received", "rx").replace("sent", "tx")
-            for tmp in legend
-            if isinstance(tmp, str)
-        ]
-
-        aggregations = item.get("aggregations")
-        if isinstance(aggregations, dict) and isinstance(
-            aggregations.get("mean"), dict
-        ):
-            aggregations["mean"] = {
-                k.replace("received", "rx").replace("sent", "tx"): v
-                for k, v in aggregations["mean"].items()
-                if isinstance(k, str)
-            }
-
-            for tmp_var in item["legend"]:
-                if tmp_var in tmp_arr:
-                    tmp_val = aggregations["mean"].get(tmp_var) or 0.0
-                    self.ds["interface"][tmp_etc][tmp_var] = round(
-                        (tmp_val * KILOBITS_TO_KIBIBYTES_FACTOR), 2
-                    )
-
-        else:
-            for tmp_load in tmp_arr:
-                self.ds["interface"][tmp_etc][tmp_load] = 0.0
-
-    # ---------------------------
-    #   _systemstats_process
-    # ---------------------------
-    def _systemstats_process(
-        self, arr: str | tuple[str, ...], graph: dict[str, Any], t: str
-    ) -> None:
-        arr = (arr,) if isinstance(arr, str) else tuple(arr)
-        aggregations = graph.get("aggregations")
-        legend = graph.get("legend")
-
-        if not (isinstance(aggregations, dict) and isinstance(legend, list)):
-            self._store_stat_defaults(t, arr)
-            return
-
-        mean_data = aggregations.get("mean")
-        for tmp_var in legend:
-            if tmp_var not in arr:
-                continue
-            tmp_val = (
-                mean_data.get(tmp_var) if isinstance(mean_data, dict) else 0.0
-            ) or 0.0
-            self._store_stat_value(t, tmp_var, tmp_val)
-
-    def _store_stat_value(self, t: str, tmp_var: str, tmp_val: float) -> None:
-        """Store a single processed statistic value under the right key."""
-        info = self.ds["system_info"]
-        if t == "arcsize":
-            info["cache_size-arc_value"] = round(tmp_val, 2)
-        elif t == "cpu":
-            info[f"cpu_{tmp_var}"] = round(tmp_val, 2)
-        elif t == "load":
-            info[f"load_{tmp_var}"] = round(tmp_val, 2)
-        elif t == "memory":
-            if tmp_var == "available":
-                info["memory-free_value"] = round(tmp_val)
-        else:
-            info[tmp_var] = round(tmp_val, 2)
-
-    def _store_stat_defaults(self, t: str, arr: tuple[str, ...]) -> None:
-        """Store zeroed defaults when a statistic graph has no aggregations."""
-        for tmp_var in arr:
-            self._store_stat_value(t, tmp_var, 0.0)
+        Mutates the same dict objects already assigned to
+        ``ds["system_info"]``/``ds["interface"]`` in place (CPU/load/
+        memory/ARC stats, interface rx/tx), so no explicit re-sync is
+        needed here.
+        """
+        await self.state.get_systemstats()
 
     # ---------------------------
     #   get_service
