@@ -1931,10 +1931,27 @@ async def test_get_interface_delegates_to_state() -> None:
 # that plumbing.
 async def test_get_systemstats_delegates_to_state() -> None:
     coord = _bare_coordinator()
+    system_info = {"cpu_usage": 0}
+    interface = {"eth0": {"rx": 0}}
+    coord.ds = {"system_info": system_info, "interface": interface}
+
+    def _mutate_in_place() -> dict[str, object]:
+        system_info["cpu_usage"] = 42
+        interface["eth0"]["rx"] = 123
+        return {}
+
     coord.state = MagicMock()
-    coord.state.get_systemstats = AsyncMock(return_value={})
+    coord.state.get_systemstats = AsyncMock(side_effect=_mutate_in_place)
     await coord.get_systemstats()
     coord.state.get_systemstats.assert_awaited_once()
+    # get_systemstats() has no coordinator-side logic of its own, so the only
+    # thing worth locking in here is that it doesn't clobber ds["system_info"]/
+    # ds["interface"] with its own return value -- the mutate-in-place contract
+    # from TrueNASState is what actually updates them.
+    assert coord.ds["system_info"] is system_info
+    assert coord.ds["interface"] is interface
+    assert system_info["cpu_usage"] == 42
+    assert interface["eth0"]["rx"] == 123
 
 
 # ---------------------------
