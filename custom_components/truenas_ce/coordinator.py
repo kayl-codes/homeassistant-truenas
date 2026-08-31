@@ -329,6 +329,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # must persist across polls instead of being recomputed each time.
         self._poisoned_certificate_commons: set[str] = set()
 
+        # Netdata graph names already warned about as stale (deduped so a
+        # persistently-failing graph doesn't re-log every 60s poll) -- see
+        # get_systemstats()/TrueNASState.systemstats_stale_graphs.
+        self._systemstats_stale_graphs_logged: frozenset[str] = frozenset()
+
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
 
@@ -733,9 +738,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Carries forward the update-job and SMB-connection-count fields that
         ``TrueNASState.get_systeminfo()`` intentionally does not own (see
-        ``get_updatecheck``/the SMB merge) -- otherwise every poll would reset
-        an in-progress system-update job's tracking state to defaults, exactly
-        the bug already fixed for per-app upgrade jobs in ``_refresh_app``.
+        ``get_updatecheck``/the SMB merge). In practice ``TrueNASState`` keeps
+        returning the same dict object it mutates in place, so these fields
+        already survive between polls on their own; this loop is a defensive
+        safety net against relying on that object-identity detail, which is
+        an implementation detail of ``TrueNASState``, not a documented
+        contract -- exactly the bug already fixed for per-app upgrade jobs
+        in ``_refresh_app``.
         """
         previous = self.ds["system_info"]
         self.ds["system_info"] = await self.state.get_systeminfo()
@@ -884,6 +893,27 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         needed here.
         """
         await self.state.get_systemstats()
+        self._log_systemstats_staleness()
+
+    def _log_systemstats_staleness(self) -> None:
+        """Warn once per netdata graph that starts/stays failing, and note
+        recovery, so a stuck graph (stale field values every poll) is
+        visible in the log instead of silently never refreshing.
+        """
+        stale = self.state.systemstats_stale_graphs
+        newly_stale = stale - self._systemstats_stale_graphs_logged
+        if newly_stale:
+            _LOGGER.warning(
+                "TrueNAS system stats graph(s) failed, values may be stale: %s",
+                ", ".join(sorted(newly_stale)),
+            )
+        recovered = self._systemstats_stale_graphs_logged - stale
+        if recovered:
+            _LOGGER.info(
+                "TrueNAS system stats graph(s) recovered: %s",
+                ", ".join(sorted(recovered)),
+            )
+        self._systemstats_stale_graphs_logged = stale
 
     # ---------------------------
     #   get_service

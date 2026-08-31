@@ -77,6 +77,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._version_major = 0
     coord._version_minor = 0
     coord._poisoned_certificate_commons = set()
+    coord._systemstats_stale_graphs_logged = frozenset()
     return coord
 
 
