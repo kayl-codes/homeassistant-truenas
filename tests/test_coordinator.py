@@ -52,7 +52,6 @@ from custom_components.truenas_ce.coordinator import (
     _count_statistics_with_data,
     _is_truenas_sensor_id,
     _PushSourceState,
-    _stat_name_similar,
 )
 
 
@@ -78,25 +77,8 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._version_major = 0
     coord._version_minor = 0
     coord._poisoned_certificate_commons = set()
+    coord._systemstats_stale_graphs_logged = frozenset()
     return coord
-
-
-# ---------------------------
-#   _stat_name_similar
-# ---------------------------
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [
-        ("cpu", "cpu", False),
-        ("arc_size", "arcsize", True),
-        ("cputemp", "cpu", True),
-        ("cpu", "cputemp", True),
-        ("memroy", "memory", True),
-        ("load", "interface", False),
-    ],
-)
-def test_stat_name_similar(a: str, b: str, expected: bool) -> None:
-    assert _stat_name_similar(a, b) == expected
 
 
 # ---------------------------
@@ -257,154 +239,6 @@ def test_parse_version_leaves_unset_on_no_match() -> None:
     coord._parse_version()
     assert coord._version_major == 0
     assert coord._version_minor == 0
-
-
-# ---------------------------
-#   _detect_virtualization
-# ---------------------------
-def test_detect_virtualization_true_for_known_manufacturer() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"system_manufacturer": "QEMU", "system_product": ""}}
-    coord._detect_virtualization()
-    assert coord._is_virtual is True
-
-
-def test_detect_virtualization_true_for_known_product() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {
-        "system_info": {"system_manufacturer": "", "system_product": "VirtualBox"}
-    }
-    coord._detect_virtualization()
-    assert coord._is_virtual is True
-
-
-def test_detect_virtualization_false_for_physical_hardware() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {
-        "system_info": {"system_manufacturer": "Dell Inc.", "system_product": "R730"}
-    }
-    coord._detect_virtualization()
-    assert coord._is_virtual is False
-
-
-# ---------------------------
-#   _update_uptime
-# ---------------------------
-def test_update_uptime_sets_epoch_on_first_run() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": 0}}
-    coord._update_uptime()
-    assert coord.ds["system_info"]["uptimeEpoch"] > 0
-
-
-def test_update_uptime_keeps_old_epoch_within_tolerance() -> None:
-    coord = _bare_coordinator()
-    now_epoch = int(datetime.now(UTC).timestamp())
-    old_epoch = now_epoch - 3600 + 5  # within the 300s tolerance of a fresh reading
-    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": old_epoch}}
-    coord._update_uptime()
-    assert coord.ds["system_info"]["uptimeEpoch"] == old_epoch
-
-
-def test_update_uptime_replaces_stale_epoch_outside_tolerance() -> None:
-    coord = _bare_coordinator()
-    now_epoch = int(datetime.now(UTC).timestamp())
-    old_epoch = now_epoch - 3600 - 600  # 600s drift, well beyond the 300s tolerance
-    coord.ds = {"system_info": {"uptime_seconds": 3600, "uptimeEpoch": old_epoch}}
-    coord._update_uptime()
-    new_epoch = coord.ds["system_info"]["uptimeEpoch"]
-    assert new_epoch != old_epoch
-    # Replaced by a freshly computed epoch (now - uptime_seconds).
-    assert abs(new_epoch - (now_epoch - 3600)) <= 5
-
-
-def test_update_uptime_skips_when_uptime_not_positive() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"uptime_seconds": 0, "uptimeEpoch": 123}}
-    coord._update_uptime()
-    assert coord.ds["system_info"]["uptimeEpoch"] == 123
-
-
-# ---------------------------
-#   _systemstats_process / _store_stat_value / _store_stat_defaults
-# ---------------------------
-def test_systemstats_process_stores_matching_legend_values() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    graph = {
-        "legend": ["shortterm", "midterm", "longterm"],
-        "aggregations": {"mean": {"shortterm": 1.234, "midterm": 2.0}},
-    }
-    coord._systemstats_process(("shortterm", "midterm", "longterm"), graph, "load")
-    assert coord.ds["system_info"]["load_shortterm"] == pytest.approx(1.23)
-    assert coord.ds["system_info"]["load_midterm"] == pytest.approx(2.0)
-    # "longterm" is in the legend but missing from the mean dict, so it falls
-    # back to 0.0 rather than being skipped.
-    assert coord.ds["system_info"]["load_longterm"] == pytest.approx(0.0)
-
-
-def test_systemstats_process_falls_back_to_defaults_without_aggregations() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._systemstats_process("cpu", {}, "cpu")
-    assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(0.0)
-
-
-def test_systemstats_process_defaults_use_dedicated_keys() -> None:
-    """Defaults for a malformed graph land under the same key as a real value.
-
-    Regression test for a bug where defaults bypassed the type-specific key
-    mapping in _store_stat_value and were written under the bare var name
-    instead, leaving the actually-exposed sensor keys stale.
-    """
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._systemstats_process("size", {}, "arcsize")
-    assert coord.ds["system_info"]["cache_size-arc_value"] == 0.0
-    coord._systemstats_process("available", {}, "memory")
-    assert coord.ds["system_info"]["memory-free_value"] == 0
-
-
-def test_systemstats_process_skips_legend_var_not_in_arr() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    graph = {
-        "legend": ["shortterm", "other"],
-        "aggregations": {"mean": {"shortterm": 1.0, "other": 99.0}},
-    }
-    coord._systemstats_process(("shortterm",), graph, "load")
-    assert coord.ds["system_info"]["load_shortterm"] == pytest.approx(1.0)
-    assert "load_other" not in coord.ds["system_info"]
-
-
-def test_store_stat_value_arcsize_uses_dedicated_key() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._store_stat_value("arcsize", "size", 12.345)
-    assert coord.ds["system_info"]["cache_size-arc_value"] == pytest.approx(12.35)
-
-
-def test_store_stat_value_cpu_uses_prefixed_key() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._store_stat_value("cpu", "cpu", 12.345)
-    assert coord.ds["system_info"]["cpu_cpu"] == pytest.approx(12.35)
-
-
-def test_store_stat_value_memory_only_stores_available() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._store_stat_value("memory", "available", 100.0)
-    assert coord.ds["system_info"]["memory-free_value"] == 100
-    coord._store_stat_value("memory", "used", 50.0)
-    assert "memory-used" not in coord.ds["system_info"]
-
-
-def test_store_stat_value_unknown_type_stores_raw_key() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._store_stat_value("diskstats", "reads", 12.345)
-    assert coord.ds["system_info"]["reads"] == pytest.approx(12.35)
 
 
 # ---------------------------
@@ -1495,6 +1329,7 @@ def _stub_all_jobs(coord: TrueNASCoordinator) -> None:
     """Patch every job invoked by ``_async_update_data`` with a no-op AsyncMock."""
     for name in (
         "get_systeminfo",
+        "get_interface",
         "get_systemstats",
         "get_service",
         "get_disk",
@@ -1535,6 +1370,7 @@ async def test_async_update_data_runs_jobs_when_connected() -> None:
     result = await coord._async_update_data()
 
     coord.get_systeminfo.assert_awaited_once()
+    coord.get_interface.assert_awaited_once()
     coord.get_pool.assert_awaited_once()
     coord.get_updatecheck.assert_awaited_once()
     assert result is coord.ds
@@ -1585,6 +1421,7 @@ async def test_async_update_data_raises_when_system_info_missing() -> None:
         await coord._async_update_data()
 
     coord.get_systeminfo.assert_awaited_once()
+    coord.get_interface.assert_not_awaited()
     coord.get_pool.assert_not_awaited()
 
 
@@ -1898,19 +1735,26 @@ async def test_async_clear_orphaned_statistics_clears_and_refreshes() -> None:
 
 
 # ---------------------------
-#   get_systeminfo / _handle_update_job / _query_interfaces
+#   get_systeminfo / _handle_update_job
 # ---------------------------
-async def test_get_systeminfo_parses_valid_response_and_runs_pipeline() -> None:
+# The system.info parsing, uptime-epoch derivation and virtualization
+# detection these tests used to exercise directly now live in and are tested
+# by aiotruenas's own TrueNASState.get_systeminfo() (see
+# tests/test_domain_state.py in that repo). get_systeminfo just delegates,
+# carries forward the update-job/SMB fields TrueNASState intentionally
+# doesn't own, and drives the update-job/version-parsing pipeline, so this
+# only needs to lock in that plumbing.
+async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}, "interface": {}}
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.query = AsyncMock(
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(
         return_value={
             "version": "TrueNAS-SCALE-25.04.1",
             "hostname": "nas1",
             "uptime_seconds": 100,
-            "physmem": 1000,
         }
     )
     coord._handle_update_job = AsyncMock()
@@ -1923,17 +1767,58 @@ async def test_get_systeminfo_parses_valid_response_and_runs_pipeline() -> None:
     coord._handle_update_job.assert_awaited_once()
 
 
-async def test_get_systeminfo_skips_parse_on_invalid_response() -> None:
+async def test_get_systeminfo_carries_forward_update_and_smb_fields() -> None:
+    """An in-progress system-update job's tracking state (and the SMB
+    connection count) must survive across a poll, even though
+    TrueNASState.get_systeminfo() returns a freshly-built dict that never
+    carries these HA-specific fields (the same #101-style regression already
+    fixed for per-app upgrade jobs in ``_refresh_app``)."""
     coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
+    coord.ds = {
+        "system_info": {
+            "update_available": True,
+            "update_progress": 42,
+            "update_jobid": 5,
+            "update_state": "RUNNING",
+            "update_version": "25.04.2",
+            "smb_connections": 3,
+        },
+        "interface": {},
+    }
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.query = AsyncMock(return_value=None)
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(
+        return_value={"version": "TrueNAS-SCALE-25.04.1", "hostname": "nas1"}
+    )
     coord._handle_update_job = AsyncMock()
 
     await coord.get_systeminfo()
 
-    coord._handle_update_job.assert_awaited_once()
+    assert coord.ds["system_info"]["update_available"] is True
+    assert coord.ds["system_info"]["update_progress"] == 42
+    assert coord.ds["system_info"]["update_jobid"] == 5
+    assert coord.ds["system_info"]["update_state"] == "RUNNING"
+    assert coord.ds["system_info"]["update_version"] == "25.04.2"
+    assert coord.ds["system_info"]["smb_connections"] == 3
+
+
+async def test_get_systeminfo_defaults_carried_fields_on_first_run() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}, "interface": {}}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(
+        return_value={"version": "25.04.1", "hostname": "nas1"}
+    )
+    coord._handle_update_job = AsyncMock()
+
+    await coord.get_systeminfo()
+
+    assert coord.ds["system_info"]["update_available"] is False
+    assert coord.ds["system_info"]["update_jobid"] == 0
+    assert coord.ds["system_info"]["smb_connections"] == 0
 
 
 async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> None:
@@ -1941,7 +1826,8 @@ async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> N
     coord.ds = {"system_info": {}, "interface": {}}
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=False)
-    coord.api.query = AsyncMock(return_value={"version": "25.04.1"})
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(return_value={"version": "25.04.1"})
     coord._handle_update_job = AsyncMock()
 
     await coord.get_systeminfo()
@@ -1955,7 +1841,8 @@ async def test_get_systeminfo_returns_early_disconnected_after_update_job() -> N
     coord.api = MagicMock()
     # Connected for the pre-update-job check, disconnected right after.
     coord.api.connected = MagicMock(side_effect=[True, False])
-    coord.api.query = AsyncMock(return_value={"version": "25.04.1"})
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(return_value={"version": "25.04.1"})
     coord._handle_update_job = AsyncMock()
     coord._parse_version = MagicMock()
 
@@ -2017,280 +1904,87 @@ async def test_handle_update_job_returns_early_when_disconnected() -> None:
     assert coord.ds["system_info"]["update_jobid"] == 5
 
 
-async def test_query_interfaces_derives_link_up() -> None:
+# ---------------------------
+#   get_interface
+# ---------------------------
+# The interface.query parsing/link_up derivation these tests used to
+# exercise directly now lives in and is tested by aiotruenas's own
+# TrueNASState.get_interface(). get_interface just delegates and assigns
+# the result, so this only needs to lock in that plumbing.
+async def test_get_interface_delegates_to_state() -> None:
     coord = _bare_coordinator()
     coord.ds = {"interface": {}}
-    coord.api = MagicMock()
-    coord.api.query = AsyncMock(
-        return_value=[
-            {"id": "eth0", "name": "eth0", "state": {"link_state": "LINK_STATE_UP"}},
-            {"id": "eth1", "name": "eth1", "state": {"link_state": "LINK_STATE_DOWN"}},
-        ]
+    coord.state = MagicMock()
+    coord.state.get_interface = AsyncMock(
+        return_value={"eth0": {"name": "eth0", "link_up": True}}
     )
-    await coord._query_interfaces()
+    await coord.get_interface()
     assert coord.ds["interface"]["eth0"]["link_up"] is True
-    assert coord.ds["interface"]["eth1"]["link_up"] is False
 
 
 # ---------------------------
-#   get_systemstats family
+#   get_systemstats
 # ---------------------------
-def test_select_stat_graph_names_includes_interface_when_present() -> None:
+# The netdata-graph fetching/parsing these tests used to exercise directly
+# now lives in and is tested by aiotruenas's own TrueNASState.get_systemstats(),
+# which mutates ds["system_info"]/ds["interface"] in place as a documented
+# side effect. get_systemstats just delegates, so this only needs to lock in
+# that plumbing.
+async def test_get_systemstats_delegates_to_state() -> None:
     coord = _bare_coordinator()
-    coord.ds = {"interface": {"eth0": {}}}
-    coord._is_virtual = False
-    coord._systemstats_errored = {}
-    names = coord._select_stat_graph_names()
-    assert "interface" in names
-    assert "cputemp" in names
+    system_info = {"cpu_usage": 0}
+    interface = {"eth0": {"rx": 0}}
+    coord.ds = {"system_info": system_info, "interface": interface}
+
+    def _mutate_in_place() -> dict[str, object]:
+        system_info["cpu_usage"] = 42
+        interface["eth0"]["rx"] = 123
+        return {}
+
+    coord.state = MagicMock()
+    coord.state.get_systemstats = AsyncMock(side_effect=_mutate_in_place)
+    coord.state.systemstats_stale_graphs = frozenset()
+    await coord.get_systemstats()
+    coord.state.get_systemstats.assert_awaited_once()
+    # get_systemstats() doesn't clobber ds["system_info"]/ds["interface"] with
+    # its own return value -- the mutate-in-place contract from TrueNASState is
+    # what actually updates them. Staleness logging (_log_systemstats_staleness)
+    # is exercised separately below.
+    assert coord.ds["system_info"] is system_info
+    assert coord.ds["interface"] is interface
+    assert system_info["cpu_usage"] == 42
+    assert interface["eth0"]["rx"] == 123
 
 
-def test_select_stat_graph_names_removes_cputemp_for_virtual() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {}}
-    coord._is_virtual = True
-    coord._systemstats_errored = {}
-    names = coord._select_stat_graph_names()
-    assert "cputemp" not in names
-    assert "interface" not in names
-
-
-def test_select_stat_graph_names_filters_cooldown_graphs() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {}}
-    coord._is_virtual = False
-    coord._systemstats_errored = {"cpu": datetime.now(UTC)}
-    coord._systemstats_error_cooldown = timedelta(minutes=10)
-    names = coord._select_stat_graph_names()
-    assert "cpu" not in names
-
-
-async def test_fetch_stat_graphs_collects_and_records_failures() -> None:
-    coord = _bare_coordinator()
-    coord.host = "truenas.local"
-    coord._systemstats_errored = {}
-    coord.api = MagicMock()
-    coord.api.query = AsyncMock(side_effect=[[{"name": "load"}], None])
-    result = await coord._fetch_stat_graphs(["load", "cpu"], {"start": 0, "end": 1})
-    assert result == [{"name": "load"}]
-    assert "cpu" in coord._systemstats_errored
-
-
-def test_record_failed_graphs_logs_only_new_failures(
+async def test_log_systemstats_staleness_warns_once_then_silent_then_recovers(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """New-stale graphs warn once, stay silent while still stale, then log an
+    info once recovered -- and warn again if they go stale a second time."""
     coord = _bare_coordinator()
-    coord.host = "truenas.local"
-    coord._systemstats_errored = {"cpu": datetime.now(UTC)}
-    with caplog.at_level("WARNING"):
-        coord._record_failed_graphs(["cpu", "memory"])
-    assert "memory" in caplog.text
-    assert coord._systemstats_errored.keys() == {"cpu", "memory"}
+    coord.state = MagicMock()
 
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "failed" in caplog.text
 
-def test_record_failed_graphs_noop_for_empty_list() -> None:
-    coord = _bare_coordinator()
-    coord._systemstats_errored = {}
-    coord._record_failed_graphs([])
-    assert coord._systemstats_errored == {}
+        caplog.clear()
+        coord._log_systemstats_staleness()
+        assert caplog.text == ""
 
+        caplog.clear()
+        coord.state.systemstats_stale_graphs = frozenset()
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "recovered" in caplog.text
 
-def test_process_system_stat_dispatches_by_name() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
-    # Missing "aggregations"/"legend" fails the isinstance guard in
-    # _systemstats_process, so it falls back to _store_stat_defaults, which
-    # routes through _store_stat_value the same as a successful value would.
-    coord._process_system_stat({"name": "load"})
-    assert coord.ds["system_info"]["load_shortterm"] == 0.0
-
-
-def test_process_system_stat_ignores_missing_name() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._process_system_stat({})  # must not raise
-
-
-def test_process_system_stat_dispatches_cputemp() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    item = {"name": "cputemp", "aggregations": {"mean": {"core0": 40.0}}}
-    with patch.object(coord, "_process_cputemp") as mock:
-        coord._process_system_stat(item)
-    mock.assert_called_once_with(item)
-
-
-def test_process_system_stat_dispatches_cpu_and_rounds_usage() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._process_system_stat({"name": "cpu"})
-    # No aggregations/legend -> _store_stat_defaults zeroes cpu_cpu, which then
-    # feeds cpu_usage.
-    assert coord.ds["system_info"]["cpu_usage"] == pytest.approx(0.0)
-
-
-def test_process_system_stat_dispatches_interface_for_known_identifier() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {"eth0": {}}}
-    coord._process_system_stat(
-        {"name": "interface", "identifier": "eth0", "legend": "not-a-list"}
-    )
-    assert coord.ds["interface"]["eth0"]["rx"] == 0.0
-    assert coord.ds["interface"]["eth0"]["tx"] == 0.0
-
-
-def test_process_system_stat_ignores_interface_for_unknown_identifier() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
-    coord._process_system_stat({"name": "interface", "identifier": "eth99"})
-    assert coord.ds["interface"] == {}
-
-
-def test_process_system_stat_dispatches_memory() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"physmem": 1000}}
-    coord._process_system_stat(
-        {
-            "name": "memory",
-            "legend": ["available"],
-            "aggregations": {"mean": {"available": 250.0}},
-        }
-    )
-    assert coord.ds["system_info"]["memory-free_value"] == 250
-
-
-def test_process_system_stat_dispatches_arcsize() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._process_system_stat(
-        {
-            "name": "arcsize",
-            "legend": ["size"],
-            "aggregations": {"mean": {"size": 12.345}},
-        }
-    )
-    assert coord.ds["system_info"]["cache_size-arc_value"] == pytest.approx(12.35)
-
-
-def test_process_system_stat_dispatches_unknown_name() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord.host = "truenas.local"
-    coord._unknown_system_stat_names = set()
-    coord._process_system_stat({"name": "weird_stat"})
-    assert "weird_stat" in coord._unknown_system_stat_names
-
-
-def test_process_cputemp_stores_max_mean() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._process_cputemp({"aggregations": {"mean": {"core0": 40.0, "core1": 45.0}}})
-    assert coord.ds["system_info"]["cpu_temperature"] == 45.0
-
-
-def test_process_cputemp_none_when_no_valid_means() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
-    coord._process_cputemp({"aggregations": {"mean": {}}})
-    assert coord.ds["system_info"]["cpu_temperature"] is None
-
-
-def test_process_memory_stat_computes_usage_percent() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"physmem": 1000}}
-    coord._process_memory_stat(
-        {"legend": ["available"], "aggregations": {"mean": {"available": 250.0}}}
-    )
-    assert coord.ds["system_info"]["memory-total_value"] == 1000
-    assert coord.ds["system_info"]["memory-free_value"] == 250
-    assert coord.ds["system_info"]["memory-usage_percent"] == 75
-
-
-def test_handle_unknown_stat_logs_once_and_detects_near_miss(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    coord = _bare_coordinator()
-    coord.host = "truenas.local"
-    coord._unknown_system_stat_names = set()
-    with caplog.at_level("DEBUG"):
-        coord._handle_unknown_stat("cpu_usage")
-        coord._handle_unknown_stat("cpu_usage")
-    assert caplog.text.count("unknown system stat graph name") == 1
-
-
-def test_process_system_stat_interface_updates_rx_tx() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {"eth0": {}}}
-    item = {
-        "legend": ["received", "sent"],
-        "aggregations": {"mean": {"received": 100.0, "sent": 50.0}},
-    }
-    coord._process_system_stat_interface(item, "eth0")
-    assert coord.ds["interface"]["eth0"]["rx"] > 0
-    assert coord.ds["interface"]["eth0"]["tx"] > 0
-
-
-def test_process_system_stat_interface_zeroes_on_invalid_legend() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {"eth0": {}}}
-    coord._process_system_stat_interface({"legend": "not-a-list"}, "eth0")
-    assert coord.ds["interface"]["eth0"]["rx"] == 0.0
-    assert coord.ds["interface"]["eth0"]["tx"] == 0.0
-
-
-def test_process_system_stat_interface_zeroes_when_mean_not_dict() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {"eth0": {}}}
-    item = {
-        "legend": ["received", "sent"],
-        "aggregations": {"mean": "not-a-dict"},
-    }
-    coord._process_system_stat_interface(item, "eth0")
-    assert coord.ds["interface"]["eth0"]["rx"] == 0.0
-    assert coord.ds["interface"]["eth0"]["tx"] == 0.0
-
-
-async def test_get_systemstats_returns_early_without_graph_names() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {}}
-    coord._is_virtual = True
-    coord._systemstats_errored = {
-        name: datetime.now(UTC) for name in ("load", "cpu", "arcsize", "memory")
-    }
-    coord._systemstats_error_cooldown = timedelta(minutes=10)
-    coord.config_entry = MagicMock()
-    coord.config_entry.options = {}
-    coord.api = MagicMock()
-    coord.api.query = AsyncMock()
-    await coord.get_systemstats()
-    coord.api.query.assert_not_awaited()
-
-
-async def test_get_systemstats_returns_when_fetch_yields_no_graphs() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {}, "system_info": {}}
-    coord._is_virtual = True
-    coord._systemstats_errored = {}
-    coord.host = "truenas.local"
-    coord.config_entry = MagicMock()
-    coord.config_entry.options = {}
-    coord.api = MagicMock()
-    coord.api.query = AsyncMock(return_value=None)
-    await coord.get_systemstats()
-    assert coord.ds["system_info"] == {}
-
-
-async def test_get_systemstats_processes_returned_graphs() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"interface": {}, "system_info": {}}
-    coord._is_virtual = True
-    coord._systemstats_errored = {}
-    coord.config_entry = MagicMock()
-    coord.config_entry.options = {}
-    coord.api = MagicMock()
-    coord.api.query = AsyncMock(return_value=[{"name": "load"}])
-    await coord.get_systemstats()
-    assert coord.ds["system_info"]["load_shortterm"] == 0.0
+        caplog.clear()
+        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "failed" in caplog.text
 
 
 # ---------------------------

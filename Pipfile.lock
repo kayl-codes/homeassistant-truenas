@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "68c670be46439faa568d77b62c8ae3169ee128724d069caa976b1d04ffe50c9c"
+            "sha256": "50973fd8aec00b247f7ee5940684e5c23ef7c69e4c3c578b17e83a2b87611512"
         },
         "pipfile-spec": 6,
         "requires": {},
@@ -16,12 +16,12 @@
     "default": {
         "aiotruenas": {
             "hashes": [
-                "sha256:323707469d1d4ad4be472d4cd7ffc39216a38beae6b1d58534d2f2ed076fa184",
-                "sha256:5de1b1582de9d44e24805e2a9891bb7e84e74daaf372fad6675384dc1bfdf751"
+                "sha256:012bc1c1e77a10b48f6f8197777a5de3f4d21f7f79f532732ef878c2b37d2a4f",
+                "sha256:7773dafb47a173a3b1f138854aafede0daadd3118e428c821291321552845aac"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.13'",
-            "version": "==1.4.1"
+            "version": "==1.4.2"
         },
         "websockets": {
             "hashes": [

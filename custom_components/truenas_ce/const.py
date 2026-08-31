@@ -28,17 +28,9 @@ ATTRIBUTION = "Data provided by TrueNAS CE integration"
 SIGNAL_UPDATE_SENSORS = f"{DOMAIN}_update_sensors"
 
 # TrueNAS interface link states (from interface.query -> state/link_state).
-LINK_STATE_UP = "LINK_STATE_UP"
 LINK_STATE_DOWN = "LINK_STATE_DOWN"
 
 DEFAULT_HOST = "trueas.local"
-
-# Conversion factor: kilobits per second to kibibytes per second
-# (1000 / 8192 = ~0.12207)
-KILOBITS_TO_KIBIBYTES_FACTOR = 0.12207
-
-# Tolerance in seconds to prevent Uptime sensor fluctuations
-UPTIME_EPOCH_TOLERANCE_SECONDS = 300
 
 # Default per-query timeout in seconds
 QUERY_TIMEOUT: float = 30.0
