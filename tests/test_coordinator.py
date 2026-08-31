@@ -1943,16 +1943,48 @@ async def test_get_systemstats_delegates_to_state() -> None:
 
     coord.state = MagicMock()
     coord.state.get_systemstats = AsyncMock(side_effect=_mutate_in_place)
+    coord.state.systemstats_stale_graphs = frozenset()
     await coord.get_systemstats()
     coord.state.get_systemstats.assert_awaited_once()
-    # get_systemstats() has no coordinator-side logic of its own, so the only
-    # thing worth locking in here is that it doesn't clobber ds["system_info"]/
-    # ds["interface"] with its own return value -- the mutate-in-place contract
-    # from TrueNASState is what actually updates them.
+    # get_systemstats() doesn't clobber ds["system_info"]/ds["interface"] with
+    # its own return value -- the mutate-in-place contract from TrueNASState is
+    # what actually updates them. Staleness logging (_log_systemstats_staleness)
+    # is exercised separately below.
     assert coord.ds["system_info"] is system_info
     assert coord.ds["interface"] is interface
     assert system_info["cpu_usage"] == 42
     assert interface["eth0"]["rx"] == 123
+
+
+async def test_log_systemstats_staleness_warns_once_then_silent_then_recovers(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """New-stale graphs warn once, stay silent while still stale, then log an
+    info once recovered -- and warn again if they go stale a second time."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock()
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "failed" in caplog.text
+
+        caplog.clear()
+        coord._log_systemstats_staleness()
+        assert caplog.text == ""
+
+        caplog.clear()
+        coord.state.systemstats_stale_graphs = frozenset()
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "recovered" in caplog.text
+
+        caplog.clear()
+        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
+        coord._log_systemstats_staleness()
+        assert "cpu" in caplog.text
+        assert "failed" in caplog.text
 
 
 # ---------------------------

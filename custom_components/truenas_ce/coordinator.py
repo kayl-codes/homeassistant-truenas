@@ -896,9 +896,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._log_systemstats_staleness()
 
     def _log_systemstats_staleness(self) -> None:
-        """Warn once per netdata graph that starts/stays failing, and note
-        recovery, so a stuck graph (stale field values every poll) is
-        visible in the log instead of silently never refreshing.
+        """Warn once when a netdata graph starts failing (staying silent
+        while it keeps failing), and log once when it recovers, so a stuck
+        graph (stale field values every poll) is visible in the log instead
+        of silently never refreshing.
         """
         stale = self.state.systemstats_stale_graphs
         newly_stale = stale - self._systemstats_stale_graphs_logged
