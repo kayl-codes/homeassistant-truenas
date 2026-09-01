@@ -127,6 +127,11 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "TrueNAS"
     assert result["data"][CONF_HOST] == "truenas.example.com"
+    # The data-unit display preference isn't needed to connect, so it belongs
+    # in options (mutable later via the options flow) rather than the
+    # immutable connection data.
+    assert CONF_DATA_UNIT not in result["data"]
+    assert result["options"][CONF_DATA_UNIT] == DEFAULT_DATA_UNIT
 
 
 async def test_user_flow_creates_entry_with_system_id_as_unique_id(
@@ -662,7 +667,49 @@ async def test_migrate_import_prefills_and_creates_entry(hass: HomeAssistant) ->
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOST] == "legacy.example.com"
-    assert result["options"] == {CONF_POLL_INTERVAL: "30"}
+    # The legacy entry never had CONF_DATA_UNIT in its own options, so the
+    # value just submitted through the migration form is carried over there.
+    assert CONF_DATA_UNIT not in result["data"]
+    assert result["options"] == {CONF_POLL_INTERVAL: "30", CONF_DATA_UNIT: "GB"}
+
+
+@pytest.mark.usefixtures("_mock_connection_ok")
+async def test_migrate_import_defaults_data_unit_from_legacy_options(
+    hass: HomeAssistant,
+) -> None:
+    """The migration form's data-unit default reflects a value already
+    customized via the legacy entry's own options flow, not the (possibly
+    stale) value in its connection data -- and an explicit choice made
+    during migration always wins over whatever the legacy entry had stored.
+    """
+    MockConfigEntry(
+        domain=LEGACY_DOMAIN,
+        data=_legacy_entry().data,  # CONF_DATA_UNIT: "GB" here
+        options={CONF_POLL_INTERVAL: "30", CONF_DATA_UNIT: "GiB"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "migrate_import"}
+    )
+    defaults = result["data_schema"]({})
+    assert defaults[CONF_DATA_UNIT] == "GiB"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "TrueNAS",
+            CONF_HOST: "legacy.example.com",
+            CONF_API_KEY: "old-key",
+            CONF_VERIFY_SSL: True,
+            CONF_CRONJOB_SKIP_DISABLED: False,
+            CONF_DATA_UNIT: "GB",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_DATA_UNIT] == "GB"
 
 
 @pytest.mark.usefixtures("_mock_connection_ok")
@@ -916,3 +963,22 @@ async def test_options_flow_updates_entry(hass: HomeAssistant) -> None:
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == new_options
+
+
+async def test_options_flow_defaults_data_unit_from_legacy_data(
+    hass: HomeAssistant,
+) -> None:
+    """A pre-existing entry with CONF_DATA_UNIT only in .data (from before it
+    moved to .options) still shows its actual current preference in the
+    options form, instead of silently reverting to DEFAULT_DATA_UNIT the
+    moment the user saves any other, unrelated option.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, data=_user_input(**{CONF_DATA_UNIT: "GB"}), options={}
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    defaults = result["data_schema"]({})
+    assert defaults[CONF_DATA_UNIT] == "GB"
