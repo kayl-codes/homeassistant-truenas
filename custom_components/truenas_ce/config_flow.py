@@ -540,10 +540,22 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Save instance
         if not errors:
+            # The data-unit display preference isn't needed to connect, so it
+            # belongs in options (mutable later via the options flow) rather
+            # than the connection data. truenas_config[CONF_DATA_UNIT] already
+            # reflects the right precedence -- prefilled from the legacy
+            # entry's options/data by async_step_migrate_import, then
+            # overridden by whatever the user actually submitted -- so it
+            # always wins over the legacy entry's other, unrelated options.
+            data = {k: v for k, v in truenas_config.items() if k != CONF_DATA_UNIT}
+            options = dict(self._legacy_options)
+            options[CONF_DATA_UNIT] = truenas_config.get(
+                CONF_DATA_UNIT, DEFAULT_DATA_UNIT
+            )
             return self.async_create_entry(
                 title=truenas_config[CONF_NAME],
-                data=truenas_config,
-                options=self._legacy_options or None,
+                data=data,
+                options=options,
             )
         return None
 
@@ -670,7 +682,10 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_CRONJOB_SKIP_DISABLED: legacy.data.get(
                         CONF_CRONJOB_SKIP_DISABLED, DEFAULT_CRONJOB_SKIP_DISABLED
                     ),
-                    CONF_DATA_UNIT: legacy.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT),
+                    CONF_DATA_UNIT: legacy.options.get(
+                        CONF_DATA_UNIT,
+                        legacy.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT),
+                    ),
                 }
             )
             self._legacy_options = dict(legacy.options)
@@ -847,7 +862,16 @@ class TrueNASOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
+        # A pre-existing entry may still carry CONF_DATA_UNIT only in .data
+        # (from before it moved to .options); fall back to it here so the
+        # form shows the entry's actual current preference instead of
+        # silently reverting it to DEFAULT_DATA_UNIT on the next save.
+        options = dict(self.config_entry.options)
+        options.setdefault(
+            CONF_DATA_UNIT,
+            self.config_entry.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT),
+        )
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(self.config_entry.options),
+            data_schema=_options_schema(options),
         )
