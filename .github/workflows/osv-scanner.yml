@@ -1,0 +1,45 @@
+name: OSV-Scanner
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'Pipfile.lock'
+      - '.github/workflows/osv-scanner.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'Pipfile.lock'
+      - '.github/workflows/osv-scanner.yml'
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  scan-scheduled:
+    if: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67" # v2.5.1
+    with:
+      # Pipfile.lock's `develop` section pins ~130 dev/test-only transitive deps
+      # (the full homeassistant chain) that we can't bump without breaking pinned
+      # test tooling. Unlike scan-pr (which diffs old/new and only fails on newly
+      # introduced vulns), this reusable workflow has no baseline to diff against
+      # and would fail on any pre-existing advisory in that tree. Report to the
+      # Security tab instead of failing the build; scan-pr still gates merges.
+      fail-on-vuln: false
+
+  scan-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@6e4298ebc4db23e847df9b2e2de2939d6f066c67" # v2.5.1
