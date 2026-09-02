@@ -514,10 +514,11 @@ def test_snapshottask_name_uses_naming_schema_suffix(
             "tank/data Monthly",
         ),
         (
-            # Contrary to any known TrueNAS preset (both dom and dow pinned);
-            # dom is checked first, so this resolves to Monthly.
+            # Standard cron OR-semantics: dom and dow both pinned means
+            # "either match", not "Monthly on that dom day" -- left
+            # unclassified.
             {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "1"},
-            "tank/data Monthly",
+            "tank/data",
         ),
         (
             # No known preset matches (custom "every 2 hours" schedule) ->

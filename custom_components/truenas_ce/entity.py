@@ -994,6 +994,31 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         self._refresh_data()
         super()._handle_coordinator_update()
 
+    @property
+    def available(self) -> bool:
+        """Return False once this entity's referenced object is gone.
+
+        ``_refresh_data`` falls back to an empty dict when a referenced
+        ``self._uid`` no longer has a matching entry in the coordinator's
+        data -- e.g. the disk/dataset/VM/container/pool was deleted, the
+        whole ``data_path`` came back empty on a transient fetch, or (for
+        the event-pushed ``app_stats`` domain) the first stats push for a
+        just-discovered app hasn't arrived yet. The base
+        ``CoordinatorEntity.available`` only checks ``last_update_success``,
+        so without this override such an entity would keep reporting
+        available with stale/empty state. ``_cleanup_orphaned_entities`` runs
+        in this same refresh cycle (it's the first statement of the
+        dispatcher callback that update_controller registers), but only
+        removes entities outright once their uid stops being referenced at
+        all -- this override is what makes a still-registered-but-currently-
+        gone entity report unavailable immediately rather than waiting on
+        that removal. Subclasses that already override ``available`` for a
+        more specific reason (e.g. the app network sensor's "stale" check)
+        still chain through ``super()``, so this applies underneath those
+        too.
+        """
+        return super().available and not (self._uid and not self._data)
+
     def _core_name_translation_key(self) -> str | None:
         """Return Entity._name_translation_key, degrading gracefully.
 

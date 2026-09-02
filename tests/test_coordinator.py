@@ -1425,6 +1425,30 @@ async def test_async_update_data_raises_when_system_info_missing() -> None:
     coord.get_pool.assert_not_awaited()
 
 
+async def test_async_update_data_raises_when_hostname_is_unknown_sentinel() -> None:
+    """A backfilled "unknown" hostname (ensure_vals default) must fail too.
+
+    Distinct from test_async_update_data_raises_when_system_info_missing:
+    here the "hostname" key is present -- as it always is after any
+    dict-shaped reply, thanks to parse_api's ensure_vals default -- but
+    carries the sentinel value that means the field was never actually
+    populated by TrueNAS.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    _stub_all_jobs(coord)
+    coord.ds = {"system_info": {"hostname": "unknown"}}
+
+    with pytest.raises(coordinator_module.UpdateFailed):
+        await coord._async_update_data()
+
+    coord.get_systeminfo.assert_awaited_once()
+    coord.get_interface.assert_not_awaited()
+    coord.get_pool.assert_not_awaited()
+
+
 # ---------------------------
 #   Orphaned statistics / migration rollback lifecycle
 # ---------------------------
