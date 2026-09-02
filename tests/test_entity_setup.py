@@ -745,7 +745,7 @@ async def test_cleanup_keeps_entities_when_dynamic_domain_is_empty(
 #   async_add_entities (via a real platform-setup pass)
 # ---------------------------
 def _fake_api(extra_responses: dict[str, Any] | None = None) -> SimpleNamespace:
-    """A fake TrueNASAPI returning an empty (but present) system.info payload.
+    """A fake TrueNASAPI returning a minimal but valid system.info payload.
 
     Every other query returns None -- matching the coordinator's normal
     handling of a not-yet-responding TrueNAS -- unless ``extra_responses``
@@ -754,6 +754,12 @@ def _fake_api(extra_responses: dict[str, Any] | None = None) -> SimpleNamespace:
     unconditionally every update regardless of monitored groups, so a caller
     only needs to override the one query it actually cares about; this keeps
     the platform-forward pass real while avoiding any actual network I/O.
+
+    system.info must carry a real "hostname" -- the coordinator's
+    essential-hostname check (see ``TrueNASCoordinator._async_update_data``)
+    treats a dict-shaped reply without one as a failed poll and aborts setup,
+    so an empty payload here would fail these tests before they reach the
+    entity-creation behaviour they actually exercise.
 
     ``Any`` mirrors ``TrueNASAPI.query()``'s own return type -- per-method
     structural types aren't modelled here because production code (see
@@ -765,7 +771,7 @@ def _fake_api(extra_responses: dict[str, Any] | None = None) -> SimpleNamespace:
     async def _query(method: str, *args: object, **kwargs: object) -> Any:
         if method in responses:
             return responses[method]
-        return {} if method == "system.info" else None
+        return {"hostname": "truenas.local"} if method == "system.info" else None
 
     # ``TrueNASState`` (aiotruenas's domain layer) calls ``client.call(...)``
     # directly for migrated endpoints instead of going through

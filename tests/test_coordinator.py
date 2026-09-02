@@ -1449,6 +1449,28 @@ async def test_async_update_data_raises_when_hostname_is_unknown_sentinel() -> N
     coord.get_pool.assert_not_awaited()
 
 
+async def test_async_update_data_raises_when_hostname_is_none_or_empty() -> None:
+    """A dict-shaped reply that explicitly sends "hostname": null/"" keeps that
+    literal value instead of being backfilled by ensure_vals (which only
+    fills in a default when the key is absent entirely) -- so it must be
+    rejected on top of the "unknown" sentinel, not just equality-checked.
+    """
+    for bad_hostname in (None, ""):
+        coord = _bare_coordinator()
+        coord.api = MagicMock()
+        coord.api.connected = MagicMock(return_value=True)
+        coord._async_ensure_connected = AsyncMock()
+        _stub_all_jobs(coord)
+        coord.ds = {"system_info": {"hostname": bad_hostname}}
+
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_update_data()
+
+        coord.get_systeminfo.assert_awaited_once()
+        coord.get_interface.assert_not_awaited()
+        coord.get_pool.assert_not_awaited()
+
+
 # ---------------------------
 #   Orphaned statistics / migration rollback lifecycle
 # ---------------------------
