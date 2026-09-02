@@ -366,6 +366,27 @@ def _make_entity(
     return TrueNASEntity(coord, desc, uid)
 
 
+def test_available_keyless_entity_empty_data_path_is_unavailable() -> None:
+    """A keyless entity (no uid) whose whole data_path came back empty on a
+    transient fetch failure must go unavailable too, not just a uid'd one --
+    Sourcery-flagged gap: the old ``self._uid and not self._data`` check
+    short-circuited to True (available) whenever ``self._uid`` was falsy.
+
+    Uses "arc" rather than "system_info" as data_path: ``make_coordinator``
+    always seeds ``ds["system_info"]`` with defaults, so it can never be
+    genuinely empty here.
+    """
+    desc = TrueNASEntityDescription(key="arc_ratio", name="ARC Ratio", data_path="arc")
+    entity = _make_entity(data={}, description=desc)
+    assert entity.available is False
+
+
+def test_available_keyless_entity_populated_data_path_is_available() -> None:
+    desc = TrueNASEntityDescription(key="arc_ratio", name="ARC Ratio", data_path="arc")
+    entity = _make_entity(data={"arc": {"hit_ratio": 0.9}}, description=desc)
+    assert entity.available is True
+
+
 def test_name_static_description_no_uid() -> None:
     entity = _make_entity()
     assert entity.name == "Uptime"
