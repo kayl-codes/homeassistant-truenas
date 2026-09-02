@@ -525,8 +525,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hostname = self.ds["system_info"].get("hostname", "unknown")
             if not isinstance(hostname, str) or not hostname or hostname == "unknown":
                 raise UpdateFailed(
-                    "Essential system information (hostname) was not received"
-                    " from TrueNAS"
+                    "Essential system information (hostname) was missing, empty,"
+                    " or invalid in the response from TrueNAS"
                 )
 
             await _run_job(self.get_interface)

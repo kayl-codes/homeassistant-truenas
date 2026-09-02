@@ -982,10 +982,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Refresh cached data from the coordinator for this entity."""
         data = self.coordinator.data.get(self.entity_description.data_path or "", {})
         self._data: dict[str, Any] = data.get(self._uid, {}) if self._uid else data
-        if self._uid and not self._data:
+        if not self._data:
             _LOGGER.debug(
-                "Data for UID %s is missing or empty in %s",
-                self._uid,
+                "Data for %s is missing or empty in %s",
+                self._uid if self._uid else "keyless entity",
                 self.entity_description.data_path,
             )
 
