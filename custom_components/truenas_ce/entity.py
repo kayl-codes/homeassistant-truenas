@@ -982,10 +982,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         """Refresh cached data from the coordinator for this entity."""
         data = self.coordinator.data.get(self.entity_description.data_path or "", {})
         self._data: dict[str, Any] = data.get(self._uid, {}) if self._uid else data
-        if self._uid and not self._data:
+        if not self._data:
             _LOGGER.debug(
-                "Data for UID %s is missing or empty in %s",
-                self._uid,
+                "Data for %s is missing or empty in %s",
+                self._uid if self._uid else "keyless entity",
                 self.entity_description.data_path,
             )
 
@@ -993,6 +993,35 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
     def _handle_coordinator_update(self) -> None:
         self._refresh_data()
         super()._handle_coordinator_update()
+
+    @property
+    def available(self) -> bool:
+        """Return False once this entity's backing data is gone or empty.
+
+        ``_refresh_data`` falls back to an empty dict both for a referenced
+        ``self._uid`` that no longer has a matching entry in the
+        coordinator's data (e.g. the disk/dataset/VM/container/pool was
+        deleted, or -- for the event-pushed ``app_stats`` domain -- the
+        first stats push for a just-discovered app hasn't arrived yet) and,
+        for a keyless entity, when the whole ``data_path`` came back empty
+        on a transient fetch failure. Checking ``self._data`` alone (instead
+        of only when ``self._uid`` is set) covers both: for a uid'd entity
+        ``self._data`` is that uid's own sub-dict, for a keyless one it's
+        the entire data_path dict, so emptiness means the same thing in
+        both cases. The base ``CoordinatorEntity.available`` only checks
+        ``last_update_success``, so without this override such an entity
+        would keep reporting available with stale/empty state.
+        ``_cleanup_orphaned_entities`` runs in this same refresh cycle (it's
+        the first statement of the dispatcher callback that
+        update_controller registers), but only removes entities outright
+        once their uid stops being referenced at all -- this override is
+        what makes a still-registered-but-currently-gone entity report
+        unavailable immediately rather than waiting on that removal.
+        Subclasses that already override ``available`` for a more specific
+        reason (e.g. the app network sensor's "stale" check) still chain
+        through ``super()``, so this applies underneath those too.
+        """
+        return super().available and bool(self._data)
 
     def _core_name_translation_key(self) -> str | None:
         """Return Entity._name_translation_key, degrading gracefully.

@@ -510,11 +510,23 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # socket). register_system_device() indexes "hostname" out of it
             # right after the first refresh, so failing fast here -- instead of
             # returning ds with that key missing -- is what turns this into a
-            # retried setup instead of a crash.
-            if "hostname" not in self.ds["system_info"]:
+            # retried setup instead of a crash. Checking mere key-presence is
+            # not enough: TrueNASState.get_systeminfo() runs its raw response
+            # through parse_api's ensure_vals, which backfills a "hostname":
+            # "unknown" default -- but only when the key is absent entirely;
+            # a dict-shaped reply that explicitly sends "hostname": null or ""
+            # keeps that literal value instead of being backfilled, so the
+            # sentinel check alone would miss it. Rejecting any falsy/non-str
+            # value (not just the sentinel) catches both cases. Accepted
+            # residual risk: a host actually named "unknown" would collide
+            # with the sentinel and fail every poll -- judged not worth a
+            # second-field check for a name TrueNAS itself never assigns by
+            # default.
+            hostname = self.ds["system_info"].get("hostname", "unknown")
+            if not isinstance(hostname, str) or not hostname or hostname == "unknown":
                 raise UpdateFailed(
-                    "Essential system information (hostname) was not received"
-                    " from TrueNAS"
+                    "Essential system information (hostname) was missing, empty,"
+                    " or invalid in the response from TrueNAS"
                 )
 
             await _run_job(self.get_interface)

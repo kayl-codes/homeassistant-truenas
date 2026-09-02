@@ -868,7 +868,11 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
         step/range/list value on any field, a pinned `month`, or an
         all-wildcard schedule (minute included -- a genuine Hourly preset
         always pins minute to its run time) falls outside every known preset
-        and is left unclassified rather than guessed at.
+        and is left unclassified rather than guessed at. Standard cron
+        OR-semantics also apply when `dom` and `dow` are pinned at the same
+        time: the job then runs on either match, not just monthly on the
+        `dom` days, so that combination isn't a real preset either and is
+        left unclassified rather than mislabeled "Monthly".
         """
         schedule = self._data.get("schedule") if self._data else None
         if not isinstance(schedule, dict) or not schedule:
@@ -884,9 +888,13 @@ class TrueNASSnapshotTaskSensor(TrueNASSensor):
             return None
         if _is_pinned_schedule_field(month):
             return None
-        if _is_pinned_schedule_field(dom):
+        dom_pinned = _is_pinned_schedule_field(dom)
+        dow_pinned = _is_pinned_schedule_field(dow)
+        if dom_pinned and dow_pinned:
+            return None
+        if dom_pinned:
             return _SCHEDULE_LABEL_MONTHLY
-        if _is_pinned_schedule_field(dow):
+        if dow_pinned:
             return _SCHEDULE_LABEL_WEEKLY
         if _is_pinned_schedule_field(hour):
             return _SCHEDULE_LABEL_DAILY
