@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import CONF_NAME
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 
 import custom_components.truenas_ce as init_module
 from custom_components.truenas_ce import (
@@ -816,6 +816,59 @@ async def test_async_setup_entry_wires_coordinator_and_platforms() -> None:
     notify_mock.assert_called_once()
     register_device_mock.assert_called_once_with(hass, entry, coordinator)
     assert coordinator.system_device_id is register_device_mock.return_value
+
+
+async def test_async_setup_entry_closes_api_on_first_refresh_failure() -> None:
+    """A failed first refresh must close the websocket, not leak it.
+
+    ``runtime_data`` is only set after first refresh succeeds, so
+    ``async_unload_entry`` can't find the coordinator to close it on retry --
+    the setup path itself must close the connection it opened.
+    """
+    hass = MagicMock()
+    entry = _config_entry(entry_id="e1")
+
+    coordinator = MagicMock()
+    coordinator.async_config_entry_first_refresh = AsyncMock(
+        side_effect=ConfigEntryNotReady("unreachable")
+    )
+    coordinator.api = SimpleNamespace(close=AsyncMock())
+
+    with (
+        patch.object(init_module, "TrueNASCoordinator", return_value=coordinator),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await async_setup_entry(hass, entry)
+
+    coordinator.api.close.assert_awaited_once()
+    assert not hasattr(entry, "runtime_data")
+
+
+async def test_async_setup_entry_first_refresh_failure_survives_close_error() -> None:
+    """A close() failure during cleanup must not mask ConfigEntryNotReady.
+
+    Swallowing the original exception in favor of whatever close() raises
+    would turn a retryable failure into a hard setup error.
+    """
+    hass = MagicMock()
+    entry = _config_entry(entry_id="e1")
+
+    coordinator = MagicMock()
+    coordinator.async_config_entry_first_refresh = AsyncMock(
+        side_effect=ConfigEntryNotReady("unreachable")
+    )
+    coordinator.api = SimpleNamespace(
+        close=AsyncMock(side_effect=RuntimeError("teardown boom"))
+    )
+
+    with (
+        patch.object(init_module, "TrueNASCoordinator", return_value=coordinator),
+        pytest.raises(ConfigEntryNotReady),
+    ):
+        await async_setup_entry(hass, entry)
+
+    coordinator.api.close.assert_awaited_once()
+    assert not hasattr(entry, "runtime_data")
 
 
 async def test_async_setup_entry_refresh_listener_dispatches_update_signal() -> None:
