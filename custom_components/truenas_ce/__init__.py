@@ -14,7 +14,7 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -567,7 +567,20 @@ async def async_setup_entry(
 ) -> bool:
     """Set up TrueNAS config entry."""
     coordinator = TrueNASCoordinator(hass, config_entry)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady:
+        # _async_ensure_connected() opens the websocket before this failure
+        # point, but runtime_data (which async_unload_entry needs to find the
+        # coordinator) is only set below, after first refresh succeeds -- so a
+        # failed first refresh would otherwise leak the open connection on
+        # every retry. Guard close() itself so a teardown hiccup can't mask
+        # the ConfigEntryNotReady HA needs to see in order to schedule a retry.
+        try:
+            await coordinator.api.close()
+        except Exception:
+            _LOGGER.exception("Error closing TrueNAS connection after failed setup")
+        raise
     config_entry.runtime_data = coordinator
     migrate_entry_identity_namespace(hass, config_entry)
     migrate_legacy_unique_ids(hass, config_entry, coordinator, _ALL_DESCRIPTIONS)
