@@ -28,6 +28,7 @@ from custom_components.truenas_ce.const import (
     ERR_CONNECTION_REFUSED,
     ERR_INVALID_KEY,
     ERR_MALFORMED_RESULT,
+    ERR_TIMEOUT,
     LEGACY_DOMAIN,
 )
 
@@ -95,6 +96,7 @@ def test_text_to_passphrases_empty_value_raises() -> None:
 def test_map_error_to_ha_known_error_passthrough() -> None:
     assert _map_error_to_ha(ERR_INVALID_KEY) == ERR_INVALID_KEY
     assert _map_error_to_ha(ERR_CERT_VERIFY_FAILED) == ERR_CERT_VERIFY_FAILED
+    assert _map_error_to_ha(ERR_TIMEOUT) == ERR_TIMEOUT
 
 
 def test_map_error_to_ha_unknown_error_falls_back() -> None:

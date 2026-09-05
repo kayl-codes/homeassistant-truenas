@@ -69,6 +69,7 @@
             "connection_refused": "Connection failed, connection refused.",
             "handshake_timeout": "Connection failed, timed out while waiting for handshake response.",
             "api_not_found": "Connection failed, API not found.",
+            "timeout": "Connection failed, the API call timed out.",
             "cannot_connect": "Failed to connect to host (TCP port closed or timeout).",
             "malformed_result": "API response is malformed.",
             "certificate_verify_failed": "Certificate verification failed.",
