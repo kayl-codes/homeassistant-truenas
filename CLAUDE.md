@@ -20,7 +20,7 @@ mypy                    # strict typing (config in pyproject.toml, scoped to cus
 
 - Ruff's `target-version` stays **py313** (Ruff 0.15.13's `py314` formatter is buggy — it collapses `except (A, B):` into invalid `except A, B:` — so don't bump it until that's fixed upstream). CI itself now runs on **Python 3.14**, because Home Assistant Core requires `>=3.14.2` from release 2026.5.x onward; `homeassistant` is only a test dependency here, but pinning CI below that threshold silently pulled in a stale, pre-3.14 release lacking newer `homeassistant.const` members.
 - CI also runs Home Assistant **hassfest** validation and HACS validation on push/PR.
-- Runtime deps come from [manifest.json](custom_components/truenas_ce/manifest.json) (`aiotruenas>=1.0.0` from PyPI plus `websockets>=15.0.1`); dev deps are in the [Pipfile](Pipfile). `.github/generate_requirements.py` regenerates `requirements*.txt` from the Pipfile during CI.
+- Runtime deps come from [manifest.json](custom_components/truenas_ce/manifest.json) (`aiotruenas>=1.4.2` from PyPI plus `websockets>=15.0.1`); dev deps are in the [Pipfile](Pipfile). `.github/generate_requirements.py` regenerates `requirements*.txt` from the Pipfile during CI.
 - Bumping the release: `version` in [manifest.json](custom_components/truenas_ce/manifest.json) is the source of truth (`.github/update_version.py` updates it during release).
 - A [.pre-commit-config.yaml](.pre-commit-config.yaml) mirrors the CI Ruff checks locally; run `pre-commit install` once after cloning to enable it.
 

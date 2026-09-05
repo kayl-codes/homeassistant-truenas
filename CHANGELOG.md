@@ -14,6 +14,8 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.9.0] — Entity Identity Rework & Core-Review Hardening
+
 ### Fixed
 - **Entity identity, unique IDs and device identifiers reworked to prevent silent
   collisions:** two TrueNAS servers sharing the same display name, or two dataset/app
@@ -34,14 +36,48 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 - **Query errors no longer masked as empty/zero state:** a transient API error now
   preserves the last known good data instead of wiping it. (#106)
 - **Legacy config secrets redacted in migration backup snapshots.** (#104)
+- **State attribute keys are now generally stable raw API names** (e.g. `model`,
+  `cpu`), with some source keys retaining characters such as hyphens (e.g.
+  `memory-free_value`), instead of humanized display labels (e.g. `"Model"`,
+  `"CPU"`). **This is a breaking change** for any template/automation reading
+  these attributes by name (e.g. `state_attr('sensor.xyz', 'Model')`); use the
+  raw API key (`state_attr('sensor.xyz', 'model')`). (#120)
+- **IPv6 hosts are now correctly bracketed** in the WebSocket connection URL (both
+  manual entry and zeroconf discovery), fixing setup failures against bare IPv6
+  literals. Stat-graph fetches are also now parallelized instead of serial, and a
+  malformed stat-graph response no longer bypasses the type-specific defaulting,
+  leaving the actual sensor stale instead of zeroed. (#118)
+- **The GB/GiB data-unit preference now lives in config-entry options** instead of
+  immutable connection data, so it can actually be changed later via the options
+  flow, and existing entries keep showing their real current preference instead of
+  silently reverting to the default. (#124)
+- **Hardening surfaced during the Home Assistant Core Bronze-quality-scale review:**
+  a broken poll could silently proceed past the essential-hostname check because
+  the sentinel default value ("unknown") was mistaken for a real hostname; entities
+  now correctly report unavailable when their referenced disk/dataset/VM/
+  container/pool/app is gone instead of showing stale or empty state; and a
+  snapshot-task schedule pinning both day-of-month and day-of-week is no longer
+  mislabeled "Monthly" (cron OR-semantics treat that combination as "either
+  match"). (#126)
+- **The TrueNAS API connection is now closed if the very first refresh fails**,
+  preventing a leaked open WebSocket on every setup retry. (#127)
+- **Config-flow timeouts now report a specific "timeout" error** instead of a
+  generic "Unknown error occurred," and malformed non-string date values are
+  normalized consistently with other timestamp fields. (#128)
+- **A TrueNAS API response made up entirely of malformed entries no longer wipes
+  the previous snapshot** — matches the existing "query failed" safety behavior
+  instead of being treated as proof everything was removed. (#129)
 
 ### Changed
 - **Coordinator delegates normalization to `aiotruenas`'s new `TrueNASState` domain
   layer** for 19 endpoints instead of doing it inline — no user-facing behavior change.
   (#116)
+- **System-stats polling also migrated to the TrueNASState domain layer**,
+  completing the interface/system-info/system-stats migration. (#123)
 
 ### Notes
-- Bumps `aiotruenas` to `>=1.4.0` (required for the `TrueNASState` domain layer).
+- Bumps `aiotruenas` to `>=1.4.2` (required for the `TrueNASState` domain layer,
+  plus two follow-up fixes: a send-error deadlock and a parallel-fetch regression).
 
 ## [2.8.0] — Live Push Updates & Migration/Security Hardening
 
