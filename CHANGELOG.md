@@ -36,12 +36,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 - **Query errors no longer masked as empty/zero state:** a transient API error now
   preserves the last known good data instead of wiping it. (#106)
 - **Legacy config secrets redacted in migration backup snapshots.** (#104)
-- **State attribute keys are now stable, machine-readable snake_case identifiers**
-  (e.g. `model`, `cpu`) instead of humanized display labels (e.g. `"Model"`,
-  `"CPU"`) — matching Home Assistant's own attribute convention. **This is a
-  breaking change** for any template/automation reading these attributes by name
-  (e.g. `state_attr('sensor.xyz', 'Model')`); switch to the lowercase key
-  (`state_attr('sensor.xyz', 'model')`). (#120)
+- **State attribute keys are now generally stable raw API names** (e.g. `model`,
+  `cpu`), with some source keys retaining characters such as hyphens (e.g.
+  `memory-free_value`), instead of humanized display labels (e.g. `"Model"`,
+  `"CPU"`). **This is a breaking change** for any template/automation reading
+  these attributes by name (e.g. `state_attr('sensor.xyz', 'Model')`); use the
+  raw API key (`state_attr('sensor.xyz', 'model')`). (#120)
 - **IPv6 hosts are now correctly bracketed** in the WebSocket connection URL (both
   manual entry and zeroconf discovery), fixing setup failures against bare IPv6
   literals. Stat-graph fetches are also now parallelized instead of serial, and a
