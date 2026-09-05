@@ -312,6 +312,42 @@ def test_parse_api_prune_false_keeps_uids_absent_from_partial_source(
     }
 
 
+def test_parse_api_all_malformed_source_with_key_keeps_data(ap: ModuleType) -> None:
+    """A non-empty but entirely malformed response (e.g. [None, None]) is a
+    parsing failure, not proof every object was removed -- must not wipe the
+    previous snapshot the way a genuinely empty list correctly does."""
+    data = {"1": {"name": "pool0"}, "2": {"name": "pool1"}}
+    result = ap.parse_api(data=data, source=[None, "garbage"], key="id")
+    assert result == {"1": {"name": "pool0"}, "2": {"name": "pool1"}}
+
+
+def test_parse_api_partially_malformed_source_still_prunes(ap: ModuleType) -> None:
+    """One valid entry only proves that row parsed -- it says nothing about
+    the other (malformed) rows, so a uid whose row failed to parse this cycle
+    is indistinguishable from one that was genuinely removed and gets pruned
+    just the same. This is a known limitation (see the malformed-entry
+    warning log in parse_api), not a guarantee that this is safe."""
+    data = {"1": {"name": "pool0"}, "2": {"name": "pool1"}}
+    source = [None, {"id": "2", "name": "pool1"}]
+    result = ap.parse_api(data=data, source=source, key="id", vals=[{"name": "name"}])
+    assert result == {"2": {"name": "pool1"}}
+
+
+def test_parse_api_malformed_entry_skipped_before_only_skip_filters(
+    ap: ModuleType,
+) -> None:
+    """A non-dict entry must never reach the only/skip filters -- matches_only
+    and can_skip call entry.get(...) directly and would raise AttributeError
+    on e.g. None, so parsing the rest of the source must not crash."""
+    source = [None, {"name": "keep", "value": "x"}]
+    result = ap.parse_api(
+        source=source,
+        vals=[{"name": "name"}],
+        skip=[{"name": "value", "value": "drop"}],
+    )
+    assert result == {"name": "keep"}
+
+
 def test_parse_api_keyless_source_does_not_prune(ap: ModuleType) -> None:
     """Keyless (single-object) data has no per-uid identity to prune by."""
     result = ap.parse_api(
