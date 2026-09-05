@@ -572,6 +572,15 @@ def test_parse_api_convert_human_date_unparsable_becomes_none(ap: ModuleType) ->
     assert result["1"]["until"] is None
 
 
+def test_parse_api_convert_human_date_non_string_becomes_none(ap: ModuleType) -> None:
+    result = ap.parse_api(
+        source=[{"id": "1", "until": 12345}],
+        key="id",
+        vals=[{"name": "until", "convert": "human_date_to_utc"}],
+    )
+    assert result["1"]["until"] is None
+
+
 def test_parse_api_val_proc_runs_alongside_vals(ap: ModuleType) -> None:
     source = [{"id": "1", "host": "truenas", "port": "443"}]
     val_proc = [

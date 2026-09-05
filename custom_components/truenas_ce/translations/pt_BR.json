@@ -69,6 +69,7 @@
             "connection_refused": "Falha na conexão, conexão recusada.",
             "handshake_timeout": "Falha na conexão, tempo limite excedido ao aguardar a resposta do handshake.",
             "api_not_found": "Falha na conexão, API não encontrada.",
+            "timeout": "Falha na conexão, a chamada à API excedeu o tempo limite.",
             "cannot_connect": "Falha ao conectar ao host (porta TCP fechada ou tempo limite excedido).",
             "malformed_result": "A resposta da API está malformada.",
             "certificate_verify_failed": "Falha na verificação do certificado.",

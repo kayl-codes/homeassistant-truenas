@@ -69,6 +69,7 @@
             "connection_refused": "Pripojenie zlyhalo, pripojenie bolo odmietnuté.",
             "handshake_timeout": "Pripojenie zlyhalo, počas čakania na odpoveď na podanie ruky došlo k časovému oneskoreniu.",
             "api_not_found": "Pripojenie zlyhalo, API sa nenašlo.",
+            "timeout": "Pripojenie zlyhalo, vypršal časový limit volania API.",
             "cannot_connect": "Nepodarilo sa pripojiť k hostiteľovi (TCP port zatvorený alebo časový limit).",
             "malformed_result": "Odpoveď API je chybná.",
             "certificate_verify_failed": "Overenie certifikátu zlyhalo.",
