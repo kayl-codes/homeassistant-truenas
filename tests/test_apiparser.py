@@ -58,6 +58,20 @@ def test_from_entry_nested_path_missing_segment(ap: ModuleType) -> None:
     assert ap.from_entry(entry, "scan/start_time/$date", default="none") == "none"
 
 
+def test_from_entry_null_value_returns_default(ap: ModuleType) -> None:
+    """A present key holding JSON ``null`` must fall back to ``default`` just
+    like a missing key -- TrueNAS sends e.g. app ``memory`` as null when the
+    app is stopped, and the raw None must not leak past the declared default."""
+    assert ap.from_entry({"a": None}, "a", default="fallback") == "fallback"
+
+
+@pytest.mark.parametrize("value", [0, "", False, 0.0])
+def test_from_entry_falsy_non_none_values_pass_through(ap: ModuleType, value) -> None:
+    """Only ``None`` triggers the default fallback -- other falsy values are
+    legitimate data and must be returned as-is."""
+    assert ap.from_entry({"a": value}, "a", default="fallback") == value
+
+
 def test_from_entry_truncates_long_strings(ap: ModuleType) -> None:
     entry = {"a": "x" * 300}
     assert ap.from_entry(entry, "a", max_len=10) == "x" * 10

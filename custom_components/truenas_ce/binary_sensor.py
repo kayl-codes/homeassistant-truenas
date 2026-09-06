@@ -257,7 +257,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.coordinator.api.query("service.start", [self._data["service"]])
+        await self._control_service("START")
         self._raise_if_api_error("start")
 
         await self.coordinator.async_refresh()
@@ -278,7 +278,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.coordinator.api.query("service.stop", [self._data["service"]])
+        await self._control_service("STOP")
         self._raise_if_api_error("stop")
         await self.coordinator.async_refresh()
 
@@ -298,7 +298,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.coordinator.api.query("service.restart", [self._data["service"]])
+        await self._control_service("RESTART")
         self._raise_if_api_error("restart")
 
         await self.coordinator.async_refresh()
@@ -319,7 +319,7 @@ class TrueNASServiceBinarySensor(TrueNASBinarySensor):
             )
             return
 
-        await self.coordinator.api.query("service.reload", [self._data["service"]])
+        await self._control_service("RELOAD")
         self._raise_if_api_error("reload")
 
         await self.coordinator.async_refresh()

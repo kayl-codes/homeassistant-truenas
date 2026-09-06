@@ -871,6 +871,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return (self._version_major, self._version_minor) >= (26, 0)
 
     # ---------------------------
+    #   supports_service_control
+    # ---------------------------
+    def supports_service_control(self) -> bool:
+        """Return True if the "service.control" API method is available.
+
+        TrueNAS 26.0 removed the legacy "service.start"/"service.stop"/
+        "service.restart"/"service.reload" methods entirely, replacing them
+        with a single "service.control"(VERB, service) method.
+        """
+        return (self._version_major, self._version_minor) >= (26, 0)
+
+    # ---------------------------
     #   get_updatecheck
     # ---------------------------
     async def get_updatecheck(self) -> None:

@@ -266,9 +266,19 @@ async def test_service_start_not_stopped_returns() -> None:
 
 async def test_service_start_success() -> None:
     svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = False
     svc.coordinator.api.query.side_effect = [[{"state": "STOPPED"}], None]
     await svc.start()
     svc.coordinator.api.query.assert_awaited_with("service.start", ["ssh"])
+    svc.coordinator.async_refresh.assert_awaited_once()
+
+
+async def test_service_start_success_v26_uses_service_control() -> None:
+    svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = True
+    svc.coordinator.api.query.side_effect = [[{"state": "STOPPED"}], None]
+    await svc.start()
+    svc.coordinator.api.query.assert_awaited_with("service.control", ["START", "ssh"])
     svc.coordinator.async_refresh.assert_awaited_once()
 
 
@@ -281,9 +291,19 @@ async def test_service_stop_not_running_returns() -> None:
 
 async def test_service_stop_success() -> None:
     svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = False
     svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
     await svc.stop()
     svc.coordinator.api.query.assert_awaited_with("service.stop", ["ssh"])
+    svc.coordinator.async_refresh.assert_awaited_once()
+
+
+async def test_service_stop_success_v26_uses_service_control() -> None:
+    svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = True
+    svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
+    await svc.stop()
+    svc.coordinator.api.query.assert_awaited_with("service.control", ["STOP", "ssh"])
     svc.coordinator.async_refresh.assert_awaited_once()
 
 
@@ -296,9 +316,19 @@ async def test_service_restart_stopped_returns() -> None:
 
 async def test_service_restart_success() -> None:
     svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = False
     svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
     await svc.restart()
     svc.coordinator.api.query.assert_awaited_with("service.restart", ["ssh"])
+    svc.coordinator.async_refresh.assert_awaited_once()
+
+
+async def test_service_restart_success_v26_uses_service_control() -> None:
+    svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = True
+    svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
+    await svc.restart()
+    svc.coordinator.api.query.assert_awaited_with("service.control", ["RESTART", "ssh"])
     svc.coordinator.async_refresh.assert_awaited_once()
 
 
@@ -311,9 +341,19 @@ async def test_service_reload_stopped_returns() -> None:
 
 async def test_service_reload_success() -> None:
     svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = False
     svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
     await svc.reload()
     svc.coordinator.api.query.assert_awaited_with("service.reload", ["ssh"])
+    svc.coordinator.async_refresh.assert_awaited_once()
+
+
+async def test_service_reload_success_v26_uses_service_control() -> None:
+    svc = _make_service()
+    svc.coordinator.supports_service_control.return_value = True
+    svc.coordinator.api.query.side_effect = [[{"state": "RUNNING"}], None]
+    await svc.reload()
+    svc.coordinator.api.query.assert_awaited_with("service.control", ["RELOAD", "ssh"])
     svc.coordinator.async_refresh.assert_awaited_once()
 
 

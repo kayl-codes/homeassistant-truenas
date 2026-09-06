@@ -93,4 +93,5 @@ def make_coordinator(
         raise_migration_rollback_issue=MagicMock(),
         supports_update_run=MagicMock(return_value=False),
         supports_container_api=MagicMock(return_value=False),
+        supports_service_control=MagicMock(return_value=False),
     )
