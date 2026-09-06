@@ -2716,6 +2716,14 @@ def test_supports_container_api_from_26() -> None:
     assert coord.supports_container_api() is True
 
 
+def test_supports_service_control_from_26() -> None:
+    coord = _bare_coordinator()
+    coord._version_major, coord._version_minor = 25, 10
+    assert coord.supports_service_control() is False
+    coord._version_major, coord._version_minor = 26, 0
+    assert coord.supports_service_control() is True
+
+
 async def test_get_container_empty_when_not_monitored() -> None:
     coord = _bare_coordinator()
     coord.ds = {"container": {"stale": {}}}

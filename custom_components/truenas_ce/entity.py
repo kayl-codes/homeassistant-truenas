@@ -1211,6 +1211,21 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
                 },
             )
 
+    async def _control_service(self, verb: str) -> None:
+        """Run a service operation, using service.control on TrueNAS 26+.
+
+        TrueNAS 26 removed the legacy "service.<verb>" methods entirely in
+        favour of a single "service.control"(VERB, service) method.
+        """
+        if self.coordinator.supports_service_control():
+            await self.coordinator.api.query(
+                "service.control", [verb, self._data["service"]]
+            )
+        else:
+            await self.coordinator.api.query(
+                f"service.{verb.lower()}", [self._data["service"]]
+            )
+
     async def start(self) -> None:
         """Run function."""
         self._raise_unsupported("start")

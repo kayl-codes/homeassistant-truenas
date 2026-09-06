@@ -52,6 +52,24 @@ async def test_service_switch_turn_off_calls_service_stop_and_refreshes() -> Non
     coordinator.async_request_refresh.assert_awaited_once()
 
 
+async def test_service_switch_turn_on_v26_uses_service_control() -> None:
+    coordinator = make_coordinator(data={"service": {"s1": {"service": "ssh"}}})
+    coordinator.supports_service_control.return_value = True
+    switch = TrueNASServiceSwitch(coordinator, _SERVICE_DESC, "s1")
+    await switch.async_turn_on()
+    coordinator.api.query.assert_awaited_once_with("service.control", ["START", "ssh"])
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_service_switch_turn_off_v26_uses_service_control() -> None:
+    coordinator = make_coordinator(data={"service": {"s1": {"service": "ssh"}}})
+    coordinator.supports_service_control.return_value = True
+    switch = TrueNASServiceSwitch(coordinator, _SERVICE_DESC, "s1")
+    await switch.async_turn_off()
+    coordinator.api.query.assert_awaited_once_with("service.control", ["STOP", "ssh"])
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
 async def test_cloudsync_switch_turn_on_calls_update_method() -> None:
     coordinator = make_coordinator(data={"cloudsync": {"c1": {"id": 3}}})
     switch = TrueNASCloudsyncSwitch(coordinator, _CLOUDSYNC_DESC, "c1")

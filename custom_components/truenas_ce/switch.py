@@ -86,12 +86,14 @@ class TrueNASServiceSwitch(_TrueNASSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
-        await self.coordinator.api.query("service.start", [self._data["service"]])
+        await self._control_service("START")
+        self._raise_if_api_error("start")
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
-        await self.coordinator.api.query("service.stop", [self._data["service"]])
+        await self._control_service("STOP")
+        self._raise_if_api_error("stop")
         await self.coordinator.async_request_refresh()
 
 
