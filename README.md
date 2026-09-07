@@ -1,7 +1,7 @@
 # TrueNAS Integration
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/kayl-codes/homeassistant-truenas?style=plastic)](https://github.com/kayl-codes/homeassistant-truenas/releases)
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=plastic)](https://github.com/hacs/integration)
-[![Project Stage](https://img.shields.io/badge/project%20stage-development-yellow.svg?style=plastic)](#)
+[![Project Stage](https://img.shields.io/badge/project%20stage-active-brightgreen.svg?style=plastic)](#)
 [![GitHub all releases](https://img.shields.io/github/downloads/kayl-codes/homeassistant-truenas/total?style=plastic)](https://github.com/kayl-codes/homeassistant-truenas/releases)
 
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/kayl-codes/homeassistant-truenas/latest?style=plastic)](https://github.com/kayl-codes/homeassistant-truenas/commits/master)
@@ -370,7 +370,7 @@ target:
 
 
 Minimum requirements:
-* TrueNAS 25.04 or later (tested with 25.10.5)
+* TrueNAS 25.04 or later (tested with 25.10.7 and 26.0)
 * Home Assistant 2025.8.0
 
 ## Using TrueNAS development branch
@@ -436,11 +436,12 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   [Remote access, reverse proxies & Cloudflare](#remote-access-reverse-proxies--cloudflare) for
   supported alternatives (local IP/VPN, or a plain TLS-terminating reverse proxy).
 * **TrueNAS development/nightly builds are not officially supported.** The integration is tested
-  against stable TrueNAS releases (currently 25.04–25.10.5); features may break without notice on a
-  development branch. **Exception:** the TrueNAS 26.0+ `container.*` API (replacing the removed
-  Incus `virt.*` API) is already supported ahead of a stable 26.0 release, verified against a
-  26.0.0 nightly/beta build, since installs already on a 26.x beta would otherwise see the
-  Containers group break entirely.
+  against stable TrueNAS releases (currently 25.04–25.10.7); features may break without notice on a
+  development branch. **As of 2.10.0, TrueNAS 26 is fully supported** — ahead of a stable 26.0
+  release, verified live against both a 26.0.0 beta build and 25.10.7. This covers the `container.*`
+  API (replacing the removed Incus `virt.*` API), `service.control` (replacing the removed
+  `service.start`/`stop`/`restart`/`reload` methods), and further hardening in the underlying
+  `aiotruenas` library (1.5.0+) around container attribute normalization and version-string parsing.
 * **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
   **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
   persistent "active" state of its own — this is a standard HA UX limitation, not a bug. The
