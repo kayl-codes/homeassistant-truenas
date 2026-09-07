@@ -14,7 +14,18 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.10.0] — TrueNAS 26 Support
+
+**This release makes the integration TrueNAS 26 ready.**
+
 ### Fixed
+- **Service control (start/stop/restart/reload) now works on TrueNAS 26**, which removed
+  the legacy `service.start`/`service.stop`/`service.restart`/`service.reload` methods in
+  favor of a unified `service.control` API; the integration now detects which API is
+  available and calls the right one.
+- **A source field resolving to a JSON `null` no longer leaked as `None`** into entity
+  state (e.g. a job's `progress`/`percent` before it starts progressing); it now falls
+  back to the field's declared default, same as a genuinely missing field.
 - **Disk temperature sensors could silently freeze** if TrueNAS's netdata graph stopped
   reporting a disk's temperature after the integration's first successful reading — the
   value never refreshed again via the API fallback, with no error in the log. Bumped to
