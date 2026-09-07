@@ -14,6 +14,15 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Fixed
+- **Disk temperature sensors could silently freeze** if TrueNAS's netdata graph stopped
+  reporting a disk's temperature after the integration's first successful reading — the
+  value never refreshed again via the API fallback, with no error in the log. Bumped to
+  `aiotruenas` 1.5.0, which also hardens several other silent-failure paths (directory
+  services, UPS, interface throughput) and adds further TrueNAS 26 compatibility fixes
+  (container attribute normalization, version-string parsing). Thanks @Prythi for
+  reporting! (#131)
+
 ## [2.9.0] — Entity Identity Rework & Core-Review Hardening
 
 ### Fixed

@@ -440,7 +440,9 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   development branch. **Exception:** the TrueNAS 26.0+ `container.*` API (replacing the removed
   Incus `virt.*` API) is already supported ahead of a stable 26.0 release, verified against a
   26.0.0 nightly/beta build, since installs already on a 26.x beta would otherwise see the
-  Containers group break entirely.
+  Containers group break entirely. The underlying `aiotruenas` library (1.5.0+) has additional
+  TrueNAS 26 hardening — container attribute normalization and version-string parsing — on top of
+  this.
 * **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
   **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
   persistent "active" state of its own — this is a standard HA UX limitation, not a bug. The
