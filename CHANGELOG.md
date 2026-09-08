@@ -14,6 +14,8 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.10.1] — UPS Sensor Fix
+
 ### Fixed
 - **UPS current sensor could stay `unavailable` forever after a restart.** TrueNAS's netdata
   backend can return a present-but-empty `aggregations` map for an all-zero-valued metric series
