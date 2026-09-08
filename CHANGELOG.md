@@ -14,6 +14,14 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Fixed
+- **UPS current sensor could stay `unavailable` forever after a restart.** TrueNAS's netdata
+  backend can return a present-but-empty `aggregations` map for an all-zero-valued metric series
+  (e.g. a UPS drawing 0 A), which the integration treated as "no usable reading." Combined with
+  the in-memory last-known-value cache resetting on every Home Assistant restart, an affected UPS
+  metric could never recover. Bumped to `aiotruenas` 1.5.1, which falls back to averaging the raw
+  netdata samples when `aggregations.mean` is missing or empty.
+
 ## [2.10.0] — TrueNAS 26 Support
 
 **This release makes the integration TrueNAS 26 ready.**
