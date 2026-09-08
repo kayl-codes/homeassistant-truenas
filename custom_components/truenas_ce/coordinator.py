@@ -334,6 +334,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # get_systemstats()/TrueNASState.systemstats_stale_graphs.
         self._systemstats_stale_graphs_logged: frozenset[str] = frozenset()
 
+        # Job names (see _run_job) currently failing, deduped so a
+        # persistently-failing job (e.g. an endpoint unsupported on the
+        # user's TrueNAS version) logs one ERROR traceback instead of one
+        # every 60s poll -- see issue #134.
+        self._job_failing: set[str] = set()
+
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
 
@@ -453,6 +459,39 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
 
     # ---------------------------
+    #   _run_job
+    # ---------------------------
+    async def _run_job(self, job: Callable[[], Awaitable[None]]) -> bool:
+        """Run one coordinator job, isolating its failure from the rest of the poll.
+
+        Every per-endpoint job (and, since #134, the throttled update check)
+        is routed through here so a single failing endpoint degrades to a
+        stale/missing value instead of failing the whole coordinator refresh.
+        Logs a full ERROR traceback only the first time a given job starts
+        failing (deduped via ``self._job_failing``) and an INFO line once it
+        recovers, rather than a traceback on every 60s poll for a
+        persistently-failing job -- mirrors ``_log_systemstats_staleness``.
+        Returns True if the job completed without raising, False otherwise,
+        so callers with their own success-gated bookkeeping (e.g. the
+        update-check throttle) can tell the two apart.
+        """
+        name = getattr(job, "__name__", str(job))
+        try:
+            await job()
+        except Exception as err:
+            if name in self._job_failing:
+                _LOGGER.debug("TrueNAS job %s still failing: %s", name, err)
+            else:
+                _LOGGER.exception("Error running TrueNAS job %s: %s", name, err)
+                self._job_failing.add(name)
+            return False
+        else:
+            if name in self._job_failing:
+                _LOGGER.info("TrueNAS job %s recovered", name)
+                self._job_failing.discard(name)
+            return True
+
+    # ---------------------------
     #   _async_update_data
     # ---------------------------
     async def _async_update_data(self) -> dict[str, Any]:
@@ -484,17 +523,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ]
 
         if self.api.connected():
-
-            async def _run_job(job: Callable[[], Awaitable[None]]) -> None:
-                try:
-                    await job()
-                except Exception as err:
-                    _LOGGER.exception(
-                        "Error running TrueNAS job %s: %s",
-                        getattr(job, "__name__", job),
-                        err,
-                    )
-
             # get_interface (not get_systeminfo) now populates ds["interface"],
             # and virtualization detection now lives inside TrueNASState itself
             # rather than a local self._is_virtual. get_systemstats still needs
@@ -503,7 +531,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # so both are run before the concurrent jobs -- otherwise the first
             # cycle would skip the interface graph, leaving RX/TX at 0 until
             # the next poll.
-            await _run_job(self.get_systeminfo)
+            await self._run_job(self.get_systeminfo)
 
             # A middleware error leaves ds["system_info"] at its empty initial
             # value (query() returns None on failure without dropping the
@@ -529,22 +557,30 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     " or invalid in the response from TrueNAS"
                 )
 
-            await _run_job(self.get_interface)
+            await self._run_job(self.get_interface)
 
-            await asyncio.gather(*(_run_job(job) for job in jobs))
+            await asyncio.gather(*(self._run_job(job) for job in jobs))
 
             # get_pool computes pool + dataset capacity internally via
             # TrueNASState now, so it no longer depends on get_dataset()
             # having already run; kept after gather() anyway to avoid
             # reordering the job list for this migration step.
             if self.api.connected():
-                await _run_job(self.get_pool)
+                await self._run_job(self.get_pool)
 
         now = datetime.now(UTC).replace(microsecond=0)
         delta = now - self.last_updatecheck_update
         if self.api.connected() and delta.total_seconds() > 60 * 60 * 12:
-            await self.get_updatecheck()
-            self.last_updatecheck_update = now
+            # Routed through _run_job (like every other job above) so a
+            # failure here -- e.g. a middleware hiccup on "update.status" --
+            # only skips this poll's update check instead of failing the
+            # entire coordinator refresh and taking every entity
+            # unavailable with it (#134). The throttle is only advanced on
+            # success: advancing it unconditionally would let a single
+            # transient failure silently suppress update checks for a full
+            # 12h instead of retrying on the next poll.
+            if await self._run_job(self.get_updatecheck):
+                self.last_updatecheck_update = now
 
         if not self.api.connected():
             raise UpdateFailed("TrueNAS disconnected")

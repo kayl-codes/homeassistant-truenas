@@ -78,6 +78,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._version_minor = 0
     coord._poisoned_certificate_commons = set()
     coord._systemstats_stale_graphs_logged = frozenset()
+    coord._job_failing = set()
     return coord
 
 
@@ -1353,7 +1354,99 @@ def _stub_all_jobs(coord: TrueNASCoordinator) -> None:
         "get_pool",
         "get_updatecheck",
     ):
-        setattr(coord, name, AsyncMock())
+        # __name__ set explicitly (AsyncMock's constructor doesn't honor a
+        # __name__ kwarg): AsyncMock() alone reports "AsyncMock" for every
+        # instance, which would collide all jobs onto one _job_failing dedup
+        # key instead of the distinct bound-method names used in prod.
+        job = AsyncMock()
+        job.__name__ = name
+        setattr(coord, name, job)
+
+
+async def test_run_job_logs_error_once_then_debug_then_recovers(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """First failure logs an ERROR traceback, repeat failures only log at
+    DEBUG (no spam every poll), and recovery logs one INFO line -- see #134.
+    """
+    coord = _bare_coordinator()
+    job = AsyncMock(side_effect=Exception("boom"))
+    job.__name__ = "get_directoryservices"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        assert await coord._run_job(job) is False
+        assert any(
+            r.levelname == "ERROR" and "get_directoryservices" in r.message
+            for r in caplog.records
+        )
+        assert "get_directoryservices" in coord._job_failing
+
+        caplog.clear()
+        assert await coord._run_job(job) is False
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(
+            r.levelname == "DEBUG" and "get_directoryservices" in r.message
+            for r in caplog.records
+        )
+        assert "get_directoryservices" in coord._job_failing
+
+        caplog.clear()
+        job.side_effect = None
+        assert await coord._run_job(job) is True
+        assert any(
+            r.levelname == "INFO" and "recovered" in r.message for r in caplog.records
+        )
+        assert "get_directoryservices" not in coord._job_failing
+
+
+async def test_async_update_data_get_updatecheck_failure_does_not_crash() -> None:
+    """The throttled update-check call is routed through _run_job too, so a
+    failure there degrades that one value instead of failing the whole
+    coordinator refresh and taking every entity unavailable with it (#134).
+
+    The throttle timestamp must NOT advance on failure: doing so would let a
+    single transient error silently suppress update checks for 12h instead
+    of retrying on the next poll.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+    coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    _stub_all_jobs(coord)
+    coord.get_updatecheck = AsyncMock(side_effect=Exception("boom"))
+    coord.get_updatecheck.__name__ = "get_updatecheck"
+    coord.ds = {"system_info": {"hostname": "truenas"}}
+
+    before = coord.last_updatecheck_update
+    result = await coord._async_update_data()  # must not raise
+
+    assert result is coord.ds
+    coord.get_updatecheck.assert_awaited_once()
+    assert coord.last_updatecheck_update == before
+
+
+async def test_async_update_data_get_updatecheck_success_advances_throttle() -> None:
+    """A successful update check does advance the throttle timestamp, so the
+    next poll waits the full 12h again instead of re-checking immediately.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+    coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    _stub_all_jobs(coord)
+    coord.ds = {"system_info": {"hostname": "truenas"}}
+
+    before = coord.last_updatecheck_update
+    await coord._async_update_data()
+
+    coord.get_updatecheck.assert_awaited_once()
+    assert coord.last_updatecheck_update > before
 
 
 async def test_async_update_data_runs_jobs_when_connected() -> None:
