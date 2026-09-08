@@ -464,10 +464,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _run_job(self, job: Callable[[], Awaitable[None]]) -> bool:
         """Run one coordinator job, isolating its failure from the rest of the poll.
 
-        Every per-endpoint job (and, since #134, the throttled update check)
-        is routed through here so a single failing endpoint degrades to a
-        stale/missing value instead of failing the whole coordinator refresh.
-        Logs a full ERROR traceback only the first time a given job starts
+        Per-endpoint jobs whose callers do not perform mandatory postconditions
+        (and, since #134, the throttled update check) are routed through here so
+        a single failing endpoint degrades to a stale/missing value instead of
+        failing the whole coordinator refresh. ``get_systeminfo`` is a
+        deliberate fail-fast exception because its hostname is required by the
+        caller. Logs a full ERROR traceback only the first time a given job starts
         failing (deduped via ``self._job_failing``) and an INFO line once it
         recovers, rather than a traceback on every 60s poll for a
         persistently-failing job -- mirrors ``_log_systemstats_staleness``.
