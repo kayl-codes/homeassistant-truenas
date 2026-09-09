@@ -14,6 +14,17 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.10.2] — Quieter Disk-Temperature Fallback
+
+### Fixed
+- **NVMe disk-temperature sensors logged a WARNING on every poll cycle even though nothing was
+  wrong.** TrueNAS's netdata `disktemp` graph can legitimately return zero samples for a poll
+  (observed for NVMe drives on SCALE 25.10.x) even though the RPC itself succeeds, and the
+  `disk.temperatures` API fallback already populated the temperature correctly — the warning was
+  pure log noise. Bumped to `aiotruenas` 1.5.2, which demotes this to a DEBUG trace, adds a
+  raw-sample fallback for one more empty-`aggregations` response shape, and still warns (once) on
+  a genuinely malformed netdata payload. Thanks @ErikvO for reporting! (#139)
+
 ## [2.10.1] — UPS Sensor & Coordinator Resilience Fixes
 
 ### Fixed
