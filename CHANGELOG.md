@@ -14,9 +14,16 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
-## [2.10.1] — UPS Sensor Fix
+## [2.10.1] — UPS Sensor & Coordinator Resilience Fixes
 
 ### Fixed
+- **A single failing background job (e.g. the throttled update-check) could take every entity
+  unavailable.** The update-check job ran outside the coordinator's per-job exception isolation,
+  so a middleware hiccup there (e.g. on `update.status`) raised out of the whole coordinator
+  refresh instead of degrading gracefully like every other per-endpoint job. It's now routed
+  through the same isolation, and its 12h throttle only advances on success, so a transient
+  failure retries on the next poll instead of silently suppressing checks for a full 12h. Thanks
+  @Korkd for reporting! (#134)
 - **UPS current sensor could stay `unavailable` forever after a restart.** TrueNAS's netdata
   backend can return a present-but-empty `aggregations` map for an all-zero-valued metric series
   (e.g. a UPS drawing 0 A), which the integration treated as "no usable reading." Combined with
