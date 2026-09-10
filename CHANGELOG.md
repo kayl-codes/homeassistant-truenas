@@ -14,6 +14,19 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.10.3] — Quieter UPS Netdata Readings
+
+### Fixed
+- **A UPS that never reports a given metric logged a WARNING on every Home Assistant restart.**
+  Some UPS/NUT drivers permanently never provide a particular reading (observed for
+  `upscurrent` / UPS Input Current) — TrueNAS's netdata graph response is structurally valid but
+  empty (`data: []`, empty `aggregations`), and TrueNAS's own reporting UI shows no value for it
+  either. The integration treated this like a real failure and warned once per `TrueNASState`
+  instance, so it re-fired on every restart. Bumped to `aiotruenas` 1.5.3, which generalizes the
+  v2.10.2 disk-temperature fix to the UPS path: a recognized-but-empty netdata response is now a
+  DEBUG trace, while a genuinely malformed payload or a failed RPC still warns (once). Thanks
+  @mmattel for reporting! (#142)
+
 ## [2.10.2] — Quieter Disk-Temperature Fallback
 
 ### Fixed
