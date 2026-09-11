@@ -231,6 +231,122 @@ def _unwrap_app_stats_message(msg: dict[str, Any]) -> dict[str, Any] | None:
     return msg if isinstance(msg.get("fields"), list) else None
 
 
+# Maps each coordinator job (by method name) to the self.ds key(s) it owns,
+# used by is_data_path_failing() to decide which entities go unavailable
+# while a job is persistently failing (see _run_job/self._job_failing).
+# get_smb and get_ups are included here even though their TrueNASState
+# methods never raise for a failed/malformed API response (that case is
+# covered via _STALE_ENDPOINT_DATA_PATHS/stale_endpoints instead, below) --
+# kept as defense in depth for an exception that isn't a TrueNASError (e.g.
+# a bug in the domain layer itself, or something below aiotruenas's own
+# TrueNASError wrapping) and so does propagate out of the get_*() call:
+# TrueNASState.stale_endpoints's own docstring is explicit that "a primary
+# get_* that fails by raising is not reflected here", so without a
+# _JOB_DATA_PATHS entry that case would go entirely untracked.
+# get_systemstats is intentionally omitted: it only contributes a subset of
+# "system_info"/"interface" fields that get_systeminfo/get_interface already
+# own, so mapping it here would wrongly mark unrelated entities (hostname,
+# version, uptime, ...) unavailable whenever only a netdata-graph fetch
+# fails -- it tracks its own graph failures via _log_systemstats_staleness
+# instead. get_updatecheck (throttled, not in the regular jobs list) is
+# likewise omitted: a failed update check only skips this poll's check
+# (see _async_update_data), it never wipes update_* out of system_info.
+_JOB_DATA_PATHS: dict[str, tuple[str, ...]] = {
+    "get_systeminfo": ("system_info",),
+    "get_interface": ("interface",),
+    "get_pool": ("pool",),
+    "get_dataset": ("dataset",),
+    "get_disk": ("disk",),
+    "get_vm": ("vm",),
+    "get_container": ("container",),
+    "get_directoryservices": ("directoryservices",),
+    "get_alerts": ("alerts",),
+    "get_certificates": ("certificate",),
+    "get_arc": ("arc",),
+    "get_smb": ("smb",),
+    "get_ups": ("ups",),
+    "get_service": ("service",),
+    "get_cloudsync": ("cloudsync",),
+    "get_replication": ("replication",),
+    "get_rsync": ("rsynctask",),
+    "get_snapshottask": ("snapshottask",),
+    "get_scrub": ("scrub",),
+    "get_app": ("app",),
+    "get_app_stats": ("app_stats",),
+    "get_cronjob": ("cronjob",),
+}
+
+# self.ds keys whose backing TrueNASState.get_*() method can silently fall
+# back to a cached/malformed-primary-result snapshot without raising -- see
+# TrueNASState.stale_endpoints's docstring (aiotruenas>=1.5.5, the first
+# release where its known gaps -- e.g. "dataset" below -- were closed).
+# Checked by is_data_path_failing() in addition to _JOB_DATA_PATHS so these
+# entities don't stay "available" forever on a stuck upstream fetch.
+# Deliberately an explicit allowlist, not "any name state.stale_endpoints
+# returns": every one of the eleven names stale_endpoints can report is
+# listed below. "system_info" IS included even though get_systeminfo()
+# above performs no validation of its own on the returned dict: only
+# _async_update_data's own hostname check guards against a system_info that
+# has *never* had a valid hostname (the very first poll); once one poll has
+# cached a real hostname, a later malformed/empty 'system.info' response is
+# swallowed inside TrueNASState.get_systeminfo() itself (returns the
+# previous cached dict, hostname included, without raising), so that check
+# passes silently on every subsequent occurrence -- stale_endpoints is the
+# only signal for that case. Unlike the ha-core fork of this integration,
+# "interface"/"service"/"vm" are ALSO included below: this coordinator
+# (unlike that fork) already calls TrueNASState.get_interface()/
+# get_service()/get_vm() directly, and their malformed-but-non-raising
+# primary responses are tracked by aiotruenas the same way as pool/dataset/
+# etc. Endpoints aiotruenas deliberately never reports here (disk-temp,
+# interface-throughput, the systemstats netdata graphs, TrueNAS version/
+# virtualization detection) stay available-by-design; see stale_endpoints's
+# own docstring for the design rationale.
+#
+# Known accepted over-report for "dataset": TrueNASState.get_pool() also
+# flags "dataset" stale on a malformed 'pool.query' response, even in a poll
+# where get_dataset()'s own 'pool.dataset.query' call -- which this
+# coordinator runs every cycle via asyncio.gather alongside get_pool -- just
+# freshly republished it (see stale_endpoints's own "dataset" docstring
+# section). A 'pool.query'-only outage therefore marks dataset entities
+# unavailable too, even though their data is current; self-corrects as soon
+# as 'pool.query' recovers. Left in rather than dropped because the
+# alternative -- no tracking at all for a genuine 'pool.dataset.query'
+# outage, which get_dataset() also never raises for -- is the more likely
+# and more important failure to catch.
+#
+# Known accepted over-report for "ups": unlike every other name here,
+# TrueNASState folds its own per-graph enrichment into "ups" too (see
+# stale_endpoints's own "the one place the two layers meet" docstring
+# section) -- a single UPS netdata graph (e.g. just "upscurrent") that keeps
+# failing on every poll after once succeeding keeps "ups" in stale_endpoints
+# indefinitely, marking every UPS entity unavailable even though the other
+# graphs stay fresh (real-world precedent: issue #142). This is narrower
+# than the "best-effort enrichment never counts" rule stated above for disk-
+# temp/interface-throughput/systemstats graphs -- aiotruenas's own design
+# deliberately does fold UPS graph staleness in, since (unlike those other
+# three) a UPS's very presence is itself in question once one of its few
+# graphs goes stale, not just one optional metric among many on an
+# otherwise well-populated entity. Kept in rather than excluded because the
+# alternative -- no stale-fetch tracking for UPS at all, since get_ups()
+# never raises -- was one of the two failure modes (job-raises,
+# domain-swallows) this feature exists to close in the first place.
+_STALE_ENDPOINT_DATA_PATHS: frozenset[str] = frozenset(
+    {
+        "pool",
+        "dataset",
+        "directoryservices",
+        "alerts",
+        "smb",
+        "ups",
+        "scrub",
+        "interface",
+        "service",
+        "vm",
+        "system_info",
+    }
+)
+
+
 class _PushSourceState:
     """Per-source push-subscription bookkeeping (sub_id + consumer + breaker).
 
@@ -296,6 +412,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "app_stats": {},
             "cronjob": {},
             "ups": {},
+            "smb": {},
             "alerts": {
                 "count": 0,
                 "messages": [],
@@ -345,6 +462,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._app_stats_event_name: str | None = None
         self._app_stats_sub_id: str | None = None
+        # Root cause of the most recent failed _subscribe_to_app_stats
+        # attempt, surfaced via get_app_stats()'s UpdateFailed (see there).
+        self._app_stats_subscribe_error: BaseException | str | None = None
 
         self._alerts_sub_id: str | None = None
         self._alerts_push_consumer: SubscriptionPushConsumer | None = None
@@ -492,6 +612,32 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.info("TrueNAS job %s recovered", name)
                 self._job_failing.discard(name)
             return True
+
+    # ---------------------------
+    #   is_data_path_failing
+    # ---------------------------
+    def is_data_path_failing(self, data_path: str) -> bool:
+        """Return True if any job owning this ds key is currently failing.
+
+        Also true when aiotruenas itself reports the ds key as stale (see
+        _STALE_ENDPOINT_DATA_PATHS/TrueNASState.stale_endpoints) -- the
+        job-level check alone (``self._job_failing``, populated by
+        ``_run_job``) can't see a domain method that swallows a failed/
+        malformed primary RPC result and returns the previous snapshot
+        instead of raising. Used by TrueNASEntity.available (entity.py) to
+        mark entities unavailable once their backing data has gone stale,
+        not merely once it has gone empty.
+        """
+        if (
+            data_path in _STALE_ENDPOINT_DATA_PATHS
+            and data_path in self.state.stale_endpoints
+        ):
+            return True
+        return any(
+            job_name in self._job_failing
+            for job_name, data_paths in _JOB_DATA_PATHS.items()
+            if data_path in data_paths
+        )
 
     # ---------------------------
     #   _async_update_data
@@ -772,7 +918,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         "update_jobid",
         "update_state",
         "update_version",
-        "smb_connections",
     )
     _SYSTEM_INFO_CARRY_DEFAULTS: dict[str, Any] = {
         "update_available": False,
@@ -780,17 +925,16 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         "update_jobid": 0,
         "update_state": "unknown",
         "update_version": "unknown",
-        "smb_connections": 0,
     }
 
     async def get_systeminfo(self) -> None:
         """Get system info via the aiotruenas domain layer.
 
-        Carries forward the update-job and SMB-connection-count fields that
-        ``TrueNASState.get_systeminfo()`` intentionally does not own (see
-        ``get_updatecheck``/the SMB merge). In practice ``TrueNASState`` keeps
-        returning the same dict object it mutates in place, so these fields
-        already survive between polls on their own; this loop is a defensive
+        Carries forward the update-job fields that ``TrueNASState.
+        get_systeminfo()`` intentionally does not own (see
+        ``get_updatecheck``). In practice ``TrueNASState`` keeps returning
+        the same dict object it mutates in place, so these fields already
+        survive between polls on their own; this loop is a defensive
         safety net against relying on that object-identity detail, which is
         an implementation detail of ``TrueNASState``, not a documented
         contract -- exactly the bug already fixed for per-app upgrade jobs
@@ -1436,13 +1580,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def get_smb(self) -> None:
         """Get active SMB connections via the aiotruenas domain layer.
 
-        ``TrueNASState.get_smb()`` returns a standalone ``{"connections": N}``
-        map; merged into ``system_info`` here so the ``smb_connections``
-        sensor's data path is unchanged.
+        Own ``"smb"`` ds key (not merged into ``system_info``): ``get_smb()``
+        never raises on a failed/malformed ``smb.status`` response, it logs
+        once and returns the previous count instead -- keeping it separate
+        lets ``is_data_path_failing("smb")`` (via ``TrueNASState.
+        stale_endpoints``) mark just the smb_connections entity unavailable
+        on a stuck fetch, rather than every system_info entity (hostname,
+        version, uptime, ...).
         """
-        smb = await self.state.get_smb()
-        if "connections" in smb:
-            self.ds["system_info"]["smb_connections"] = smb["connections"]
+        self.ds["smb"] = await self.state.get_smb()
 
     # ---------------------------
     #   get_ups
@@ -1821,13 +1967,30 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sub_id, queue = await self.api.subscribe_events(event_name)
             if sub_id and queue is not None:
                 self._set_app_stats_subscription(sub_id, event_name)
+                self._app_stats_subscribe_error = None
                 _LOGGER.debug("TrueNAS app.stats subscription established: %s", sub_id)
             else:
+                self._app_stats_subscribe_error = "no sub_id/queue returned"
                 _LOGGER.debug(
                     "TrueNAS app.stats subscription failed: no sub_id/queue returned"
                 )
         except Exception as err:
-            _LOGGER.exception("Failed to establish app.stats subscription: %s", err)
+            # get_app_stats() now raises UpdateFailed when self._app_stats_
+            # sub_id is still unset after this returns, which _run_job logs
+            # as one ERROR-with-traceback per failing transition (deduped).
+            # Logging the underlying exception at ERROR here too, on every
+            # single attempt (this method isn't itself routed through
+            # _run_job), would double that traceback for one failure event
+            # -- kept at DEBUG so a poll-by-poll trace is still available with
+            # debug logging enabled. The actual root cause isn't lost though:
+            # stashed here so get_app_stats() can fold it into the
+            # UpdateFailed it raises (and chain it as the traceback's cause)
+            # instead of that ERROR-level line reading as an unexplained
+            # generic failure.
+            self._app_stats_subscribe_error = err
+            _LOGGER.debug(
+                "Failed to establish app.stats subscription: %s", err, exc_info=err
+            )
 
     # ---------------------------
     #   get_app_stats
@@ -1844,6 +2007,25 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Containers group unmonitored; tear down and clear state.
             return
 
+        if not self.api.connected():
+            # Cannot fetch events while disconnected; skip this poll cycle.
+            return
+
+        if not self.ds.get("app"):
+            # No apps to collect stats for -- nothing a failed resubscribe
+            # below could mark unavailable (app_stats entities are created
+            # per app uid), so skip the subscription dance entirely and just
+            # prune any leftover entries instead of raising over a
+            # persistently-failing resubscribe attempt that has no
+            # user-visible effect here. Accepted ambiguity: an empty
+            # ds["app"] here means either "TrueNAS genuinely has zero apps"
+            # or "get_app() itself hasn't succeeded yet" -- the latter is
+            # already tracked separately via is_data_path_failing("app"),
+            # and no app_stats entities exist in either case, so there is
+            # nothing this method could additionally mark unavailable.
+            self._prune_stale_app_stats(set())
+            return
+
         if not self._app_stats_sub_id or not await self.api.is_subscribed(
             self._app_stats_sub_id
         ):
@@ -1853,18 +2035,29 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Existing sub missing or inactive; re-enters start_app_stats.
             await self.start_app_stats()
             if not self._app_stats_sub_id:
-                _LOGGER.debug(
-                    "get_app_stats: subscription not established, skipping event fetch"
-                )
-                return
-
-        if not self.api.connected():
-            # Cannot fetch events while disconnected; skip this poll cycle.
-            return
-
-        if not self.ds.get("app"):
-            # No apps to collect stats for; skip event fetch.
-            return
+                if not self.api.connected():
+                    # Connection dropped between the connected() check above
+                    # and here (e.g. during is_subscribed()/start_app_stats()'s
+                    # own awaits) -- the poll's other jobs already surface
+                    # "TrueNAS disconnected" via their own connected() guards,
+                    # so raising the subscription-specific message below would
+                    # misattribute the actual root cause.
+                    return
+                # start_app_stats()/_subscribe_to_app_stats() only log
+                # internally and never raise, so this is the one place a
+                # failed resubscribe attempt becomes visible: raise so
+                # is_data_path_failing("app_stats") can mark the app_stats
+                # entities unavailable instead of serving a frozen last-good
+                # snapshot forever. Folds in the stashed root cause (an
+                # exception object chains as the traceback's cause; a plain
+                # reason string, e.g. "no sub_id/queue returned", is just
+                # appended) so the one ERROR line _run_job logs for this
+                # isn't a generic, unexplained failure.
+                cause = self._app_stats_subscribe_error
+                raise UpdateFailed(
+                    f"Could not establish the app.stats subscription with"
+                    f" TrueNAS ({self.host}): {cause}"
+                ) from (cause if isinstance(cause, BaseException) else None)
 
         messages = await self.api.get_subscription_events(self._app_stats_sub_id)
         self._process_app_stats_messages(messages)

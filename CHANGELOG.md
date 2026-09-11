@@ -14,6 +14,36 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.11.0] — Entity-Unavailable Detection for Silently Stale Data
+
+### Added
+- **Entities now go unavailable when TrueNAS silently keeps serving stale data, not just when a
+  background job outright fails.** As of `aiotruenas` 1.5.5, several endpoints swallow a failed
+  refresh internally and keep returning the last-known-good snapshot forever instead of raising —
+  previously invisible from Home Assistant's side. `pool`, `dataset`, `directoryservices`,
+  `alerts`, `smb`, `ups`, `scrub`, `interface`, `service`, `vm` and `system_info` entities now also
+  go unavailable in that case, alongside the pre-existing job-failure detection. See the
+  `entity-unavailable`/`log-when-unavailable` quality-scale notes for the exact mechanism and its
+  known accepted tradeoffs.
+- **App-stats entities now go unavailable if the `app.stats` event subscription can't be
+  (re-)established**, instead of silently serving a frozen last-good snapshot forever.
+
+### Changed
+- **SMB sensor data now lives under its own coordinator key** instead of being folded into the
+  system-info fetch. No user-facing change for a normally configured API key. **Known behavior
+  change:** an API key restricted to read-only/limited SMB permissions previously made the SMB
+  sensor show `0`; it may now go `unavailable` instead, since that response shape is
+  indistinguishable from a genuine transient fetch failure under the new stale-data detection
+  above. If this affects you, please open an issue so we can look at a more targeted fix.
+
+### Notes
+- **UPS entities can all go unavailable together if a single UPS netdata graph gets permanently
+  stuck failing after once succeeding** (e.g. issue #142's `upscurrent`) — `aiotruenas` folds
+  per-graph UPS staleness into the same `stale_endpoints` signal this feature relies on, so this is
+  a known, accepted side effect rather than a new bug.
+- Bumps `aiotruenas` to `>=1.5.5` (adds the `TrueNASState.stale_endpoints` domain-layer signal this
+  feature is built on).
+
 ## [2.10.3] — Quieter UPS Netdata Readings
 
 ### Fixed

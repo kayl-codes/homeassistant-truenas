@@ -62,11 +62,46 @@ rules:
   config-entry-unloading: done
   docs-configuration-parameters: done
   docs-installation-parameters: done
-  entity-unavailable: done
+  entity-unavailable:
+    status: done
+    comment: |
+      Best-effort at ds-key (data_path) granularity, not per-entity -- see
+      TrueNASCoordinator.is_data_path_failing. Covers both a job that raises
+      (_JOB_DATA_PATHS, tracked via _run_job/self._job_failing) and a
+      TrueNASState method that swallows a failed/malformed primary result and
+      returns a cached snapshot instead (aiotruenas>=1.5.5's stale_endpoints,
+      see _STALE_ENDPOINT_DATA_PATHS). pool/dataset/directoryservices/alerts/
+      smb/ups/scrub/interface/service/vm/system_info are all already
+      migrated to TrueNASState, so all eleven reachable stale_endpoints
+      names apply here.
+      Deliberately does not cover best-effort enrichment on top of an
+      otherwise-fresh result (disk temperature, interface throughput, the
+      systemstats netdata graphs, TrueNAS version/virtualization detection)
+      -- aiotruenas's stale_endpoints intentionally excludes these too, since
+      folding them in would pin whole entity groups (all disk/system_info
+      sensors) permanently unavailable on hardware that simply never reports
+      the optional metric; that staleness stays visible only via aiotruenas's
+      finer systemstats_stale_graphs/ups_stale_graphs and debug/warning logs.
+      Known accepted exception to that rule: "ups" IS folded together with
+      its own per-graph enrichment upstream (aiotruenas's stale_endpoints
+      docstring, "the one place the two layers meet") -- a single UPS
+      netdata graph stuck failing after once succeeding (e.g. issue #142's
+      upscurrent) keeps every UPS entity unavailable indefinitely, not just
+      that one metric. Kept rather than excluded because the alternative --
+      no stale-fetch tracking for UPS at all, since get_ups() never raises
+      -- would silently reopen the exact gap this feature exists to close.
   integration-owner: done
   log-when-unavailable:
     status: done
-    comment: Handled by DataUpdateCoordinator (logs once on failure/recovery).
+    comment: |
+      Same job-outcome-transition tracking as entity-unavailable
+      (_run_job/self._job_failing) drives the logging -- one exception
+      traceback per transition into failure, one info-level line on
+      recovery, not a re-log per poll. The stale_endpoints-derived path
+      (get_smb/get_ups/get_pool/get_dataset/get_directoryservices/
+      get_alerts/get_scrub/get_interface/get_service/get_vm/get_systeminfo)
+      instead relies on aiotruenas's own once-per-transition warning/
+      recovery logging inside TrueNASState rather than logging again here.
   parallel-updates: done
   reauthentication-flow: done
   test-coverage:

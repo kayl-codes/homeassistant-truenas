@@ -14,4 +14,4 @@ pytest-asyncio = ">=0.24"
 pytest-cov = ">=6.0"
 
 [packages]
-aiotruenas = ">=1.5.3"
+aiotruenas = ">=1.5.5"

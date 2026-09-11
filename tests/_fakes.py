@@ -94,4 +94,5 @@ def make_coordinator(
         supports_update_run=MagicMock(return_value=False),
         supports_container_api=MagicMock(return_value=False),
         supports_service_control=MagicMock(return_value=False),
+        is_data_path_failing=MagicMock(return_value=False),
     )
