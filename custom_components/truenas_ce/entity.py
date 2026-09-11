@@ -996,7 +996,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
     @property
     def available(self) -> bool:
-        """Return False once this entity's backing data is gone or empty.
+        """Return False once this entity's backing data is gone, empty or stale.
 
         ``_refresh_data`` falls back to an empty dict both for a referenced
         ``self._uid`` that no longer has a matching entry in the
@@ -1017,10 +1017,18 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         once their uid stops being referenced at all -- this override is
         what makes a still-registered-but-currently-gone entity report
         unavailable immediately rather than waiting on that removal.
+        ``coordinator.is_data_path_failing`` additionally covers a
+        data_path whose backing job has been failing (or whose aiotruenas
+        state swallowed a failed/malformed refresh into a stale cached
+        snapshot -- see ``TrueNASState.stale_endpoints``) since a previous
+        poll, so a last-good snapshot isn't reported as available forever.
         Subclasses that already override ``available`` for a more specific
         reason (e.g. the app network sensor's "stale" check) still chain
         through ``super()``, so this applies underneath those too.
         """
+        data_path = self.entity_description.data_path
+        if data_path and self.coordinator.is_data_path_failing(data_path):
+            return False
         return super().available and bool(self._data)
 
     def _core_name_translation_key(self) -> str | None:

@@ -509,26 +509,15 @@ async def test_stop_alerts_noop_when_not_subscribed() -> None:
 # ---------------------------
 # The list/dict-with-sessions parsing and malformed-response fallback these
 # tests used to exercise directly now live in and are tested by aiotruenas's
-# own TrueNASState.get_smb(). get_smb just merges the result's "connections"
-# key into ds["system_info"], so this only needs to lock in that plumbing.
-async def test_get_smb_merges_connections_into_system_info() -> None:
+# own TrueNASState.get_smb(). get_smb just stores the result under its own
+# "smb" ds key, so this only needs to lock in that plumbing.
+async def test_get_smb_stores_result_under_own_ds_key() -> None:
     coord = _bare_coordinator()
-    coord.ds = {"system_info": {}}
+    coord.ds = {"smb": {}}
     coord.state = MagicMock()
     coord.state.get_smb = AsyncMock(return_value={"connections": 2})
     await coord.get_smb()
-    assert coord.ds["system_info"]["smb_connections"] == 2
-
-
-async def test_get_smb_keeps_previous_count_when_key_absent() -> None:
-    """TrueNASState.get_smb() omits "connections" on a malformed/failed
-    response instead of publishing a false "0 connections"."""
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {"smb_connections": 3}}
-    coord.state = MagicMock()
-    coord.state.get_smb = AsyncMock(return_value={})
-    await coord.get_smb()
-    assert coord.ds["system_info"]["smb_connections"] == 3
+    assert coord.ds["smb"] == {"connections": 2}
 
 
 # ---------------------------
@@ -756,8 +745,10 @@ async def test_get_app_stats_does_nothing_when_disconnected_mid_call() -> None:
     assert coord._app_stats_sub_id == original_sub_id
 
 
-async def test_get_app_stats_does_nothing_when_no_apps() -> None:
-    """No apps: get_app_stats is a no-op."""
+async def test_get_app_stats_prunes_stale_entries_when_no_apps() -> None:
+    """No apps: get_app_stats skips the subscription dance entirely (no
+    app_stats entities exist to mark unavailable over a failed resubscribe)
+    and just prunes any leftover app_stats entries."""
     coord = _bare_coordinator()
     coord.ds = {
         "app": {},
@@ -772,7 +763,7 @@ async def test_get_app_stats_does_nothing_when_no_apps() -> None:
     await coord.get_app_stats()
 
     coord.api.get_subscription_events.assert_not_called()
-    assert coord.ds["app_stats"] == {"existing-app": {"app_name": "existing-app"}}
+    assert coord.ds["app_stats"] == {}
 
 
 async def test_get_app_stats_re_subscribes_when_sub_id_missing() -> None:
@@ -787,7 +778,15 @@ async def test_get_app_stats_re_subscribes_when_sub_id_missing() -> None:
     coord.api.is_subscribed = AsyncMock(return_value=False)
     coord._app_stats_sub_id = None
 
-    with patch.object(coord, "start_app_stats", new_callable=AsyncMock) as start_mock:
+    async def _fake_start_app_stats() -> None:
+        coord._app_stats_sub_id = "new-sub-id"
+
+    with patch.object(
+        coord,
+        "start_app_stats",
+        new_callable=AsyncMock,
+        side_effect=_fake_start_app_stats,
+    ) as start_mock:
         await coord.get_app_stats()
 
     start_mock.assert_awaited_once()
@@ -812,6 +811,86 @@ async def test_get_app_stats_re_subscribes_when_existing_sub_not_active() -> Non
         await coord.get_app_stats()
 
     start_mock.assert_awaited_once()
+
+
+async def test_get_app_stats_raises_when_resubscribe_fails() -> None:
+    """start_app_stats()/_subscribe_to_app_stats() never raise on their own --
+
+    get_app_stats() is the one place a persistently failing resubscribe
+    attempt becomes visible, via this raise, so is_data_path_failing
+    ("app_stats") can mark app_stats entities unavailable instead of serving
+    a frozen last-good snapshot forever. The raise also folds in and chains
+    the underlying exception _subscribe_to_app_stats stashed, so the one
+    ERROR line _run_job logs for this isn't a generic, unexplained failure.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord._app_stats_sub_id = None
+    underlying = ValueError("boom")
+    coord._app_stats_subscribe_error = underlying
+
+    with (
+        patch.object(coord, "start_app_stats", new_callable=AsyncMock),
+        pytest.raises(coordinator_module.UpdateFailed) as exc_info,
+    ):
+        await coord.get_app_stats()
+
+    assert "boom" in str(exc_info.value)
+    assert exc_info.value.__cause__ is underlying
+
+
+async def test_get_app_stats_raise_does_not_chain_a_plain_reason_string() -> None:
+    """A failed-resubscribe cause that isn't an exception (e.g. "no sub_id/
+
+    queue returned") is folded into the message but must not be (mis-)used
+    as an exception cause.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord._app_stats_sub_id = None
+    coord._app_stats_subscribe_error = "no sub_id/queue returned"
+
+    with (
+        patch.object(coord, "start_app_stats", new_callable=AsyncMock),
+        pytest.raises(coordinator_module.UpdateFailed) as exc_info,
+    ):
+        await coord.get_app_stats()
+
+    assert "no sub_id/queue returned" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+async def test_get_app_stats_skips_raise_when_disconnected_mid_resubscribe() -> None:
+    """A connection drop between the connected() guard and the resubscribe
+
+    attempt is already surfaced by the poll's other jobs via their own
+    connected() guards -- raising here too would misattribute the actual
+    root cause, so get_app_stats() returns quietly instead.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(side_effect=[True, False])
+    coord.api.is_subscribed = AsyncMock(return_value=False)
+    coord._app_stats_sub_id = None
+
+    with patch.object(coord, "start_app_stats", new_callable=AsyncMock):
+        await coord.get_app_stats()
 
 
 async def test_get_app_stats_skips_malformed_app_name() -> None:
@@ -1399,6 +1478,88 @@ async def test_run_job_logs_error_once_then_debug_then_recovers(
         assert "get_directoryservices" not in coord._job_failing
 
 
+# ---------------------------
+#   is_data_path_failing
+# ---------------------------
+def test_is_data_path_failing_false_when_nothing_failing() -> None:
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset())
+    assert coord.is_data_path_failing("pool") is False
+
+
+def test_is_data_path_failing_true_for_a_failing_job() -> None:
+    """A job that keeps raising (tracked via _job_failing) marks its own
+    ds key(s) failing, e.g. get_dataset -> "dataset"."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset())
+    coord._job_failing = {"get_dataset"}
+    assert coord.is_data_path_failing("dataset") is True
+    assert coord.is_data_path_failing("pool") is False
+
+
+def test_is_data_path_failing_covers_every_path_of_a_multi_path_job() -> None:
+    """A single failing job can own more than one ds key; each is reported.
+
+    No current job actually owns more than one key (_JOB_DATA_PATHS'
+    real-world entries are all one-tuples), so this patches in a synthetic
+    two-path job to exercise the ``for ... in data_paths`` branch itself
+    rather than leaving it untested defense-in-depth code.
+    """
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset())
+    coord._job_failing = {"get_combo"}
+    with patch.dict(
+        coordinator_module._JOB_DATA_PATHS, {"get_combo": ("combo_a", "combo_b")}
+    ):
+        assert coord.is_data_path_failing("combo_a") is True
+        assert coord.is_data_path_failing("combo_b") is True
+    assert coord.is_data_path_failing("combo_a") is False
+
+
+def test_is_data_path_failing_true_for_a_stale_endpoint() -> None:
+    """A TrueNASState method that swallows a failed/malformed primary result
+    (aiotruenas>=1.5.5's stale_endpoints) marks its ds key failing too, even
+    though the backing job itself never raised."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset({"smb"}))
+    assert coord.is_data_path_failing("smb") is True
+    assert coord.is_data_path_failing("ups") is False
+
+
+def test_is_data_path_failing_true_for_system_info_stale_endpoint() -> None:
+    """Included in _STALE_ENDPOINT_DATA_PATHS: "system_info" -- get_systeminfo()
+    performs no validation of its own -- a malformed/empty
+    'system.info' response is swallowed inside TrueNASState.get_systeminfo()
+    itself (it returns the previously cached snapshot without raising), so
+    stale_endpoints is the only signal for that case once one poll has
+    already cached a valid hostname."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset({"system_info"}))
+    assert coord.is_data_path_failing("system_info") is True
+
+
+def test_is_data_path_failing_ignores_a_data_path_outside_the_allowlist() -> None:
+    """_STALE_ENDPOINT_DATA_PATHS is an explicit allowlist, not "any name
+    state.stale_endpoints returns" -- a name outside it (here "arc", which
+    aiotruenas itself never reports since get_arc() always raises instead of
+    swallowing a failure) must not surface via is_data_path_failing."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset({"arc"}))
+    assert coord.is_data_path_failing("arc") is False
+
+
+def test_is_data_path_failing_combines_job_and_stale_endpoint_signals() -> None:
+    """Either signal alone is sufficient -- this exercises both true at once,
+
+    not just each in isolation (see the dedicated single-signal tests for
+    those).
+    """
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset({"pool"}))
+    coord._job_failing = {"get_pool"}
+    assert coord.is_data_path_failing("pool") is True
+
+
 async def test_async_update_data_get_updatecheck_failure_does_not_crash() -> None:
     """The throttled update-check call is routed through _run_job too, so a
     failure there degrades that one value instead of failing the whole
@@ -1906,12 +2067,11 @@ async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
     coord._handle_update_job.assert_awaited_once()
 
 
-async def test_get_systeminfo_carries_forward_update_and_smb_fields() -> None:
-    """An in-progress system-update job's tracking state (and the SMB
-    connection count) must survive across a poll, even though
-    TrueNASState.get_systeminfo() returns a freshly-built dict that never
-    carries these HA-specific fields (the same #101-style regression already
-    fixed for per-app upgrade jobs in ``_refresh_app``)."""
+async def test_get_systeminfo_carries_forward_update_fields() -> None:
+    """An in-progress system-update job's tracking state must survive across
+    a poll, even though TrueNASState.get_systeminfo() returns a freshly-built
+    dict that never carries these HA-specific fields (the same #101-style
+    regression already fixed for per-app upgrade jobs in ``_refresh_app``)."""
     coord = _bare_coordinator()
     coord.ds = {
         "system_info": {
@@ -1920,7 +2080,6 @@ async def test_get_systeminfo_carries_forward_update_and_smb_fields() -> None:
             "update_jobid": 5,
             "update_state": "RUNNING",
             "update_version": "25.04.2",
-            "smb_connections": 3,
         },
         "interface": {},
     }
@@ -1939,7 +2098,6 @@ async def test_get_systeminfo_carries_forward_update_and_smb_fields() -> None:
     assert coord.ds["system_info"]["update_jobid"] == 5
     assert coord.ds["system_info"]["update_state"] == "RUNNING"
     assert coord.ds["system_info"]["update_version"] == "25.04.2"
-    assert coord.ds["system_info"]["smb_connections"] == 3
 
 
 async def test_get_systeminfo_defaults_carried_fields_on_first_run() -> None:
@@ -1957,7 +2115,6 @@ async def test_get_systeminfo_defaults_carried_fields_on_first_run() -> None:
 
     assert coord.ds["system_info"]["update_available"] is False
     assert coord.ds["system_info"]["update_jobid"] == 0
-    assert coord.ds["system_info"]["smb_connections"] == 0
 
 
 async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> None:
@@ -3631,14 +3788,30 @@ async def test_subscribe_to_app_stats_handles_missing_sub_id() -> None:
     coord.api.subscribe_events = AsyncMock(return_value=(None, None))
     await coord._subscribe_to_app_stats("event")
     assert coord._app_stats_sub_id is None
+    assert coord._app_stats_subscribe_error == "no sub_id/queue returned"
 
 
 async def test_subscribe_to_app_stats_handles_exception() -> None:
     coord = _bare_coordinator()
     coord.api = MagicMock()
-    coord.api.subscribe_events = AsyncMock(side_effect=Exception("boom"))
+    boom = Exception("boom")
+    coord.api.subscribe_events = AsyncMock(side_effect=boom)
     await coord._subscribe_to_app_stats("event")  # must not raise
     assert coord._app_stats_sub_id is None
+    assert coord._app_stats_subscribe_error is boom
+
+
+async def test_subscribe_to_app_stats_clears_error_on_success() -> None:
+    """A stale error from a previous failed attempt must not leak into a
+
+    later, successful subscription's state.
+    """
+    coord = _bare_coordinator()
+    coord._app_stats_subscribe_error = Exception("stale")
+    coord.api = MagicMock()
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", MagicMock()))
+    await coord._subscribe_to_app_stats("event")
+    assert coord._app_stats_subscribe_error is None
 
 
 async def test_stop_app_stats_unsubscribe_exception_still_clears_state(
