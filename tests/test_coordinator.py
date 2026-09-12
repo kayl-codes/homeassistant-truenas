@@ -79,6 +79,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._poisoned_certificate_commons = set()
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._job_failing = set()
+    coord._connection_failing = False
     return coord
 
 
@@ -1400,6 +1401,96 @@ async def test_async_ensure_connected_succeeds() -> None:
     coord.api.connected = MagicMock(return_value=False)
     coord.api.connect = AsyncMock(return_value=True)
     await coord._async_ensure_connected()  # must not raise
+
+
+async def test_async_ensure_connected_logs_error_once_then_debug_then_recovers(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """First failed connect logs an ERROR, repeat failures only log at DEBUG
+    (no spam every 60s poll while e.g. deliberately shut down), and
+    recovery logs one INFO line -- see #145.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "ERR_LOST_QUERY"
+    coord.host = "truenas.local"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert any(
+            r.levelname == "ERROR" and "connection failed" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is True
+        coord.api.connect.assert_awaited_with(quiet=False)
+
+        caplog.clear()
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(
+            r.levelname == "DEBUG" and "still failing" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is True
+        coord.api.connect.assert_awaited_with(quiet=True)
+
+        caplog.clear()
+        coord.api.connected = MagicMock(return_value=True)
+        await coord._async_ensure_connected()  # must not raise
+        assert any(
+            r.levelname == "INFO" and "recovered" in r.message for r in caplog.records
+        )
+        assert coord._connection_failing is False
+
+
+async def test_async_ensure_connected_recovers_via_reconnect_without_flapping(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A host that never reports connected() == True between polls (e.g.
+    reconnecting fresh every cycle) but whose connect() call succeeds must
+    still clear _connection_failing and log recovery -- otherwise a later,
+    genuinely new failure would be silently deduped to DEBUG forever.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "ERR_LOST_QUERY"
+    coord.host = "truenas.local"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert coord._connection_failing is True
+        coord.api.connect.assert_awaited_with(quiet=False)
+
+        # connect() itself succeeds now, but connected() is still False on
+        # entry (e.g. the client reconnects fresh every poll).
+        coord.api.connect = AsyncMock(return_value=True)
+        caplog.clear()
+        await coord._async_ensure_connected()  # must not raise
+        assert any(
+            r.levelname == "INFO" and "recovered" in r.message for r in caplog.records
+        )
+        assert coord._connection_failing is False
+
+        # A subsequent, genuinely new failure must log ERROR again, not be
+        # swallowed by a stale dedup flag.
+        coord.api.connect = AsyncMock(return_value=False)
+        coord.api.error = "ERR_LOST_LOGIN"
+        caplog.clear()
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        coord.api.connect.assert_awaited_with(quiet=False)
+        assert any(
+            r.levelname == "ERROR" and "connection failed" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is True
 
 
 # ---------------------------
