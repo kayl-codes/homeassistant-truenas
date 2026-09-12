@@ -422,10 +422,11 @@ integration.
 As of 2.11.0, entities also go `unavailable` when TrueNAS silently keeps serving stale data
 instead of outright failing a request — previously invisible from Home Assistant's side. This
 applies to Pools, Datasets, Directory Services, Alerts, SMB, UPS, Scrub, Network Interfaces,
-Services, Virtual Machines, System Info and App-stats entities. This is in addition to (not a
-replacement for) the pre-existing behavior of going unavailable when a background job outright
-fails. No action is needed — this makes an existing "stuck on last-known-good value" failure mode
-visible instead of introducing a new one.
+Services, Virtual Machines and System Info. App-stats entities become unavailable separately, when
+their `app.stats` event subscription cannot be established or re-established. This is in addition
+to (not a replacement for) the pre-existing behavior of going unavailable when a background job
+outright fails. No action is needed — this makes an existing "stuck on last-known-good value"
+failure mode visible instead of introducing a new one.
 
 ## Options
 

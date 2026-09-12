@@ -38,7 +38,7 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ### Fixed
 - **Deliberately shutting down TrueNAS via the integration's own `truenas_ce.system_shutdown`
-  action logged a full ERROR traceback on every 60s poll while the host stayed down.** Connection
+  action logged a full ERROR traceback on every poll while the host stayed down.** Connection
   failures are now deduped the same way as the existing background-job failures: one ERROR on the
   first failed reconnect, DEBUG on repeats, and an INFO line once the connection recovers. Thanks
   @SpeedyQ for reporting! (#145)
