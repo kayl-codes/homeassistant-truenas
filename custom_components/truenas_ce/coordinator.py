@@ -457,6 +457,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # every 60s poll -- see issue #134.
         self._job_failing: set[str] = set()
 
+        # Whether the last _async_ensure_connected attempt failed, deduped
+        # the same way so a persistently unreachable host (e.g. deliberately
+        # powered off via truenas_ce.system_shutdown) logs one ERROR instead
+        # of one every 60s poll -- see issue #145.
+        self._connection_failing: bool = False
+
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
 
@@ -563,20 +569,51 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   _async_ensure_connected
     # ---------------------------
     async def _async_ensure_connected(self) -> None:
-        """Connect if needed, raising the appropriate coordinator error on failure."""
+        """Connect if needed, raising the appropriate coordinator error on failure.
+
+        For the common case where ``api.connect()`` returns False (e.g.
+        TrueNAS unreachable), deduped like ``_run_job``/``self._job_failing``:
+        a persistently unreachable host (e.g. deliberately powered off via
+        ``truenas_ce.system_shutdown``, see #145) logs one ERROR instead of
+        one every 60s poll, plus an INFO line once the connection recovers.
+        ``quiet`` is threaded into ``api.connect()`` on repeat failures so
+        its own ERROR-level traceback is deduped too, not just the shorter
+        follow-up line below. An unexpected exception from ``api.connect()``
+        itself (rather than a normal False return) bypasses this dedup and
+        relies on the DataUpdateCoordinator's own success/failure-transition
+        logging instead -- that path is rare enough not to warrant its own
+        bookkeeping here.
+        """
         if self.api.connected():
+            self._note_connection_recovered()
             return
 
         try:
-            connected = await self.api.connect()
+            connected = await self.api.connect(quiet=self._connection_failing)
         except Exception as e:
             raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
 
-        if not connected:
-            if self.api.error == ERR_INVALID_KEY:
-                raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+        if connected:
+            self._note_connection_recovered()
+            return
+
+        if self.api.error == ERR_INVALID_KEY:
+            raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
+        if self._connection_failing:
+            _LOGGER.debug(
+                "TrueNAS connection still failing (error code: %s)",
+                self.api.error,
+            )
+        else:
             _LOGGER.error("TrueNAS connection failed (error code: %s)", self.api.error)
-            raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
+            self._connection_failing = True
+        raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
+
+    def _note_connection_recovered(self) -> None:
+        """Log recovery once and clear the dedup flag; see _async_ensure_connected."""
+        if self._connection_failing:
+            _LOGGER.info("TrueNAS connection recovered")
+            self._connection_failing = False
 
     # ---------------------------
     #   _run_job
