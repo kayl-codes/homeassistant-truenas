@@ -36,6 +36,13 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   indistinguishable from a genuine transient fetch failure under the new stale-data detection
   above. If this affects you, please open an issue so we can look at a more targeted fix.
 
+### Fixed
+- **Deliberately shutting down TrueNAS via the integration's own `truenas_ce.system_shutdown`
+  action logged a full ERROR traceback on every 60s poll while the host stayed down.** Connection
+  failures are now deduped the same way as the existing background-job failures: one ERROR on the
+  first failed reconnect, DEBUG on repeats, and an INFO line once the connection recovers. Thanks
+  @SpeedyQ for reporting! (#145)
+
 ### Notes
 - **UPS entities can all go unavailable together if a single UPS netdata graph gets permanently
   stuck failing after once succeeding** (e.g. issue #142's `upscurrent`) — `aiotruenas` folds

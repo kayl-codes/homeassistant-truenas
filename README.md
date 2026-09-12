@@ -417,6 +417,16 @@ TrueNAS notification and enter a new API key — the integration reconnects imme
 existing entities, history and statistics are preserved. No need to remove and re-add the
 integration.
 
+## Entity Availability
+
+As of 2.11.0, entities also go `unavailable` when TrueNAS silently keeps serving stale data
+instead of outright failing a request — previously invisible from Home Assistant's side. This
+applies to Pools, Datasets, Directory Services, Alerts, SMB, UPS, Scrub, Network Interfaces,
+Services, Virtual Machines, System Info and App-stats entities. This is in addition to (not a
+replacement for) the pre-existing behavior of going unavailable when a background job outright
+fails. No action is needed — this makes an existing "stuck on last-known-good value" failure mode
+visible instead of introducing a new one.
+
 ## Options
 
 After setup you can fine-tune the integration via **Settings → Devices & Services → TrueNAS → Configure**. Saving the options reloads the integration so changes take effect immediately.
@@ -464,6 +474,11 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
   sub-type), so VMs, apps, pool-health and network-link sensors also show up as pickable targets in
   the UI even though only container sensors are actually supported. Picking a non-container target
   fails at call time with a clear error.
+* **A UPS can have all its entities go `unavailable` together if a single netdata graph gets
+  permanently stuck failing after once succeeding** (e.g. a UPS/NUT driver that never reports one
+  particular metric). `aiotruenas` folds per-graph UPS staleness into the same signal the
+  [Entity Availability](#entity-availability) detection relies on, so this is a known, accepted
+  side effect rather than a bug.
 
 ## Removing the integration
 
