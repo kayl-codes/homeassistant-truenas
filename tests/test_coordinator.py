@@ -924,6 +924,24 @@ async def test_get_app_stats_skips_malformed_app_name() -> None:
     assert "" not in coord.ds["app_stats"]
 
 
+def _coord_with_active_app_stats_sub(*, connected: MagicMock) -> TrueNASCoordinator:
+    """Coordinator with an already-active app.stats subscription.
+
+    Shared by the get_subscription_events() read-failure tests below, which
+    only differ in the connected()/get_subscription_events() mocks.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = connected
+    coord._app_stats_sub_id = "sub-1"
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    return coord
+
+
 async def test_get_app_stats_raises_when_reading_subscription_events_fails() -> None:
     """A failed read is signaled via get_subscription_events()'s own returned
     error, not the coordinator's shared api.error (get_app_stats runs
@@ -933,16 +951,8 @@ async def test_get_app_stats_raises_when_reading_subscription_events_fails() -> 
     poll, leaving app_stats entities serving a frozen last-good snapshot
     forever.
     """
-    coord = _bare_coordinator()
-    coord.ds = {
-        "app": {"test-app": {"name": "test-app"}},
-        "app_stats": {},
-    }
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=True)
+    coord = _coord_with_active_app_stats_sub(connected=MagicMock(return_value=True))
     coord.api.get_subscription_events = AsyncMock(return_value=([], ERR_LOST_QUERY))
-    coord._app_stats_sub_id = "sub-1"
-    coord.api.is_subscribed = AsyncMock(return_value=True)
 
     with pytest.raises(coordinator_module.UpdateFailed) as exc_info:
         await coord.get_app_stats()
@@ -958,18 +968,12 @@ async def test_get_app_stats_skips_raise_when_disconnected_mid_read() -> None:
     guards -- raising the subscription-specific message here too would
     misattribute the actual root cause.
     """
-    coord = _bare_coordinator()
-    coord.ds = {
-        "app": {"test-app": {"name": "test-app"}},
-        "app_stats": {},
-    }
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(side_effect=[True, False])
+    coord = _coord_with_active_app_stats_sub(
+        connected=MagicMock(side_effect=[True, False])
+    )
     coord.api.get_subscription_events = AsyncMock(
         return_value=([], ERR_CONNECTION_REFUSED)
     )
-    coord._app_stats_sub_id = "sub-1"
-    coord.api.is_subscribed = AsyncMock(return_value=True)
 
     await coord.get_app_stats()  # must not raise
 
