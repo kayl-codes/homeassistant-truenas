@@ -389,8 +389,18 @@ class TrueNASAPI:
 
     async def get_subscription_events(
         self, subscription_id: str, event_timeout: float | None = None
-    ) -> list[dict[str, Any]]:
-        """Read events from a subscription queue."""
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Read events from a subscription queue.
+
+        Also returns the call's own error (if any) alongside ``self._error``
+        (kept for the existing "last error" diagnostic consumers throughout
+        the integration). A caller running concurrently with other jobs on
+        this shared TrueNASAPI instance -- as get_app_stats() does, inside
+        the coordinator's asyncio.gather() -- cannot rely on reading back
+        self.error after this returns: another job can overwrite it during
+        this call's own internal await. The returned error is call-local and
+        safe to check regardless of what else is running concurrently.
+        """
         if not self.connected() and not await self.connect():
             self._error = self._error or ERR_CONNECTION_REFUSED
             _LOGGER.warning(
@@ -398,7 +408,7 @@ class TrueNASAPI:
                 self._host,
                 subscription_id,
             )
-            return []
+            return [], self._error
 
         self._error = ""
         _LOGGER.debug(
@@ -416,11 +426,11 @@ class TrueNASAPI:
                     len(events),
                     _summarize_payload(events),
                 )
-            return events
+            return events, ""
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
             _log_call_error(self._host, subscription_id, exc)
-            return []
+            return [], self._error
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
             _LOGGER.warning(
@@ -429,7 +439,7 @@ class TrueNASAPI:
                 subscription_id,
                 exc,
             )
-            return []
+            return [], self._error
 
     async def is_subscribed(self, subscription_id: str) -> bool:
         """Check if a subscription is currently active in the client."""

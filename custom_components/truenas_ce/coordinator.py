@@ -2096,7 +2096,28 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f" TrueNAS ({self.host}): {cause}"
                 ) from (cause if isinstance(cause, BaseException) else None)
 
-        messages = await self.api.get_subscription_events(self._app_stats_sub_id)
+        messages, error = await self.api.get_subscription_events(self._app_stats_sub_id)
+        if error:
+            if not self.api.connected():
+                # Same "misattributed root cause" case as the resubscribe
+                # branch above: a connection drop during this call's own
+                # internal reconnect attempt also surfaces as an error here,
+                # but the poll's other jobs already report "TrueNAS
+                # disconnected" via their own connected() guards.
+                return
+            # get_subscription_events() returns [] on both "no new events"
+            # and "the read itself failed"; its own returned error (not
+            # self.api.error -- get_app_stats runs concurrently with ~19
+            # other jobs sharing this TrueNASAPI instance inside
+            # asyncio.gather, so that shared attribute can be overwritten by
+            # a sibling job's own call before this one returns) is what lets
+            # a genuine failure surface here instead of being read as a
+            # routine empty poll and leaving app_stats entities serving a
+            # frozen last-good snapshot forever.
+            raise UpdateFailed(
+                f"Failed to read app.stats subscription events from TrueNAS"
+                f" ({self.host}): {error}"
+            )
         self._process_app_stats_messages(messages)
 
         current_app_names = self._collect_current_app_names()

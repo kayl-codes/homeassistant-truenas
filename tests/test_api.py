@@ -566,11 +566,12 @@ async def test_get_subscription_events_success(connected_api: TrueNASAPI) -> Non
     ]
     connected_api._client.get_subscription_events = AsyncMock(return_value=events)
 
-    result = await connected_api.get_subscription_events("sub-123")
+    result, error = await connected_api.get_subscription_events("sub-123")
 
     assert len(result) == 2
     assert result[0]["id"] == 1
     assert result[1]["id"] == 2
+    assert error == ""
     assert connected_api.error == ""
 
 
@@ -578,8 +579,9 @@ async def test_get_subscription_events_call_error(connected_api: TrueNASAPI) -> 
     connected_api._client.get_subscription_events = AsyncMock(
         side_effect=TrueNASCallError("boom", reason="nope")
     )
-    result = await connected_api.get_subscription_events("sub-123")
+    result, error = await connected_api.get_subscription_events("sub-123")
     assert result == []
+    assert error == "nope"
     assert connected_api.error == "nope"
 
 
@@ -596,8 +598,9 @@ async def test_get_subscription_events_permission_denied_logs_debug_not_error(
         )
     )
     with caplog.at_level("DEBUG", logger=api_module.__name__):
-        result = await connected_api.get_subscription_events("sub-123")
+        result, error = await connected_api.get_subscription_events("sub-123")
     assert result == []
+    assert error
     assert not any(record.levelname == "ERROR" for record in caplog.records)
 
 
@@ -608,8 +611,9 @@ async def test_get_subscription_events_non_permission_call_error_still_logs_erro
     exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
     connected_api._client.get_subscription_events = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
-        result = await connected_api.get_subscription_events("sub-123")
+        result, error = await connected_api.get_subscription_events("sub-123")
     assert result == []
+    assert error
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
@@ -621,8 +625,9 @@ async def test_get_subscription_events_generic_error(connected_api: TrueNASAPI) 
     connected_api._client.get_subscription_events = AsyncMock(
         side_effect=TrueNASError("boom"),
     )
-    result = await connected_api.get_subscription_events("sub-123")
+    result, error = await connected_api.get_subscription_events("sub-123")
     assert result == []
+    assert error == ERR_UNKNOWN
     assert connected_api.error == ERR_UNKNOWN
 
 
@@ -643,9 +648,10 @@ async def test_get_subscription_events_connect_returns_false(api: TrueNASAPI) ->
     api._client.connected = False
     api.connect = AsyncMock(return_value=False)
 
-    result = await api.get_subscription_events("sub-123")
+    result, error = await api.get_subscription_events("sub-123")
 
     assert result == []
+    assert error == ERR_CONNECTION_REFUSED
     assert api.error == ERR_CONNECTION_REFUSED
 
 
@@ -694,12 +700,15 @@ async def test_get_subscription_events_passes_timeout(
     events = [{"id": 1}]
     connected_api._client.get_subscription_events = AsyncMock(return_value=events)
 
-    result = await connected_api.get_subscription_events("sub-123", event_timeout=1.5)
+    result, error = await connected_api.get_subscription_events(
+        "sub-123", event_timeout=1.5
+    )
 
     assert result == events
     connected_api._client.get_subscription_events.assert_awaited_once_with(
         "sub-123", event_timeout=1.5
     )
+    assert error == ""
     assert connected_api.error == ""
 
 
@@ -709,7 +718,10 @@ async def test_get_subscription_events_truenas_call_error(
     error = TrueNASCallError("boom")
     connected_api._client.get_subscription_events = AsyncMock(side_effect=error)
 
-    result = await connected_api.get_subscription_events("sub-123", event_timeout=1.0)
+    result, returned_error = await connected_api.get_subscription_events(
+        "sub-123", event_timeout=1.0
+    )
 
     assert result == []
+    assert returned_error == str(error)
     assert connected_api.error == str(error)
