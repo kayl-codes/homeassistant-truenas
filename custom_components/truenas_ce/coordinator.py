@@ -2113,15 +2113,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         is_data_path_failing("app_stats") can mark the app_stats entities
         unavailable instead of serving a frozen last-good snapshot forever.
         """
-        messages, error = await self.api.get_subscription_events(sub_id)
+        messages, error, is_connection_error = await self.api.get_subscription_events(
+            sub_id
+        )
         if not error:
             return messages
-        if not self.api.connected():
+        if is_connection_error:
             # Same "misattributed root cause" case as the resubscribe branch
             # in get_app_stats(): a connection drop during this call's own
-            # internal reconnect attempt also surfaces as an error here, but
-            # the poll's other jobs already report "TrueNAS disconnected"
-            # via their own connected() guards.
+            # connect attempt/read is already surfaced by the poll's other
+            # jobs via their own connected() guards. is_connection_error is
+            # call-local (decided by get_subscription_events() itself, not
+            # re-derived here from self.api.connected() -- that shared state
+            # can be flipped by a concurrent sibling job for reasons that
+            # have nothing to do with THIS call's own error, which would
+            # misclassify an unrelated application-level failure, e.g. a
+            # permission error, as a connection issue and silently drop it).
             return None
         # get_subscription_events() returns [] on both "no new events" and
         # "the read itself failed"; its own returned error (not

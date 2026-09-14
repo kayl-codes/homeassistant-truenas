@@ -33,7 +33,6 @@ from custom_components.truenas_ce.const import (
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     ERR_CONNECTION_REFUSED,
-    ERR_LOST_QUERY,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
@@ -777,7 +776,7 @@ async def test_get_app_stats_re_subscribes_when_sub_id_missing() -> None:
     }
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=([], ""))
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord.api.is_subscribed = AsyncMock(return_value=False)
     coord._app_stats_sub_id = None
 
@@ -807,7 +806,7 @@ async def test_get_app_stats_re_subscribes_when_existing_sub_not_active() -> Non
 
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=([], ""))
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord.api.is_subscribed = AsyncMock(return_value=False)
 
     with patch.object(coord, "start_app_stats", new_callable=AsyncMock) as start_mock:
@@ -912,6 +911,7 @@ async def test_get_app_stats_skips_malformed_app_name() -> None:
                 {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -924,11 +924,11 @@ async def test_get_app_stats_skips_malformed_app_name() -> None:
     assert "" not in coord.ds["app_stats"]
 
 
-def _coord_with_active_app_stats_sub(*, connected: MagicMock) -> TrueNASCoordinator:
+def _coord_with_active_app_stats_sub() -> TrueNASCoordinator:
     """Coordinator with an already-active app.stats subscription.
 
     Shared by the get_subscription_events() read-failure tests below, which
-    only differ in the connected()/get_subscription_events() mocks.
+    only differ in their get_subscription_events() mock.
     """
     coord = _bare_coordinator()
     coord.ds = {
@@ -936,7 +936,7 @@ def _coord_with_active_app_stats_sub(*, connected: MagicMock) -> TrueNASCoordina
         "app_stats": {},
     }
     coord.api = MagicMock()
-    coord.api.connected = connected
+    coord.api.connected = MagicMock(return_value=True)
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
     return coord
@@ -944,35 +944,41 @@ def _coord_with_active_app_stats_sub(*, connected: MagicMock) -> TrueNASCoordina
 
 async def test_get_app_stats_raises_when_reading_subscription_events_fails() -> None:
     """A failed read is signaled via get_subscription_events()'s own returned
+
     error, not the coordinator's shared api.error (get_app_stats runs
     concurrently with other jobs on the same TrueNASAPI instance, so that
     attribute isn't safe to read back here -- see the raise's own comment).
-    Must surface as UpdateFailed instead of being read as a routine empty
-    poll, leaving app_stats entities serving a frozen last-good snapshot
-    forever.
+    Uses is_connection_error=False, as a real application-level failure
+    (e.g. a permission error) would -- must surface as UpdateFailed
+    regardless of self.api.connected()'s current (possibly unrelated,
+    racy) state, instead of being read as a routine empty poll and leaving
+    app_stats entities serving a frozen last-good snapshot forever.
     """
-    coord = _coord_with_active_app_stats_sub(connected=MagicMock(return_value=True))
-    coord.api.get_subscription_events = AsyncMock(return_value=([], ERR_LOST_QUERY))
+    coord = _coord_with_active_app_stats_sub()
+    coord.api.get_subscription_events = AsyncMock(
+        return_value=([], "permission denied", False)
+    )
 
     with pytest.raises(coordinator_module.UpdateFailed) as exc_info:
         await coord.get_app_stats()
 
-    assert ERR_LOST_QUERY in str(exc_info.value)
+    assert "permission denied" in str(exc_info.value)
 
 
 async def test_get_app_stats_skips_raise_when_disconnected_mid_read() -> None:
     """Mirrors test_get_app_stats_skips_raise_when_disconnected_mid_resubscribe:
     a connection drop during get_subscription_events()'s own internal
-    reconnect attempt also surfaces as a returned error, but the poll's other
-    jobs already report "TrueNAS disconnected" via their own connected()
-    guards -- raising the subscription-specific message here too would
-    misattribute the actual root cause.
+    reconnect attempt is reported by get_subscription_events() itself via
+    is_connection_error=True (not re-derived from self.api.connected(),
+    which a concurrent sibling job could otherwise make misleading -- see
+    get_subscription_events()'s docstring). The poll's other jobs already
+    report "TrueNAS disconnected" via their own connected() guards, so
+    raising the subscription-specific message here too would misattribute
+    the actual root cause.
     """
-    coord = _coord_with_active_app_stats_sub(
-        connected=MagicMock(side_effect=[True, False])
-    )
+    coord = _coord_with_active_app_stats_sub()
     coord.api.get_subscription_events = AsyncMock(
-        return_value=([], ERR_CONNECTION_REFUSED)
+        return_value=([], ERR_CONNECTION_REFUSED, True)
     )
 
     await coord.get_app_stats()  # must not raise
@@ -1061,6 +1067,7 @@ async def test_get_app_stats_processes_and_updates_state() -> None:
                 }
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1091,7 +1098,7 @@ async def test_get_app_stats_removes_missing_apps() -> None:
     }
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=([], ""))
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
 
@@ -1117,6 +1124,7 @@ async def test_get_app_stats_skips_malformed_fields() -> None:
                 {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1190,6 +1198,7 @@ async def test_get_app_stats_unwraps_collection_update_envelope() -> None:
                 }
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1231,6 +1240,7 @@ async def test_get_app_stats_handles_missing_blkio_and_networks() -> None:
                 }
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1285,6 +1295,7 @@ async def test_get_app_stats_handles_malformed_networks_list() -> None:
                 }
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1314,6 +1325,7 @@ async def test_get_app_stats_ignores_non_dict_app_entries() -> None:
                 {"fields": ["not-a-dict", 42, None]},
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"
@@ -1345,6 +1357,7 @@ async def test_get_app_stats_normalizes_invalid_app_stats_to_none() -> None:
                 }
             ],
             "",
+            False,
         )
     )
     coord._app_stats_sub_id = "sub-1"

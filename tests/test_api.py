@@ -566,12 +566,15 @@ async def test_get_subscription_events_success(connected_api: TrueNASAPI) -> Non
     ]
     connected_api._client.get_subscription_events = AsyncMock(return_value=events)
 
-    result, error = await connected_api.get_subscription_events("sub-123")
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
 
     assert len(result) == 2
     assert result[0]["id"] == 1
     assert result[1]["id"] == 2
     assert error == ""
+    assert is_connection_error is False
     assert connected_api.error == ""
 
 
@@ -579,9 +582,12 @@ async def test_get_subscription_events_call_error(connected_api: TrueNASAPI) -> 
     connected_api._client.get_subscription_events = AsyncMock(
         side_effect=TrueNASCallError("boom", reason="nope")
     )
-    result, error = await connected_api.get_subscription_events("sub-123")
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
     assert result == []
     assert error == "nope"
+    assert is_connection_error is False
     assert connected_api.error == "nope"
 
 
@@ -598,9 +604,14 @@ async def test_get_subscription_events_permission_denied_logs_debug_not_error(
         )
     )
     with caplog.at_level("DEBUG", logger=api_module.__name__):
-        result, error = await connected_api.get_subscription_events("sub-123")
+        (
+            result,
+            error,
+            is_connection_error,
+        ) = await connected_api.get_subscription_events("sub-123")
     assert result == []
     assert error
+    assert is_connection_error is False
     assert not any(record.levelname == "ERROR" for record in caplog.records)
 
 
@@ -611,9 +622,14 @@ async def test_get_subscription_events_non_permission_call_error_still_logs_erro
     exc = TrueNASCallError("boom", code=22, errname="EINVAL", reason="bad params")
     connected_api._client.get_subscription_events = AsyncMock(side_effect=exc)
     with caplog.at_level("DEBUG", logger=api_module.__name__):
-        result, error = await connected_api.get_subscription_events("sub-123")
+        (
+            result,
+            error,
+            is_connection_error,
+        ) = await connected_api.get_subscription_events("sub-123")
     assert result == []
     assert error
+    assert is_connection_error is False
     error_records = [record for record in caplog.records if record.levelname == "ERROR"]
     assert error_records
     assert all(record.exc_info is not None for record in error_records)
@@ -625,10 +641,56 @@ async def test_get_subscription_events_generic_error(connected_api: TrueNASAPI) 
     connected_api._client.get_subscription_events = AsyncMock(
         side_effect=TrueNASError("boom"),
     )
-    result, error = await connected_api.get_subscription_events("sub-123")
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
     assert result == []
     assert error == ERR_UNKNOWN
+    assert is_connection_error is False
     assert connected_api.error == ERR_UNKNOWN
+
+
+async def test_get_subscription_events_connection_closed_mid_call(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A TrueNASConnectionClosedError raised mid-call is the one TrueNASError
+
+    subtype that genuinely means THIS call's own connection was lost, as
+    opposed to an application-level TrueNASCallError or any other
+    TrueNASError -- so it's the one generic-exception case that must report
+    is_connection_error=True (see get_subscription_events()'s docstring).
+    """
+    connected_api._client.get_subscription_events = AsyncMock(
+        side_effect=TrueNASConnectionClosedError("boom", phase="call"),
+    )
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
+    assert result == []
+    assert error == ERR_LOST_QUERY
+    assert is_connection_error is True
+
+
+async def test_get_subscription_events_other_connection_error_mid_call(
+    connected_api: TrueNASAPI,
+) -> None:
+    """is_connection_error must be True for every TrueNASConnectionError
+
+    subtype, not just TrueNASConnectionClosedError -- it's checked via
+    isinstance(exc, TrueNASConnectionError), so e.g. a
+    TrueNASConnectionRefusedError raised mid-call (the connection dropping
+    between the initial connect() check and the actual read) must also
+    report it, not just the initial-connect-failure branch above.
+    """
+    connected_api._client.get_subscription_events = AsyncMock(
+        side_effect=TrueNASConnectionRefusedError("refused"),
+    )
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
+    assert result == []
+    assert error == ERR_CONNECTION_REFUSED
+    assert is_connection_error is True
 
 
 async def test_subscribe_events_connect_returns_false(api: TrueNASAPI) -> None:
@@ -648,10 +710,11 @@ async def test_get_subscription_events_connect_returns_false(api: TrueNASAPI) ->
     api._client.connected = False
     api.connect = AsyncMock(return_value=False)
 
-    result, error = await api.get_subscription_events("sub-123")
+    result, error, is_connection_error = await api.get_subscription_events("sub-123")
 
     assert result == []
     assert error == ERR_CONNECTION_REFUSED
+    assert is_connection_error is True
     assert api.error == ERR_CONNECTION_REFUSED
 
 
@@ -700,7 +763,7 @@ async def test_get_subscription_events_passes_timeout(
     events = [{"id": 1}]
     connected_api._client.get_subscription_events = AsyncMock(return_value=events)
 
-    result, error = await connected_api.get_subscription_events(
+    result, error, is_connection_error = await connected_api.get_subscription_events(
         "sub-123", event_timeout=1.5
     )
 
@@ -709,6 +772,7 @@ async def test_get_subscription_events_passes_timeout(
         "sub-123", event_timeout=1.5
     )
     assert error == ""
+    assert is_connection_error is False
     assert connected_api.error == ""
 
 
@@ -718,10 +782,13 @@ async def test_get_subscription_events_truenas_call_error(
     error = TrueNASCallError("boom")
     connected_api._client.get_subscription_events = AsyncMock(side_effect=error)
 
-    result, returned_error = await connected_api.get_subscription_events(
-        "sub-123", event_timeout=1.0
-    )
+    (
+        result,
+        returned_error,
+        is_connection_error,
+    ) = await connected_api.get_subscription_events("sub-123", event_timeout=1.0)
 
     assert result == []
     assert returned_error == str(error)
+    assert is_connection_error is False
     assert connected_api.error == str(error)
