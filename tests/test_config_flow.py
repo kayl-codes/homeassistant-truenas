@@ -193,6 +193,22 @@ async def test_validate_connection_system_id_lookup_failure_does_not_block() -> 
     api.disconnect.assert_awaited_once()
 
 
+async def test_validate_connection_disconnects_when_connection_test_raises() -> None:
+    """An unexpected exception from connection_test() must not leak the socket."""
+    flow = TrueNASConfigFlow()
+    config = {CONF_HOST: "nas.local", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
+    errors: dict[str, str] = {}
+    api = MagicMock()
+    api.connection_test = AsyncMock(side_effect=RuntimeError("boom"))
+    api.disconnect = AsyncMock()
+    with (
+        patch.object(config_flow, "TrueNASAPI", return_value=api),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        await flow._validate_connection(config, errors)
+    api.disconnect.assert_awaited_once()
+
+
 # ---------------------------
 #   TrueNASConfigFlow._probe_is_truenas
 # ---------------------------
