@@ -136,7 +136,9 @@ class TrueNASAPI:
     ``disconnect``/``close``/``error``/``scheme``) so callers only need to add
     ``await``; error handling still returns ``None`` on failure and records an
     ``ERR_*`` code (see const.py) instead of raising, matching the rest of the
-    integration's defensive style.
+    integration's defensive style. The one exception is
+    ``get_subscription_events()``, which instead always returns a
+    ``(events, error, is_connection_error)`` tuple -- see its own docstring.
     """
 
     def __init__(
