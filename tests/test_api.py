@@ -578,6 +578,73 @@ async def test_get_subscription_events_success(connected_api: TrueNASAPI) -> Non
     assert connected_api.error == ""
 
 
+async def test_get_subscription_events_empty_still_subscribed(
+    connected_api: TrueNASAPI,
+) -> None:
+    """An empty read while still subscribed is a routine "nothing new yet".
+
+    Must not be misclassified as a connection error just because the result
+    happened to be empty -- only a *missing* subscription afterward means
+    the connection actually dropped (see the disconnect-sentinel test).
+    """
+    connected_api._client.get_subscription_events = AsyncMock(return_value=[])
+    connected_api._client.is_subscribed = AsyncMock(return_value=True)
+
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
+
+    assert result == []
+    assert error == ""
+    assert is_connection_error is False
+    connected_api._client.is_subscribed.assert_awaited_once_with("sub-123")
+
+
+async def test_get_subscription_events_empty_after_disconnect_sentinel(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A mid-read disconnect must be reported even though the underlying client
+
+    signals it by silently draining a queue-terminator sentinel and returning
+    [] rather than raising -- an empty result alone is ambiguous with a
+    routine "nothing new yet" timeout, so this is only detectable by also
+    checking that the subscription itself is now gone.
+    """
+    connected_api._client.get_subscription_events = AsyncMock(return_value=[])
+    connected_api._client.is_subscribed = AsyncMock(return_value=False)
+
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
+
+    assert result == []
+    assert error == ERR_LOST_QUERY
+    assert is_connection_error is True
+    assert connected_api.error == ERR_LOST_QUERY
+
+
+async def test_get_subscription_events_empty_is_subscribed_raises(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A TrueNASError from is_subscribed() itself must still be classified
+
+    normally by the existing except-block, not left unhandled just because
+    it's raised from the new disambiguation check rather than from the read.
+    """
+    connected_api._client.get_subscription_events = AsyncMock(return_value=[])
+    connected_api._client.is_subscribed = AsyncMock(
+        side_effect=TrueNASConnectionRefusedError("refused"),
+    )
+
+    result, error, is_connection_error = await connected_api.get_subscription_events(
+        "sub-123"
+    )
+
+    assert result == []
+    assert error == ERR_CONNECTION_REFUSED
+    assert is_connection_error is True
+
+
 async def test_get_subscription_events_call_error(connected_api: TrueNASAPI) -> None:
     connected_api._client.get_subscription_events = AsyncMock(
         side_effect=TrueNASCallError("boom", reason="nope")
