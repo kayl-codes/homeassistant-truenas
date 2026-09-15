@@ -11,6 +11,7 @@ from aiotruenas.exceptions import (
     TrueNASCallTimeoutError,
     TrueNASCertificateVerificationError,
     TrueNASConnectionClosedError,
+    TrueNASConnectionError,
     TrueNASConnectionRefusedError,
     TrueNASEndpointNotFoundError,
     TrueNASError,
@@ -135,7 +136,9 @@ class TrueNASAPI:
     ``disconnect``/``close``/``error``/``scheme``) so callers only need to add
     ``await``; error handling still returns ``None`` on failure and records an
     ``ERR_*`` code (see const.py) instead of raising, matching the rest of the
-    integration's defensive style.
+    integration's defensive style. The one exception is
+    ``get_subscription_events()``, which instead always returns a
+    ``(events, error, is_connection_error)`` tuple -- see its own docstring.
     """
 
     def __init__(
@@ -389,16 +392,44 @@ class TrueNASAPI:
 
     async def get_subscription_events(
         self, subscription_id: str, event_timeout: float | None = None
-    ) -> list[dict[str, Any]]:
-        """Read events from a subscription queue."""
+    ) -> tuple[list[dict[str, Any]], str, bool]:
+        """Read events from a subscription queue.
+
+        Also returns the call's own error (if any) and whether that error is
+        specifically attributable to this call's own connection attempt/loss,
+        alongside ``self._error`` (kept for the existing "last error"
+        diagnostic consumers throughout the integration). A caller running
+        concurrently with other jobs on this shared TrueNASAPI instance -- as
+        get_app_stats() does, inside the coordinator's asyncio.gather() --
+        cannot rely on reading back self.error/self.connected() after this
+        returns: another job can change either during this call's own
+        internal await, so neither reflects whether THIS call's own failure
+        was actually connection-related. is_connection_error is True for
+        this call's own initial connect() check failing, for any
+        TrueNASConnectionError raised mid-call (isinstance, so this also
+        covers e.g. TrueNASConnectionClosedError/TrueNASUnknownError), and
+        for an empty read whose subscription has gone missing mid-call (the
+        client signals a disconnect by draining an internal queue sentinel
+        rather than raising, so an empty result alone is ambiguous between
+        "nothing new yet" and "the connection just dropped" -- checking
+        is_subscribed() afterward disambiguates the two). is_connection_error
+        is never True for a TrueNASCallError (a completed exchange whose
+        response was an application-level error) or any other TrueNASError
+        subtype, which are call-specific failures regardless of the shared
+        connection state.
+        """
         if not self.connected() and not await self.connect():
-            self._error = self._error or ERR_CONNECTION_REFUSED
+            # Captured into a local instead of re-reading self._error for the
+            # return below, so this stays race-free even if a future
+            # refactor adds an await before the return.
+            connect_error = self._error or ERR_CONNECTION_REFUSED
+            self._error = connect_error
             _LOGGER.warning(
                 "TrueNAS %s get_subscription_events: connection failed for %s",
                 self._host,
                 subscription_id,
             )
-            return []
+            return [], connect_error, True
 
         self._error = ""
         _LOGGER.debug(
@@ -416,11 +447,28 @@ class TrueNASAPI:
                     len(events),
                     _summarize_payload(events),
                 )
-            return events
+                return events, "", False
+            if not await self._client.is_subscribed(subscription_id):
+                # No exception was raised -- the client drains a disconnect's
+                # queue-terminator sentinel internally and returns [] the
+                # same way it would for a routine "nothing new yet" timeout.
+                # is_subscribed() only turns False once _teardown_connection()
+                # has cleared this subscription, so an empty read plus a now-
+                # missing subscription means the connection dropped during
+                # this read rather than that nothing happened.
+                self._error = ERR_LOST_QUERY
+                _LOGGER.warning(
+                    "TrueNAS %s subscription %s gone after an empty read"
+                    " (connection dropped mid-read)",
+                    self._host,
+                    subscription_id,
+                )
+                return [], self._error, True
+            return [], "", False
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
             _log_call_error(self._host, subscription_id, exc)
-            return []
+            return [], self._error, False
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
             _LOGGER.warning(
@@ -429,7 +477,7 @@ class TrueNASAPI:
                 subscription_id,
                 exc,
             )
-            return []
+            return [], self._error, isinstance(exc, TrueNASConnectionError)
 
     async def is_subscribed(self, subscription_id: str) -> bool:
         """Check if a subscription is currently active in the client."""

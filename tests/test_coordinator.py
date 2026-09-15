@@ -32,6 +32,7 @@ from custom_components.truenas_ce.const import (
     DEFAULT_DEVICE_NAME,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    ERR_CONNECTION_REFUSED,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
@@ -775,7 +776,7 @@ async def test_get_app_stats_re_subscribes_when_sub_id_missing() -> None:
     }
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=[])
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord.api.is_subscribed = AsyncMock(return_value=False)
     coord._app_stats_sub_id = None
 
@@ -805,7 +806,7 @@ async def test_get_app_stats_re_subscribes_when_existing_sub_not_active() -> Non
 
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=[])
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord.api.is_subscribed = AsyncMock(return_value=False)
 
     with patch.object(coord, "start_app_stats", new_callable=AsyncMock) as start_mock:
@@ -903,11 +904,15 @@ async def test_get_app_stats_skips_malformed_app_name() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {"fields": [{"app_name": 123}]},
-            {"fields": [{"app_name": "", "cpu_usage": 2.0}]},
-            {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
-        ]
+        return_value=(
+            [
+                {"fields": [{"app_name": 123}]},
+                {"fields": [{"app_name": "", "cpu_usage": 2.0}]},
+                {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -917,6 +922,66 @@ async def test_get_app_stats_skips_malformed_app_name() -> None:
     assert "test-app" in coord.ds["app_stats"]
     assert 123 not in coord.ds["app_stats"]
     assert "" not in coord.ds["app_stats"]
+
+
+def _coord_with_active_app_stats_sub() -> TrueNASCoordinator:
+    """Coordinator with an already-active app.stats subscription.
+
+    Shared by the get_subscription_events() read-failure tests below, which
+    only differ in their get_subscription_events() mock.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {"test-app": {"name": "test-app"}},
+        "app_stats": {},
+    }
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._app_stats_sub_id = "sub-1"
+    coord.api.is_subscribed = AsyncMock(return_value=True)
+    return coord
+
+
+async def test_get_app_stats_raises_when_reading_subscription_events_fails() -> None:
+    """A failed read is signaled via get_subscription_events()'s own returned
+
+    error, not the coordinator's shared api.error (get_app_stats runs
+    concurrently with other jobs on the same TrueNASAPI instance, so that
+    attribute isn't safe to read back here -- see the raise's own comment).
+    Uses is_connection_error=False, as a real application-level failure
+    (e.g. a permission error) would -- must surface as UpdateFailed
+    regardless of self.api.connected()'s current (possibly unrelated,
+    racy) state, instead of being read as a routine empty poll and leaving
+    app_stats entities serving a frozen last-good snapshot forever.
+    """
+    coord = _coord_with_active_app_stats_sub()
+    coord.api.get_subscription_events = AsyncMock(
+        return_value=([], "permission denied", False)
+    )
+
+    with pytest.raises(coordinator_module.UpdateFailed) as exc_info:
+        await coord.get_app_stats()
+
+    assert "permission denied" in str(exc_info.value)
+
+
+async def test_get_app_stats_skips_raise_when_disconnected_mid_read() -> None:
+    """Mirrors test_get_app_stats_skips_raise_when_disconnected_mid_resubscribe:
+    a connection drop during get_subscription_events()'s own internal
+    reconnect attempt is reported by get_subscription_events() itself via
+    is_connection_error=True (not re-derived from self.api.connected(),
+    which a concurrent sibling job could otherwise make misleading -- see
+    get_subscription_events()'s docstring). The poll's other jobs already
+    report "TrueNAS disconnected" via their own connected() guards, so
+    raising the subscription-specific message here too would misattribute
+    the actual root cause.
+    """
+    coord = _coord_with_active_app_stats_sub()
+    coord.api.get_subscription_events = AsyncMock(
+        return_value=([], ERR_CONNECTION_REFUSED, True)
+    )
+
+    await coord.get_app_stats()  # must not raise
 
 
 # ---------------------------
@@ -981,25 +1046,29 @@ async def test_get_app_stats_processes_and_updates_state() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {
-                "fields": [
-                    {
-                        "app_name": "test-app",
-                        "cpu_usage": 12.5,
-                        "memory": 1024000,
-                        "blkio": {"read": 5000, "write": 2000},
-                        "networks": [
-                            {
-                                "interface_name": "eth0",
-                                "rx_bytes": 1000,
-                                "tx_bytes": 500,
-                            }
-                        ],
-                    }
-                ]
-            }
-        ]
+        return_value=(
+            [
+                {
+                    "fields": [
+                        {
+                            "app_name": "test-app",
+                            "cpu_usage": 12.5,
+                            "memory": 1024000,
+                            "blkio": {"read": 5000, "write": 2000},
+                            "networks": [
+                                {
+                                    "interface_name": "eth0",
+                                    "rx_bytes": 1000,
+                                    "tx_bytes": 500,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1029,7 +1098,7 @@ async def test_get_app_stats_removes_missing_apps() -> None:
     }
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
-    coord.api.get_subscription_events = AsyncMock(return_value=[])
+    coord.api.get_subscription_events = AsyncMock(return_value=([], "", False))
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
 
@@ -1048,11 +1117,15 @@ async def test_get_app_stats_skips_malformed_fields() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {"fields": "not-a-list"},
-            {"fields": [{"not_an_app": 1}]},
-            {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
-        ]
+        return_value=(
+            [
+                {"fields": "not-a-list"},
+                {"fields": [{"not_an_app": 1}]},
+                {"fields": [{"app_name": "test-app", "cpu_usage": 1.0}]},
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1101,28 +1174,32 @@ async def test_get_app_stats_unwraps_collection_update_envelope() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {
-                "method": "collection_update",
-                "params": {
-                    "fields": [
-                        {
-                            "app_name": "test-app",
-                            "cpu_usage": 12.5,
-                            "memory": 1024000,
-                            "blkio": {"read": 5000, "write": 2000},
-                            "networks": [
-                                {
-                                    "interface_name": "eth0",
-                                    "rx_bytes": 1000,
-                                    "tx_bytes": 500,
-                                }
-                            ],
-                        }
-                    ]
-                },
-            }
-        ]
+        return_value=(
+            [
+                {
+                    "method": "collection_update",
+                    "params": {
+                        "fields": [
+                            {
+                                "app_name": "test-app",
+                                "cpu_usage": 12.5,
+                                "memory": 1024000,
+                                "blkio": {"read": 5000, "write": 2000},
+                                "networks": [
+                                    {
+                                        "interface_name": "eth0",
+                                        "rx_bytes": 1000,
+                                        "tx_bytes": 500,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                }
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1148,19 +1225,23 @@ async def test_get_app_stats_handles_missing_blkio_and_networks() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {
-                "fields": [
-                    {
-                        "app_name": "test-app",
-                        "cpu_usage": 1.0,
-                        "memory": 1024,
-                        "blkio": "not-a-dict",
-                        "networks": "not-a-list",
-                    }
-                ]
-            }
-        ]
+        return_value=(
+            [
+                {
+                    "fields": [
+                        {
+                            "app_name": "test-app",
+                            "cpu_usage": 1.0,
+                            "memory": 1024,
+                            "blkio": "not-a-dict",
+                            "networks": "not-a-list",
+                        }
+                    ]
+                }
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1182,32 +1263,40 @@ async def test_get_app_stats_handles_malformed_networks_list() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {
-                "fields": [
-                    {
-                        "app_name": "test-app",
-                        "cpu_usage": 5.0,
-                        "memory": 2048,
-                        "networks": [
-                            "bad",
-                            {"interface_name": None, "rx_bytes": 10, "tx_bytes": 20},
-                            {},
-                            {
-                                "interface_name": "eth0",
-                                "rx_bytes": 1000,
-                                "tx_bytes": 500,
-                            },
-                            {
-                                "interface_name": "eth1",
-                                "rx_bytes": 2000,
-                                "tx_bytes": 1500,
-                            },
-                        ],
-                    }
-                ]
-            }
-        ]
+        return_value=(
+            [
+                {
+                    "fields": [
+                        {
+                            "app_name": "test-app",
+                            "cpu_usage": 5.0,
+                            "memory": 2048,
+                            "networks": [
+                                "bad",
+                                {
+                                    "interface_name": None,
+                                    "rx_bytes": 10,
+                                    "tx_bytes": 20,
+                                },
+                                {},
+                                {
+                                    "interface_name": "eth0",
+                                    "rx_bytes": 1000,
+                                    "tx_bytes": 500,
+                                },
+                                {
+                                    "interface_name": "eth1",
+                                    "rx_bytes": 2000,
+                                    "tx_bytes": 1500,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1231,9 +1320,13 @@ async def test_get_app_stats_ignores_non_dict_app_entries() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {"fields": ["not-a-dict", 42, None]},
-        ]
+        return_value=(
+            [
+                {"fields": ["not-a-dict", 42, None]},
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
@@ -1249,19 +1342,23 @@ async def test_get_app_stats_normalizes_invalid_app_stats_to_none() -> None:
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
     coord.api.get_subscription_events = AsyncMock(
-        return_value=[
-            {
-                "fields": [
-                    {
-                        "app_name": "test-app",
-                        "cpu_usage": "bad",
-                        "memory": {},
-                        "blkio": {"read": "x"},
-                        "networks": [],
-                    }
-                ]
-            }
-        ]
+        return_value=(
+            [
+                {
+                    "fields": [
+                        {
+                            "app_name": "test-app",
+                            "cpu_usage": "bad",
+                            "memory": {},
+                            "blkio": {"read": "x"},
+                            "networks": [],
+                        }
+                    ]
+                }
+            ],
+            "",
+            False,
+        )
     )
     coord._app_stats_sub_id = "sub-1"
     coord.api.is_subscribed = AsyncMock(return_value=True)
