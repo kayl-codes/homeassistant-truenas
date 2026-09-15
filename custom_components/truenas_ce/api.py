@@ -417,13 +417,17 @@ class TrueNASAPI:
         connection state.
         """
         if not self.connected() and not await self.connect():
-            self._error = self._error or ERR_CONNECTION_REFUSED
+            # Captured into a local instead of re-reading self._error for the
+            # return below, so this stays race-free even if a future
+            # refactor adds an await before the return.
+            connect_error = self._error or ERR_CONNECTION_REFUSED
+            self._error = connect_error
             _LOGGER.warning(
                 "TrueNAS %s get_subscription_events: connection failed for %s",
                 self._host,
                 subscription_id,
             )
-            return [], self._error, True
+            return [], connect_error, True
 
         self._error = ""
         _LOGGER.debug(

@@ -2107,7 +2107,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._prune_stale_app_stats(current_app_names)
 
     async def _read_app_stats_events(self, sub_id: str) -> list[dict[str, Any]] | None:
-        """Read buffered app.stats events, or None if the connection dropped mid-read.
+        """Read buffered app.stats events, or None on a connection-attributed failure.
+
+        "Connection-attributed" covers both this call's own initial reconnect
+        attempt failing and a connection exception/drop during the read
+        itself.
 
         Raises UpdateFailed on a genuine read failure so
         is_data_path_failing("app_stats") can mark the app_stats entities
