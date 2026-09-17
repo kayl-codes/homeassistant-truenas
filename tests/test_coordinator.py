@@ -90,7 +90,11 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord.hass = SimpleNamespace(data={})
     coord.config_entry = SimpleNamespace(
         entry_id="test-entry",
-        data={CONF_HOST: "truenas.local", CONF_API_KEY: "test-api-key"},
+        data={
+            CONF_HOST: "truenas.local",
+            CONF_API_KEY: "test-api-key",
+            CONF_VERIFY_SSL: True,
+        },
     )
     return coord
 
@@ -1810,10 +1814,15 @@ async def test_note_expected_disconnect_expires_after_grace_period(
 
 
 def _config_entry_stub(
-    *, entry_id: str = "entry1", host: str = "truenas.local", api_key: str = "key1"
+    *,
+    entry_id: str = "entry1",
+    host: str = "truenas.local",
+    api_key: str = "key1",
+    verify_ssl: bool = True,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        entry_id=entry_id, data={CONF_HOST: host, CONF_API_KEY: api_key}
+        entry_id=entry_id,
+        data={CONF_HOST: host, CONF_API_KEY: api_key, CONF_VERIFY_SSL: verify_ssl},
     )
 
 
@@ -1865,6 +1874,32 @@ def test_seed_connection_failing_ignores_marker_for_different_target() -> None:
         }
     )
     reconfigured_entry = _config_entry_stub(host="truenas-new.local")
+    assert coordinator_module._seed_connection_failing(hass, reconfigured_entry) is None
+
+
+def test_seed_connection_failing_ignores_marker_for_changed_verify_ssl() -> None:
+    """A reconfigure that only flips CONF_VERIFY_SSL must also invalidate the marker.
+
+    Sourcery caught this on PR #153: CONF_VERIFY_SSL changes how the
+    connection is actually established and is set via the same reconfigure
+    flow as host/API key, so it belongs in the fingerprint alongside them --
+    otherwise the first failure after such a reconfigure stays wrongly
+    deduped to DEBUG instead of producing a fresh ERROR diagnostic.
+    """
+    entry = _config_entry_stub(verify_ssl=True)
+    hass = SimpleNamespace(
+        data={
+            coordinator_module.DOMAIN: {
+                coordinator_module._DATA_CONNECTION_FAILING: {
+                    "entry1": (
+                        coordinator_module._connection_fingerprint(entry),
+                        "ERR_LOST_QUERY",
+                    )
+                }
+            }
+        }
+    )
+    reconfigured_entry = _config_entry_stub(verify_ssl=False)
     assert coordinator_module._seed_connection_failing(hass, reconfigured_entry) is None
 
 

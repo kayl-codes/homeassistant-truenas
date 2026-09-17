@@ -87,8 +87,17 @@ def _connection_fingerprint(config_entry: ConfigEntry) -> str:
     clear_persisted_connection_failing would never run for the one case
     this whole mechanism is meant to protect. The API key is hashed rather
     than stored so it isn't duplicated in hass.data in recoverable form.
+    CONF_VERIFY_SSL is included alongside host/API key: it's set via the
+    same reconfigure flow (config_flow.py) and changes how the connection
+    is actually established, so a reconfigure that flips it while the host
+    stays unreachable should also get a fresh ERROR diagnostic rather than
+    silently inheriting the previous setting's dedup state (caught by
+    Sourcery on PR #153).
     """
-    raw = f"{config_entry.data[CONF_HOST]}|{config_entry.data[CONF_API_KEY]}"
+    raw = (
+        f"{config_entry.data[CONF_HOST]}|{config_entry.data[CONF_API_KEY]}"
+        f"|{config_entry.data[CONF_VERIFY_SSL]}"
+    )
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
