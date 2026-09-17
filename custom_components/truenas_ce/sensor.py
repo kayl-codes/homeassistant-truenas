@@ -10,7 +10,7 @@ from decimal import Decimal
 from logging import getLogger
 from typing import Any, NoReturn
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import RestoreSensor, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant, callback
@@ -150,11 +150,31 @@ def _discover_app_stats(
 
     identity = resolve_entry_identity(coord.config_entry)
 
+    # Standard (non-network) sensors need only the app's name, which is
+    # already known synchronously via get_known_app_names() -- so they're
+    # created from that instead of from app_stats_data, closing the gap
+    # where they'd otherwise not exist yet (see TrueNASAppStatsSensor's
+    # restore-on-restart fallback). Network sensors are keyed by interface
+    # name, only known from a previous app.stats payload, so they stay
+    # purely data-driven.
+    known_app_names = coord.get_known_app_names()
     for description in _app_stats_descriptions():
-        for uid, app_data in app_stats_data.items():
-            _maybe_discover_app_stats_sensor(
-                description, uid, app_data, identity, loaded, app_stats_entities, coord
-            )
+        if description.data_composite_references:
+            for uid, app_data in app_stats_data.items():
+                _maybe_discover_app_stats_sensor(
+                    description,
+                    uid,
+                    app_data,
+                    identity,
+                    loaded,
+                    app_stats_entities,
+                    coord,
+                )
+        else:
+            for uid in known_app_names:
+                _discover_standard_sensor(
+                    description, uid, identity, loaded, app_stats_entities, coord
+                )
 
     if app_stats_entities:
         add_entities(app_stats_entities)
@@ -986,7 +1006,7 @@ class TrueNASCloudsyncSensor(TrueNASSensor):
 # ---------------------------
 #   TrueNASAppStatsSensor
 # ---------------------------
-class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
+class TrueNASAppStatsSensor(TrueNASEntity, RestoreSensor):
     """Define a TrueNAS App Statistics sensor."""
 
     entity_description: TrueNASSensorEntityDescription
@@ -998,16 +1018,55 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
         uid: str | None = None,
     ) -> None:
         """Initialize the app stats sensor."""
+        # Set before super().__init__() -- it calls _refresh_data(), which
+        # touches this attribute -- so the instance always has it, even on
+        # the very first refresh done during construction.
+        self._restored_native_value: StateType | date | datetime | Decimal | None = None
+        self._awaiting_first_app_stats_event = False
         super().__init__(coordinator, entity_description, uid)
+
+    async def async_added_to_hass(self) -> None:
+        """Seed a restored value for the startup gap before the first app.stats push.
+
+        Fetched before super().async_added_to_hass() so the restored value
+        is already in place for that call's first state write; see
+        ``_seed_restored_value_if_needed`` for why this gap exists at all.
+        """
+        await self._seed_restored_value_if_needed()
+        await super().async_added_to_hass()
+
+    async def _seed_restored_value_if_needed(self) -> None:
+        """Stage a restored value to show until the first real app.stats event.
+
+        TrueNAS's app.stats event source needs a full poll interval after
+        (re)subscribing before it can send its first event at all (a CPU%
+        reading requires two time-separated samples) -- see coordinator.py's
+        ``start_app_stats``. Every HA/integration restart re-subscribes, so
+        without this these sensors would show "unavailable" for a full
+        interval (default 60s) after every restart. Cleared again by
+        _refresh_data() the moment real data arrives, so a genuinely removed
+        app still goes unavailable normally afterwards -- and left alone
+        (returns early) if real data is already present, so a fast restart
+        never overwrites live data with a stale restored one.
+        """
+        if self._data:
+            return
+        restored = await self.async_get_last_sensor_data()
+        if restored is not None and restored.native_value is not None:
+            self._restored_native_value = restored.native_value
+            self._awaiting_first_app_stats_event = True
 
     def _refresh_data(self) -> None:
         """Refresh cached data specifically from the app_stats directory structure."""
-        if self.entity_description.key in (
+        is_network = self.entity_description.key in (
             "app_stats_network_rx",
             "app_stats_network_tx",
-        ):
+        )
+        app_name = self._uid
+        if is_network:
             resolved = None
             base_uid, interface_name = _parse_app_network_uid(self._uid or "")
+            app_name = base_uid
             if base_uid is not None and interface_name is not None:
                 resolved = _resolve_app_network_data(
                     self._uid or "", self.coordinator.data.get("app_stats", {})
@@ -1032,6 +1091,21 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
                     self._uid,
                     app_stats,
                 )
+        if self._data:
+            self._awaiting_first_app_stats_event = False
+        elif self._awaiting_first_app_stats_event and app_name not in (
+            self.coordinator.get_known_app_names()
+        ):
+            # Eagerly-created standard sensor (see get_known_app_names()) whose
+            # app was removed/never came up before its first real app.stats
+            # event -- drop the restored placeholder so this goes unavailable
+            # like any other deleted app, instead of showing a frozen stale
+            # value forever (nothing else ever clears this flag otherwise).
+            self._awaiting_first_app_stats_event = False
+
+    def _data_missing_is_available(self) -> bool:
+        """Stay available on a restored value until the first real event lands."""
+        return self._awaiting_first_app_stats_event
 
     @property
     def available(self) -> bool:
@@ -1078,6 +1152,8 @@ class TrueNASAppStatsSensor(TrueNASEntity, SensorEntity):
     def native_value(self) -> Any:
         """Return the state of the sensor."""
         if not self._data:
+            if self._awaiting_first_app_stats_event:
+                return self._restored_native_value
             return None
 
         description = self.entity_description

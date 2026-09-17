@@ -2267,6 +2267,26 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     current_app_names.add(name)
         return current_app_names
 
+    def get_known_app_names(self) -> set[str]:
+        """Return currently-known app names, or empty if containers aren't monitored.
+
+        Sourced from ``ds["app"]`` (populated synchronously every poll via
+        ``get_app()``) rather than ``ds["app_stats"]``, which needs TrueNAS's
+        mandatory post-(re)subscribe warm-up wait before its first event (see
+        ``start_app_stats``). Used by sensor.py's ``_discover_app_stats`` to
+        create the standard (non-network) app_stats sensors immediately
+        instead of waiting out that gap, so ``TrueNASAppStatsSensor``'s
+        restore-on-restart fallback has an entity to attach to during it.
+        Explicitly re-checks ``MONITOR_GROUP_CONTAINERS`` here rather than
+        relying on ``ds["app_stats"]`` being empty for a disabled group --
+        unlike ``ds["app_stats"]``, ``ds["app"]`` is never gated on that
+        option (see ``get_app``), so skipping this check would leak app_stats
+        sensors for a group the user explicitly disabled.
+        """
+        if not self._is_group_monitored(MONITOR_GROUP_CONTAINERS):
+            return set()
+        return self._collect_current_app_names()
+
     def _prune_stale_app_stats(self, current_app_names: set[str]) -> None:
         """Remove cached app_stats entries whose app no longer exists."""
         if stale := [

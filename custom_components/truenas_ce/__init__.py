@@ -291,6 +291,7 @@ def _collect_active_unique_ids(
 
     active: set[str] = set()
     live_bases: set[str] = set()
+    known_app_names = coordinator.get_known_app_names()
 
     for description in _ALL_DESCRIPTIONS:
         _process_static_description(
@@ -310,6 +311,7 @@ def _collect_active_unique_ids(
             coordinator.data,
             honor_exclude,
             disabled_data_paths,
+            known_app_names,
         )
         active |= new_active
         live_bases |= new_live_bases
@@ -369,6 +371,7 @@ def _process_dynamic_description(
     data: dict[str, Any],
     honor_exclude: bool,
     disabled_data_paths: set[str],
+    known_app_names: set[str] | None = None,
 ) -> tuple[set[str], set[str]]:
     """Return (new active ids, live bases) for one dynamic-key description.
 
@@ -386,6 +389,24 @@ def _process_dynamic_description(
     is_disabled_group = description.data_path in disabled_data_paths
     if is_disabled_group:
         return set(), live_bases
+
+    if description.func == "TrueNASAppStatsSensor" and not getattr(
+        description, "data_composite_references", ()
+    ):
+        # Standard (non-network) app_stats sensors are eagerly created from
+        # get_known_app_names() rather than from app_stats data -- see
+        # sensor.py's _discover_app_stats -- so cleanup must judge them by
+        # the same source. Judging them by app_stats data here instead (as
+        # every other dynamic description is) would treat every eagerly
+        # created sensor without its own app_stats entry yet as an orphan
+        # and delete+recreate it on every single poll.
+        if not known_app_names:
+            return set(), set()
+        active_app_names = {
+            format_unique_id(identity, description.key, name)
+            for name in known_app_names
+        }
+        return active_app_names, live_bases
 
     ref = getattr(description, "data_reference", None)
     if not ref:
