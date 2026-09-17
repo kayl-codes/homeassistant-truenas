@@ -1711,6 +1711,35 @@ async def test_note_expected_disconnect_dedups_first_failure_to_debug(
         assert coord._connection_failing_reason is None
 
 
+async def test_note_expected_disconnect_recovers_on_first_attempt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A disconnect that is observed and reconnects successfully on the very
+
+    first attempt must still echo the requested-shutdown/reboot reason, even
+    though _connection_failing was never set True for this episode (that
+    only happens in the failure branch) -- otherwise _note_connection_recovered
+    silently discards the reason note_expected_disconnect recorded, and the
+    fast-recovery case gets no log at all. See Sourcery's review on PR #153.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=True)
+    coord.host = "truenas.local"
+
+    coord.note_expected_disconnect("reboot")
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        await coord._async_ensure_connected()  # must not raise
+        assert any(
+            r.levelname == "INFO" and "recovered" in r.message and "reboot" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is False
+        assert coord._expected_disconnect_reason is None
+
+
 async def test_note_expected_disconnect_survives_a_still_connected_poll(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

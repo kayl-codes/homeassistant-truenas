@@ -714,6 +714,20 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
 
         if connected:
+            if expected_reason is not None and not self._connection_failing:
+                # The reconnect succeeded on this very first attempt after the
+                # disconnect was observed, so _connection_failing was never
+                # set True for this episode and _note_connection_recovered
+                # below would otherwise stay silent -- discarding the reason
+                # note_expected_disconnect recorded. Guarded on
+                # not self._connection_failing so an already-ongoing,
+                # unrelated outage (that happened to have a reason armed on
+                # top of it) still reports through the existing
+                # _connection_failing_reason path instead of double-logging.
+                _LOGGER.info(
+                    "TrueNAS connection recovered (following requested %s)",
+                    expected_reason,
+                )
             self._note_connection_recovered()
             return
 
