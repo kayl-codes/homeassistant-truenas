@@ -4038,6 +4038,27 @@ def test_collect_current_app_names_uses_identifier() -> None:
     assert coord._collect_current_app_names() == {"app1"}
 
 
+def test_get_known_app_names_returns_names_when_monitored() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"a": {"name": "plex"}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    assert coord.get_known_app_names() == {"plex"}
+
+
+def test_get_known_app_names_empty_when_containers_not_monitored() -> None:
+    """Regression guard: unlike get_app_stats(), get_app() (populating
+    ds["app"]) has no monitor-group gate of its own -- get_known_app_names()
+    must re-check MONITOR_GROUP_CONTAINERS itself, or a disabled "Containers"
+    group would leak eagerly-discovered app_stats sensors.
+    """
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"a": {"name": "plex"}}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: []}
+    assert coord.get_known_app_names() == set()
+
+
 def test_prune_stale_app_stats_removes_missing_entries() -> None:
     coord = _bare_coordinator()
     coord.ds = {"app_stats": {"app1": {}, "stale": {}}}

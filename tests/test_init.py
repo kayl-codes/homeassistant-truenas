@@ -590,6 +590,77 @@ def test_process_dynamic_description_missing_data_path_reports_no_live_base() ->
     assert live_bases == set()
 
 
+def test_process_dynamic_description_app_stats_standard_uses_known_app_names() -> None:
+    """Standard (non-network) app_stats sensors are now eagerly created from
+    get_known_app_names() -- see sensor.py's _discover_app_stats -- rather
+    than from app_stats data, so cleanup must judge them the same way, even
+    while app_stats itself is still empty (the restart warm-up gap). Without
+    this, every eagerly created sensor without its own app_stats entry yet
+    would be treated as an orphan and deleted+recreated on every poll.
+    """
+    description = _desc(
+        key="app_stats_cpu",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+        func="TrueNASAppStatsSensor",
+    )
+    active, live_bases = _process_dynamic_description(
+        "TrueNAS",
+        description,
+        {"app_stats": {}},
+        False,
+        set(),
+        {"plex"},
+    )
+    assert active == {init_module.format_unique_id("TrueNAS", "app_stats_cpu", "plex")}
+    assert live_bases == {init_module.format_unique_id("TrueNAS", "app_stats_cpu")}
+
+
+def test_process_dynamic_description_app_stats_standard_no_known_names() -> None:
+    """Mirrors the empty-sub_data rule: no known apps yet must not wipe the
+    registry (e.g. ds["app"] not populated yet, or genuinely zero apps)."""
+    description = _desc(
+        key="app_stats_cpu",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+        func="TrueNASAppStatsSensor",
+    )
+    active, live_bases = _process_dynamic_description(
+        "TrueNAS", description, {"app_stats": {}}, False, set(), set()
+    )
+    assert active == set()
+    assert live_bases == set()
+
+
+def test_process_dynamic_description_app_stats_network_still_uses_app_stats_data() -> (
+    None
+):
+    """Network app_stats sensors (data_composite_references set) are
+    explicitly out of scope for the eager-creation fix and must keep using
+    app_stats data, not known_app_names, even though they also carry
+    func="TrueNASAppStatsSensor"."""
+    description = _desc(
+        key="app_stats_network_rx",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="interface_name",
+        data_composite_references=("networks", "interface_name"),
+        func="TrueNASAppStatsSensor",
+    )
+    data = {"app_stats": {"plex": {"networks": [{"interface_name": "eth0"}]}}}
+    active, live_bases = _process_dynamic_description(
+        "TrueNAS", description, data, False, set(), {"plex", "other"}
+    )
+    assert active == {
+        init_module.format_unique_id("TrueNAS", "app_stats_network_rx", "plex::eth0")
+    }
+    assert live_bases == {
+        init_module.format_unique_id("TrueNAS", "app_stats_network_rx")
+    }
+
+
 # ---------------------------
 #   _collect_active_unique_ids (integration of the helpers above)
 # ---------------------------
@@ -619,6 +690,44 @@ def test_collect_active_unique_ids_combines_static_and_dynamic(
     assert init_module.format_unique_id("TrueNAS", "uptime") in active
     assert init_module.format_unique_id("TrueNAS", "app_stats", "myapp") in active
     assert init_module.format_unique_id("TrueNAS", "app_stats") in live_bases
+
+
+def test_collect_active_unique_ids_app_stats_standard_survives_partial_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for the eager-discovery/cleanup desync: once ANY app
+    has a real app_stats entry, the domain's live_base becomes non-empty, so
+    every unique_id under it not in ``active`` is deleted as an orphan. Before
+    known_app_names was wired in here, a standard app_stats sensor eagerly
+    created (per sensor.py's _discover_app_stats) for an app that doesn't
+    have its own app_stats entry yet would be judged solely against
+    app_stats data -- not present -- and be deleted, then recreated by
+    discovery on the very next poll, forever oscillating.
+    """
+    dynamic_desc = _desc(
+        key="app_stats_cpu",
+        data_path="app_stats",
+        data_dynamic_keys=True,
+        data_reference="app_name",
+        func="TrueNASAppStatsSensor",
+    )
+    monkeypatch.setattr(init_module, "_ALL_DESCRIPTIONS", (dynamic_desc,))
+
+    coordinator = MagicMock()
+    coordinator.config_entry.options = {}
+    # "plex" already has a real app_stats entry; "idle_app" is installed
+    # (known via ds["app"]/get_known_app_names()) but hasn't sent its first
+    # app.stats event yet -- exactly the eagerly-created-but-dataless case.
+    coordinator.data = {"app_stats": {"plex": {"app_name": "plex"}}}
+    coordinator.get_known_app_names.return_value = {"plex", "idle_app"}
+
+    active, live_bases = _collect_active_unique_ids("TrueNAS", coordinator)
+
+    assert active == {
+        init_module.format_unique_id("TrueNAS", "app_stats_cpu", "plex"),
+        init_module.format_unique_id("TrueNAS", "app_stats_cpu", "idle_app"),
+    }
+    assert init_module.format_unique_id("TrueNAS", "app_stats_cpu") in live_bases
 
 
 def test_collect_active_unique_ids_empty_dynamic_domain_yields_no_live_base(

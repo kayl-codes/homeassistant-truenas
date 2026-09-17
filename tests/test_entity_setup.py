@@ -726,6 +726,10 @@ async def test_cleanup_keeps_entities_when_dynamic_domain_is_empty(
         last_update_success=True,
         config_entry=entry,
         data={"app_stats": {}},
+        # "myapp" is installed (known via ds["app"]) but hasn't sent its
+        # first app.stats event yet -- the standard-sensor active set is now
+        # judged against this, not against the (still empty) app_stats data.
+        get_known_app_names=lambda: {"myapp"},
     )
 
     ent_reg = er.async_get(hass)
