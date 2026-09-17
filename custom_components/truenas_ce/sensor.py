@@ -49,6 +49,10 @@ from .sensor_types import (  # noqa: F401
 _LOGGER = getLogger(__name__)
 _UNKNOWN_DATASET = "<unknown>"
 
+# app_stats descriptions for these keys are composite (one entity per app+interface)
+# and stay purely data-driven -- never subject to the restore-on-restart fallback.
+NETWORK_SENSOR_KEYS = ("app_stats_network_rx", "app_stats_network_tx")
+
 # Updates are centralized in the coordinator; entity actions may run unlimited.
 PARALLEL_UPDATES = 0
 
@@ -203,10 +207,7 @@ def _maybe_discover_app_stats_sensor(
     if not app_data:
         return
 
-    if description.key in (
-        "app_stats_network_rx",
-        "app_stats_network_tx",
-    ):
+    if description.key in NETWORK_SENSOR_KEYS:
         _discover_network_sensors(
             description, uid, app_data, identity, loaded, entities, coord
         )
@@ -1047,60 +1048,64 @@ class TrueNASAppStatsSensor(TrueNASEntity, RestoreSensor):
         _refresh_data() the moment real data arrives, so a genuinely removed
         app still goes unavailable normally afterwards -- and left alone
         (returns early) if real data is already present, so a fast restart
-        never overwrites live data with a stale restored one.
+        never overwrites live data with a stale restored one. Network (rx/tx)
+        sensors are intentionally excluded via ``NETWORK_SENSOR_KEYS`` -- they
+        stay purely data-driven, see _refresh_network_data() below.
         """
-        if self._data:
+        if self._data or self.entity_description.key in NETWORK_SENSOR_KEYS:
             return
         restored = await self.async_get_last_sensor_data()
         if restored is not None and restored.native_value is not None:
             self._restored_native_value = restored.native_value
             self._awaiting_first_app_stats_event = True
 
+    def _refresh_network_data(self) -> str | None:
+        """Resolve composite network (rx/tx) sensor data; return the base app name."""
+        base_uid, interface_name = _parse_app_network_uid(self._uid or "")
+        resolved = None
+        if base_uid is not None and interface_name is not None:
+            resolved = _resolve_app_network_data(
+                self._uid or "", self.coordinator.data.get("app_stats", {})
+            )
+        self._data = resolved or {}
+        if not resolved:
+            _LOGGER.debug(
+                "Network sensor %s (%s) could not resolve interface data",
+                self.entity_description.key,
+                self._uid,
+            )
+        return base_uid
+
+    def _refresh_standard_data(self) -> None:
+        """Resolve a standard (per-app) sensor's data from app_stats."""
+        app_stats = self.coordinator.data.get("app_stats")
+        if isinstance(app_stats, dict):
+            self._data = app_stats.get(self._uid, {})
+        else:
+            self._data = {}
+            _LOGGER.debug(
+                "App stats sensor %s: coordinator app_stats is %r, expected dict",
+                self._uid,
+                app_stats,
+            )
+
     def _refresh_data(self) -> None:
         """Refresh cached data specifically from the app_stats directory structure."""
-        is_network = self.entity_description.key in (
-            "app_stats_network_rx",
-            "app_stats_network_tx",
-        )
-        app_name = self._uid
-        if is_network:
-            resolved = None
-            base_uid, interface_name = _parse_app_network_uid(self._uid or "")
-            app_name = base_uid
-            if base_uid is not None and interface_name is not None:
-                resolved = _resolve_app_network_data(
-                    self._uid or "", self.coordinator.data.get("app_stats", {})
-                )
-                self._data = resolved or {}
-            else:
-                self._data = {}
-            if not resolved:
-                _LOGGER.debug(
-                    "Network sensor %s (%s) could not resolve interface data",
-                    self.entity_description.key,
-                    self._uid,
-                )
+        if self.entity_description.key in NETWORK_SENSOR_KEYS:
+            app_name = self._refresh_network_data()
         else:
-            app_stats = self.coordinator.data.get("app_stats")
-            if isinstance(app_stats, dict):
-                self._data = app_stats.get(self._uid, {})
-            else:
-                self._data = {}
-                _LOGGER.debug(
-                    "App stats sensor %s: coordinator app_stats is %r, expected dict",
-                    self._uid,
-                    app_stats,
-                )
-        if self._data:
-            self._awaiting_first_app_stats_event = False
-        elif self._awaiting_first_app_stats_event and app_name not in (
-            self.coordinator.get_known_app_names()
+            app_name = self._uid
+            self._refresh_standard_data()
+
+        # Clear the restored-placeholder flag once real data arrives, or once an
+        # eagerly-created standard sensor's app is confirmed gone (see
+        # get_known_app_names()) -- otherwise a removed app would show a frozen
+        # stale value forever instead of going unavailable like any other
+        # deleted app.
+        if self._data or (
+            self._awaiting_first_app_stats_event
+            and app_name not in self.coordinator.get_known_app_names()
         ):
-            # Eagerly-created standard sensor (see get_known_app_names()) whose
-            # app was removed/never came up before its first real app.stats
-            # event -- drop the restored placeholder so this goes unavailable
-            # like any other deleted app, instead of showing a frozen stale
-            # value forever (nothing else ever clears this flag otherwise).
             self._awaiting_first_app_stats_event = False
 
     def _data_missing_is_available(self) -> bool:
@@ -1128,10 +1133,7 @@ class TrueNASAppStatsSensor(TrueNASEntity, RestoreSensor):
     def name(self) -> str | None:
         """Return the dynamic friendly name for the entity."""
         desc_name = self._translated_description_name() or self.entity_description.key
-        if self.entity_description.key in (
-            "app_stats_network_rx",
-            "app_stats_network_tx",
-        ):
+        if self.entity_description.key in NETWORK_SENSOR_KEYS:
             base_uid, interface_name = _parse_app_network_uid(self._uid or "")
             if base_uid is not None and interface_name is not None:
                 if resolved := _resolve_app_network_data(
@@ -1165,10 +1167,7 @@ class TrueNASAppStatsSensor(TrueNASEntity, RestoreSensor):
         if val is None:
             return None
 
-        if description.key in (
-            "app_stats_network_rx",
-            "app_stats_network_tx",
-        ):
+        if description.key in NETWORK_SENSOR_KEYS:
             try:
                 # Backend provides bytes/sec; convert to KiB/s to match
                 # the declared unit.

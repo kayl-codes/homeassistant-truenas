@@ -1173,6 +1173,21 @@ async def test_app_stats_seed_restored_value_skipped_when_data_present() -> None
     assert sensor.native_value == 12.5
 
 
+async def test_app_stats_seed_restored_value_skipped_for_network_sensor() -> None:
+    """Network (rx/tx) sensors stay purely data-driven and never receive the
+    restore-on-restart fallback -- unlike standard sensors, a still-empty
+    interface reading after a restart is expected to report unavailable."""
+    coordinator = make_coordinator(data={"app_stats": {}})
+    sensor = TrueNASAppStatsSensor(coordinator, _net_desc(), "plex::eth0")
+    sensor.async_get_last_sensor_data = AsyncMock(
+        return_value=SensorExtraStoredData(12.5, "KiB/s")
+    )
+    await sensor._seed_restored_value_if_needed()
+    sensor.async_get_last_sensor_data.assert_not_awaited()
+    assert sensor._awaiting_first_app_stats_event is False
+    assert sensor.native_value is None
+
+
 async def test_app_stats_seed_restored_value_noop_when_nothing_stored() -> None:
     """A brand-new app with no prior recorder history has nothing to restore
     -- falls back to today's existing "unavailable until first event" behavior."""
@@ -1238,11 +1253,13 @@ async def test_app_stats_restored_flag_cleared_when_app_no_longer_known() -> Non
 async def test_app_stats_network_restored_flag_survives_refresh_while_still_empty() -> (
     None
 ):
-    """Regression guard: the composite network uid ("plex::eth0") must be
+    """Defensive regression guard: network sensors never get
+    ``_awaiting_first_app_stats_event`` set to True via the normal seeding
+    path (see test_app_stats_seed_restored_value_skipped_for_network_sensor),
+    but _refresh_data() must still behave correctly if the flag were ever set
+    by some other means -- the composite network uid ("plex::eth0") must be
     resolved back to its base app name ("plex") before checking
-    get_known_app_names(), not compared to it directly -- otherwise a network
-    sensor's restored placeholder would be dropped on the very first poll
-    after every restart, even though its app is still known.
+    get_known_app_names(), not compared to it directly.
     """
     coordinator = make_coordinator(
         data={"app": {"plex": {"name": "plex"}}, "app_stats": {}}
