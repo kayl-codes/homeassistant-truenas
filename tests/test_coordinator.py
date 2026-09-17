@@ -81,6 +81,9 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._job_failing = set()
     coord._connection_failing = False
+    coord._connection_failing_reason = None
+    coord._expected_disconnect_reason = None
+    coord._expected_disconnect_deadline = None
     return coord
 
 
@@ -1588,6 +1591,131 @@ async def test_async_ensure_connected_recovers_via_reconnect_without_flapping(
             for r in caplog.records
         )
         assert coord._connection_failing is True
+
+
+async def test_note_expected_disconnect_dedups_first_failure_to_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A disconnect anticipated via note_expected_disconnect() (e.g. right
+
+    after a successful system.shutdown/system.reboot RPC) must skip the
+    first-time ERROR entirely once actually observed -- see #145's
+    follow-up report that a deliberate shutdown still logged one ERROR
+    traceback.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "handshake_timeout"
+    coord.host = "truenas.local"
+
+    coord.note_expected_disconnect("shutdown")
+    # Not yet folded into the dedup state -- only consumed once a reconnect
+    # is actually attempted (see the "still connected" race test below).
+    assert coord._connection_failing is False
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(
+            r.levelname == "DEBUG" and "requested shutdown" in r.message
+            for r in caplog.records
+        )
+        coord.api.connect.assert_awaited_once_with(quiet=True)
+        assert coord._connection_failing is True
+        # Consumed: a later, unrelated arming decision must start fresh.
+        assert coord._expected_disconnect_reason is None
+
+        # Repeat failures keep deduping as usual.
+        caplog.clear()
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        coord.api.connect.assert_awaited_with(quiet=True)
+
+        # Recovery echoes the reason, then clears it.
+        caplog.clear()
+        coord.api.connected = MagicMock(return_value=True)
+        await coord._async_ensure_connected()  # must not raise
+        assert any(
+            r.levelname == "INFO"
+            and "recovered" in r.message
+            and "shutdown" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is False
+        assert coord._connection_failing_reason is None
+
+
+async def test_note_expected_disconnect_survives_a_still_connected_poll(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A poll landing before the websocket has actually dropped (TrueNAS
+
+    keeps it up for a few seconds to tens of seconds while exporting pools/
+    stopping services after the shutdown/reboot RPC returns) must not
+    misreport a "recovery" that never happened, nor discard the pending
+    reason before the real disconnect follows -- otherwise that real
+    disconnect logs a full first-time ERROR again, defeating the dedup
+    entirely. See the #145 follow-up and the HIGH-severity review finding
+    on the first version of this fix.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.host = "truenas.local"
+
+    coord.note_expected_disconnect("shutdown")
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        # Poll #1: RPC succeeded, but the socket is still up.
+        coord.api.connected = MagicMock(return_value=True)
+        await coord._async_ensure_connected()  # must not raise
+        assert not caplog.records
+        assert coord._connection_failing is False
+        assert coord._expected_disconnect_reason == "shutdown"
+
+        # Poll #2: the real disconnect has now happened.
+        caplog.clear()
+        coord.api.connected = MagicMock(return_value=False)
+        coord.api.connect = AsyncMock(return_value=False)
+        coord.api.error = "handshake_timeout"
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        coord.api.connect.assert_awaited_once_with(quiet=True)
+        assert coord._connection_failing is True
+
+
+async def test_note_expected_disconnect_expires_after_grace_period(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A shutdown/reboot that never actually disconnected the host (e.g.
+
+    cancelled on the TrueNAS side) must not mislabel a much later, unrelated
+    failure as expected -- see _EXPECTED_DISCONNECT_GRACE.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "handshake_timeout"
+    coord.host = "truenas.local"
+
+    coord.note_expected_disconnect("shutdown")
+    coord._expected_disconnect_deadline = (
+        coordinator_module.dt_util.utcnow() - timedelta(seconds=1)
+    )
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert any(
+            r.levelname == "ERROR" and "connection failed" in r.message
+            for r in caplog.records
+        )
+        coord.api.connect.assert_awaited_once_with(quiet=False)
 
 
 # ---------------------------

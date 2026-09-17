@@ -63,6 +63,10 @@ from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
 
+# How long note_expected_disconnect()'s dedup pre-arming stays valid; see
+# TrueNASCoordinator._expected_disconnect_reason.
+_EXPECTED_DISCONNECT_GRACE = timedelta(minutes=15)
+
 # Job-progress fields shared by the cloudsync, replication and rsync queries.
 _JOB_PROGRESS_VALS: list[ApiValueSpec] = [
     {
@@ -462,6 +466,29 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # powered off via truenas_ce.system_shutdown) logs one ERROR instead
         # of one every 60s poll -- see issue #145.
         self._connection_failing: bool = False
+        # Human-readable cause of the current _connection_failing episode,
+        # surfaced once in the recovery INFO line and then cleared; see
+        # _note_connection_recovered. Populated either directly (see below)
+        # or via a consumed _expected_disconnect_reason.
+        self._connection_failing_reason: str | None = None
+        # Set by note_expected_disconnect() ahead of a self-triggered
+        # shutdown/reboot so the *first* reconnect failure that follows is
+        # deduped to DEBUG like a repeat, instead of ERROR like a genuine
+        # first-time one -- see issue #145's follow-up report. Deliberately
+        # NOT folded into _connection_failing immediately: TrueNAS keeps the
+        # websocket alive for a few seconds to tens of seconds after the
+        # shutdown/reboot RPC returns while it exports pools/stops services,
+        # so a poll landing in that window would see api.connected() still
+        # True and _note_connection_recovered() would misreport a "recovery"
+        # from a failure that never happened -- clearing this flag right
+        # when the *real* disconnect follows and defeating the dedup. Instead
+        # this is only consumed (see _consume_expected_disconnect_reason)
+        # once a reconnect is actually attempted and found necessary, and
+        # expires after _EXPECTED_DISCONNECT_GRACE so a shutdown/reboot that
+        # never actually happened (e.g. cancelled on the TrueNAS side) does
+        # not mislabel an unrelated, much later failure as expected.
+        self._expected_disconnect_reason: str | None = None
+        self._expected_disconnect_deadline: datetime | None = None
 
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
@@ -576,20 +603,24 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         a persistently unreachable host (e.g. deliberately powered off via
         ``truenas_ce.system_shutdown``, see #145) logs one ERROR instead of
         one every 60s poll, plus an INFO line once the connection recovers.
-        ``quiet`` is threaded into ``api.connect()`` on repeat failures so
-        its own ERROR-level traceback is deduped too, not just the shorter
-        follow-up line below. An unexpected exception from ``api.connect()``
-        itself (rather than a normal False return) bypasses this dedup and
-        relies on the DataUpdateCoordinator's own success/failure-transition
-        logging instead -- that path is rare enough not to warrant its own
+        ``quiet`` is threaded into ``api.connect()`` on repeat (or expected,
+        see ``note_expected_disconnect``) failures so its own ERROR-level
+        traceback is deduped too, not just the shorter follow-up line below.
+        An unexpected exception from ``api.connect()`` itself (rather than a
+        normal False return) bypasses this dedup and relies on the
+        DataUpdateCoordinator's own success/failure-transition logging
+        instead -- that path is rare enough not to warrant its own
         bookkeeping here.
         """
         if self.api.connected():
             self._note_connection_recovered()
             return
 
+        expected_reason = self._consume_expected_disconnect_reason()
+        quiet = self._connection_failing or expected_reason is not None
+
         try:
-            connected = await self.api.connect(quiet=self._connection_failing)
+            connected = await self.api.connect(quiet=quiet)
         except Exception as e:
             raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
 
@@ -604,16 +635,71 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "TrueNAS connection still failing (error code: %s)",
                 self.api.error,
             )
+        elif expected_reason is not None:
+            _LOGGER.debug(
+                "TrueNAS connection failed following requested %s (error code: %s)",
+                expected_reason,
+                self.api.error,
+            )
+            self._connection_failing = True
+            self._connection_failing_reason = expected_reason
         else:
             _LOGGER.error("TrueNAS connection failed (error code: %s)", self.api.error)
             self._connection_failing = True
         raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
 
+    def _consume_expected_disconnect_reason(self) -> str | None:
+        """Return and clear a still-valid pending expected-disconnect reason.
+
+        Called exactly once per reconnect attempt in _async_ensure_connected,
+        right before that attempt runs -- never while ``api.connected()`` is
+        still True, so a shutdown/reboot RPC that hasn't actually dropped the
+        websocket yet leaves the pending reason untouched for a later poll
+        to consume instead of misfiring _note_connection_recovered(). See
+        _expected_disconnect_reason for why this is a separate, expiring
+        piece of state rather than folded directly into _connection_failing.
+        """
+        reason = self._expected_disconnect_reason
+        deadline = self._expected_disconnect_deadline
+        if reason is not None and (deadline is None or dt_util.utcnow() >= deadline):
+            reason = None
+        self._expected_disconnect_reason = None
+        self._expected_disconnect_deadline = None
+        return reason
+
     def _note_connection_recovered(self) -> None:
         """Log recovery once and clear the dedup flag; see _async_ensure_connected."""
         if self._connection_failing:
-            _LOGGER.info("TrueNAS connection recovered")
+            if self._connection_failing_reason:
+                _LOGGER.info(
+                    "TrueNAS connection recovered (following requested %s)",
+                    self._connection_failing_reason,
+                )
+            else:
+                _LOGGER.info("TrueNAS connection recovered")
             self._connection_failing = False
+            self._connection_failing_reason = None
+
+    def note_expected_disconnect(self, reason: str) -> None:
+        """Arm the connection-failure dedup ahead of a self-triggered disconnect.
+
+        Call right after a successful system.shutdown/system.reboot RPC (never
+        before -- if the RPC itself failed, the resulting disconnect, if any,
+        is not expected and should log normally). The websocket typically
+        stays up for a few seconds to tens of seconds after the RPC returns
+        while TrueNAS exports pools/stops services, so this does NOT set
+        _connection_failing directly (see _expected_disconnect_reason for why
+        that would misfire _note_connection_recovered on a poll that still
+        sees api.connected() == True); _async_ensure_connected consumes it
+        once a reconnect is actually attempted, treating even that *first*
+        failure as a dedup repeat (DEBUG, quiet api.connect()) instead of a
+        first-time ERROR. ``reason`` is echoed once in the recovery INFO
+        line. See issue #145.
+        """
+        self._expected_disconnect_reason = reason
+        self._expected_disconnect_deadline = (
+            dt_util.utcnow() + _EXPECTED_DISCONNECT_GRACE
+        )
 
     # ---------------------------
     #   _run_job

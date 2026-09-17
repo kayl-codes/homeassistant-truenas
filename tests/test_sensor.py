@@ -403,6 +403,7 @@ async def test_uptime_restart_calls_reboot() -> None:
     sensor.coordinator.api.query.assert_awaited_once_with(
         "system.reboot", ["Home Assistant Integration"]
     )
+    sensor.coordinator.note_expected_disconnect.assert_called_once_with("reboot")
 
 
 async def test_uptime_stop_calls_shutdown() -> None:
@@ -411,6 +412,20 @@ async def test_uptime_stop_calls_shutdown() -> None:
     sensor.coordinator.api.query.assert_awaited_once_with(
         "system.shutdown", ["Home Assistant Integration"]
     )
+    sensor.coordinator.note_expected_disconnect.assert_called_once_with("shutdown")
+
+
+async def test_uptime_stop_skips_expected_disconnect_when_query_failed() -> None:
+    """A failed system.shutdown RPC is a real error, not an expected
+
+    disconnect -- see #145: pre-arming the dedup here would swallow the
+    ERROR for an unrelated, still-live connection.
+    """
+    sensor = _make_sensor(TrueNASUptimeSensor, {})
+    sensor.coordinator.api.error = "ERR_LOST_QUERY"
+    with pytest.raises(HomeAssistantError):
+        await sensor.stop()
+    sensor.coordinator.note_expected_disconnect.assert_not_called()
 
 
 async def test_uptime_refresh_calls_coordinator_refresh() -> None:

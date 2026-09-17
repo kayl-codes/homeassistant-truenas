@@ -482,6 +482,7 @@ class TrueNASUptimeSensor(TrueNASSensor):
             "system.reboot", ["Home Assistant Integration"]
         )
         self._raise_if_api_error("restart")
+        self.coordinator.note_expected_disconnect("reboot")
 
     async def stop(self) -> None:
         """Shutdown TrueNAS systen."""
@@ -489,6 +490,7 @@ class TrueNASUptimeSensor(TrueNASSensor):
             "system.shutdown", ["Home Assistant Integration"]
         )
         self._raise_if_api_error("stop")
+        self.coordinator.note_expected_disconnect("shutdown")
 
     async def refresh(self) -> None:
         """Force an immediate coordinator re-poll of TrueNAS.
