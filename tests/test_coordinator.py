@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
 
@@ -81,9 +83,15 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._job_failing = set()
     coord._connection_failing = False
+    coord._connection_failing_error = None
     coord._connection_failing_reason = None
     coord._expected_disconnect_reason = None
     coord._expected_disconnect_deadline = None
+    coord.hass = SimpleNamespace(data={})
+    coord.config_entry = SimpleNamespace(
+        entry_id="test-entry",
+        data={CONF_HOST: "truenas.local", CONF_API_KEY: "test-api-key"},
+    )
     return coord
 
 
@@ -1547,6 +1555,60 @@ async def test_async_ensure_connected_logs_error_once_then_debug_then_recovers(
         assert coord._connection_failing is False
 
 
+async def test_async_ensure_connected_relogs_error_when_failure_reason_changes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failure cause change mid-outage must re-log ERROR once, not stay
+
+    silently pinned to DEBUG for whatever error code was first seen -- the
+    dedup marker now persists the ERR_* code itself (see
+    _connection_failing_error), not just a bare failing/not-failing bool, so
+    this must be re-detected even without a recovery in between.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "ERR_LOST_QUERY"
+    coord.host = "truenas.local"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert coord._connection_failing_error == "ERR_LOST_QUERY"
+
+        # Same cause again: still deduped to DEBUG, no new ERROR.
+        caplog.clear()
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+        # Cause changes without ever recovering in between.
+        caplog.clear()
+        coord.api.error = "ERR_LOST_LOGIN"
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert any(
+            r.levelname == "ERROR" and "failure changed" in r.message
+            for r in caplog.records
+        )
+        assert coord._connection_failing is True
+        assert coord._connection_failing_error == "ERR_LOST_LOGIN"
+        # Must actually go through the setter (re-persisting into hass.data),
+        # not just reassign the in-memory attribute -- otherwise a later
+        # setup-retry recreation would seed the stale pre-change code again.
+        assert (
+            coordinator_module._seed_connection_failing(coord.hass, coord.config_entry)
+            == "ERR_LOST_LOGIN"
+        )
+
+        # The new cause is now itself deduped to DEBUG on repeat.
+        caplog.clear()
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+
 async def test_async_ensure_connected_recovers_via_reconnect_without_flapping(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1716,6 +1778,188 @@ async def test_note_expected_disconnect_expires_after_grace_period(
             for r in caplog.records
         )
         coord.api.connect.assert_awaited_once_with(quiet=False)
+
+
+def _config_entry_stub(
+    *, entry_id: str = "entry1", host: str = "truenas.local", api_key: str = "key1"
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        entry_id=entry_id, data={CONF_HOST: host, CONF_API_KEY: api_key}
+    )
+
+
+def test_seed_connection_failing_defaults_to_none() -> None:
+    hass = SimpleNamespace(data={})
+    entry = _config_entry_stub()
+    assert coordinator_module._seed_connection_failing(hass, entry) is None
+
+
+def test_seed_connection_failing_reads_persisted_marker() -> None:
+    entry = _config_entry_stub()
+    other_entry = _config_entry_stub(entry_id="other-entry")
+    hass = SimpleNamespace(
+        data={
+            coordinator_module.DOMAIN: {
+                coordinator_module._DATA_CONNECTION_FAILING: {
+                    "entry1": (
+                        coordinator_module._connection_fingerprint(entry),
+                        "ERR_LOST_QUERY",
+                    )
+                }
+            }
+        }
+    )
+    assert coordinator_module._seed_connection_failing(hass, entry) == "ERR_LOST_QUERY"
+    assert coordinator_module._seed_connection_failing(hass, other_entry) is None
+
+
+def test_seed_connection_failing_ignores_marker_for_different_target() -> None:
+    """A marker left by a since-reconfigured host/API key must not carry over.
+
+    Reproduces the #145 follow-up's critical gap: reconfiguring away from a
+    config entry stuck in Home Assistant's SETUP_RETRY state never calls
+    async_unload_entry (see clear_persisted_connection_failing's docstring),
+    so the marker can only be neutralized here, by fingerprint mismatch, not
+    by being explicitly cleared.
+    """
+    entry = _config_entry_stub()
+    hass = SimpleNamespace(
+        data={
+            coordinator_module.DOMAIN: {
+                coordinator_module._DATA_CONNECTION_FAILING: {
+                    "entry1": (
+                        coordinator_module._connection_fingerprint(entry),
+                        "ERR_LOST_QUERY",
+                    )
+                }
+            }
+        }
+    )
+    reconfigured_entry = _config_entry_stub(host="truenas-new.local")
+    assert coordinator_module._seed_connection_failing(hass, reconfigured_entry) is None
+
+
+async def test_connection_failing_survives_coordinator_recreation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Dedup must survive the coordinator recreation of a setup retry.
+
+    A setup retry recreates the coordinator (see async_setup_entry), which
+    would otherwise reset _connection_failing to False and re-log a fresh
+    ERROR every ~10 minutes (the setup-retry backoff cap) while TrueNAS stays
+    down. The hass.data mirror written by _set_connection_failing must let a
+    *second*, freshly-constructed coordinator instance for the same config
+    entry pick the dedup back up and actually behave like a repeat failure
+    (DEBUG, not ERROR) -- see the #145 follow-up report.
+    """
+    hass = SimpleNamespace(data={})
+    entry = _config_entry_stub()
+    coord = _bare_coordinator()
+    coord.hass = hass
+    coord.config_entry = entry
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.api.connect = AsyncMock(return_value=False)
+    coord.api.error = "ERR_LOST_QUERY"
+    coord.host = "truenas.local"
+
+    with pytest.raises(coordinator_module.UpdateFailed):
+        await coord._async_ensure_connected()
+    assert coord._connection_failing is True
+
+    # A brand-new coordinator instance for the *same* config entry, exactly
+    # as TrueNASCoordinator.__init__ seeds self._connection_failing(_error).
+    coord2 = _bare_coordinator()
+    coord2.hass = hass
+    coord2.config_entry = entry
+    coord2._connection_failing_error = coordinator_module._seed_connection_failing(
+        hass, entry
+    )
+    coord2._connection_failing = coord2._connection_failing_error is not None
+    coord2.api = MagicMock()
+    coord2.api.connected = MagicMock(return_value=False)
+    coord2.api.connect = AsyncMock(return_value=False)
+    coord2.api.error = "ERR_LOST_QUERY"
+    coord2.host = "truenas.local"
+
+    caplog.clear()
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        with pytest.raises(coordinator_module.UpdateFailed):
+            await coord2._async_ensure_connected()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(
+            r.levelname == "DEBUG" and "still failing" in r.message
+            for r in caplog.records
+        )
+        coord2.api.connect.assert_awaited_with(quiet=True)
+
+    # Recovery on either instance clears the persisted marker too.
+    coord2.api.connected = MagicMock(return_value=True)
+    await coord2._async_ensure_connected()  # must not raise
+    assert coord2._connection_failing is False
+    assert coordinator_module._seed_connection_failing(hass, entry) is None
+
+
+async def test_init_seeds_connection_failing_from_hass_data() -> None:
+    """Exercise the real TrueNASCoordinator.__init__ seeding line directly.
+
+    Unlike the bare-instance tests above (which set _connection_failing by
+    hand), this drives the actual constructor so a regression there (wrong
+    attribute, wrong hass.data key, or reverting to a hardcoded False) would
+    fail this test even though it can't otherwise use the full Home
+    Assistant test harness on this platform -- see the module docstring.
+    """
+    entry = _config_entry_stub()
+    entry.options = {}
+    entry.data = {**entry.data, CONF_NAME: "TrueNAS", CONF_VERIFY_SSL: True}
+    hass = SimpleNamespace(
+        data={
+            coordinator_module.DOMAIN: {
+                coordinator_module._DATA_CONNECTION_FAILING: {
+                    "entry1": (
+                        coordinator_module._connection_fingerprint(entry),
+                        "ERR_LOST_QUERY",
+                    )
+                }
+            }
+        }
+    )
+
+    with (
+        patch.object(
+            coordinator_module.DataUpdateCoordinator, "__init__", return_value=None
+        ),
+        patch.object(coordinator_module, "TrueNASAPI"),
+        patch.object(coordinator_module, "TrueNASState"),
+    ):
+        coord = TrueNASCoordinator(hass, entry)
+
+    assert coord._connection_failing is True
+    assert coord._connection_failing_error == "ERR_LOST_QUERY"
+
+
+def test_clear_persisted_connection_failing_removes_entry() -> None:
+    hass = SimpleNamespace(
+        data={
+            coordinator_module.DOMAIN: {
+                coordinator_module._DATA_CONNECTION_FAILING: {
+                    "entry1": ("fingerprint1", "ERR_LOST_QUERY"),
+                    "entry2": ("fingerprint2", "ERR_LOST_LOGIN"),
+                }
+            }
+        }
+    )
+    coordinator_module.clear_persisted_connection_failing(hass, "entry1")
+    assert coordinator_module.DOMAIN in hass.data
+    by_entry = hass.data[coordinator_module.DOMAIN][
+        coordinator_module._DATA_CONNECTION_FAILING
+    ]
+    assert by_entry == {"entry2": ("fingerprint2", "ERR_LOST_LOGIN")}
+
+
+def test_clear_persisted_connection_failing_noop_when_absent() -> None:
+    hass = SimpleNamespace(data={})
+    coordinator_module.clear_persisted_connection_failing(hass, "entry1")  # no raise
 
 
 # ---------------------------

@@ -17,6 +17,7 @@ from homeassistant.const import CONF_NAME, UnitOfInformation
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 
 import custom_components.truenas_ce as init_module
+import custom_components.truenas_ce.coordinator as coordinator_module
 from custom_components.truenas_ce import (
     _build_disabled_data_paths,
     _collect_active_unique_ids,
@@ -43,6 +44,7 @@ from custom_components.truenas_ce import (
 )
 from custom_components.truenas_ce.const import (
     CONF_DATASET_PASSPHRASES,
+    DOMAIN,
     MONITOR_GROUP_VMS,
     SERVICE_ALERT_PROPERTIES,
     SERVICE_ALERT_UUID,
@@ -1207,6 +1209,40 @@ async def test_async_unload_entry_stops_coordinator_on_success() -> None:
     coordinator.stop_app_push.assert_awaited_once()
     coordinator.api.close.assert_awaited_once()
     assert not hasattr(entry, "runtime_data")
+
+
+async def test_async_unload_entry_clears_persisted_connection_failing() -> None:
+    """Unloading a LOADED entry frees its persisted _connection_failing marker.
+
+    This is the best-effort hygiene path only: it covers reload/removal of an
+    entry that is actually LOADED. It is NOT what prevents a stale marker
+    from surviving a reconfigure of an entry stuck in SETUP_RETRY -- Home
+    Assistant's ConfigEntry.async_unload skips async_unload_entry entirely in
+    that state, so that case is instead handled by the fingerprint check in
+    coordinator._seed_connection_failing. See
+    coordinator.clear_persisted_connection_failing's docstring.
+    """
+    marker_key = coordinator_module._DATA_CONNECTION_FAILING
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_unload_platforms=AsyncMock(return_value=True)
+        ),
+        data={
+            DOMAIN: {
+                marker_key: {
+                    "e1": ("fingerprint-e1", "ERR_LOST_QUERY"),
+                    "other-entry": ("fp-2", "ERR_LOST_LOGIN"),
+                }
+            }
+        },
+    )
+    entry = _config_entry(entry_id="e1")
+
+    with patch.object(init_module, "get_truenas_coordinator", return_value=None):
+        result = await async_unload_entry(hass, entry)
+
+    assert result is True
+    assert hass.data[DOMAIN][marker_key] == {"other-entry": ("fp-2", "ERR_LOST_LOGIN")}
 
 
 async def test_async_unload_entry_noop_when_platform_unload_fails() -> None:
