@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import Awaitable, Callable, Hashable
@@ -62,6 +63,81 @@ from .const import (
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
+
+# How long note_expected_disconnect()'s dedup pre-arming stays valid; see
+# TrueNASCoordinator._expected_disconnect_reason.
+_EXPECTED_DISCONNECT_GRACE = timedelta(minutes=15)
+
+# hass.data[DOMAIN] key for the cross-instance _connection_failing marker; see
+# TrueNASCoordinator._set_connection_failing.
+_DATA_CONNECTION_FAILING = "connection_failing_by_entry"
+
+
+def _connection_fingerprint(config_entry: ConfigEntry) -> str:
+    """Fingerprint the connection-identifying parts of config_entry.data.
+
+    Stored alongside the persisted _connection_failing marker (see
+    _seed_connection_failing) so the marker self-invalidates when the user
+    reconfigures the entry to a different host/API key, instead of relying
+    on the marker being explicitly cleared. That reliance would be broken:
+    Home Assistant's own ConfigEntry.async_unload returns early WITHOUT
+    calling this integration's async_unload_entry whenever the entry isn't
+    currently ConfigEntryState.LOADED -- which is exactly the state
+    (SETUP_RETRY) a reconfigure-while-unreachable happens from, so
+    clear_persisted_connection_failing would never run for the one case
+    this whole mechanism is meant to protect. The API key is hashed rather
+    than stored so it isn't duplicated in hass.data in recoverable form.
+    CONF_VERIFY_SSL is included alongside host/API key: it's set via the
+    same reconfigure flow (config_flow.py) and changes how the connection
+    is actually established, so a reconfigure that flips it while the host
+    stays unreachable should also get a fresh ERROR diagnostic rather than
+    silently inheriting the previous setting's dedup state (caught by
+    Sourcery on PR #153).
+    """
+    raw = (
+        f"{config_entry.data[CONF_HOST]}|{config_entry.data[CONF_API_KEY]}"
+        f"|{config_entry.data[CONF_VERIFY_SSL]}"
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _seed_connection_failing(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> str | None:
+    """Read the persisted connection-failure marker for config_entry, if any.
+
+    Returns the last-seen TrueNAS ERR_* code, so a coordinator recreated by a
+    Home Assistant setup retry not only remembers *that* it was failing (see
+    TrueNASCoordinator._connection_failing) but *why* (see
+    TrueNASCoordinator._connection_failing_error) -- letting it re-log ERROR
+    once if the failure reason changes mid-outage, instead of silently
+    freezing on whatever error was first seen. Returns None both when never
+    failing and when the persisted marker's fingerprint no longer matches
+    config_entry's current host/API key -- see _connection_fingerprint --
+    since that means the previous failure was against a different,
+    now-irrelevant target. A genuine HA restart also sees None, since
+    hass.data is wiped with the process.
+    """
+    by_entry = hass.data.get(DOMAIN, {}).get(_DATA_CONNECTION_FAILING, {})
+    marker = by_entry.get(config_entry.entry_id)
+    if marker is None or marker[0] != _connection_fingerprint(config_entry):
+        return None
+    return marker[1]  # type: ignore[no-any-return]
+
+
+def clear_persisted_connection_failing(hass: HomeAssistant, entry_id: str) -> None:
+    """Drop entry_id's persisted _connection_failing marker, if any.
+
+    Best-effort hygiene call from async_unload_entry, for the entries it
+    does run for (unloading a currently-LOADED entry): frees the marker a
+    little sooner than waiting for the next successful reconnect or an HA
+    restart. NOT relied upon for correctness -- see _connection_fingerprint
+    for why a reconfigure away from a stuck SETUP_RETRY entry bypasses
+    async_unload_entry entirely, and is instead handled by the fingerprint
+    check in _seed_connection_failing.
+    """
+    hass.data.get(DOMAIN, {}).get(_DATA_CONNECTION_FAILING, {}).pop(entry_id, None)
+
 
 # Job-progress fields shared by the cloudsync, replication and rsync queries.
 _JOB_PROGRESS_VALS: list[ApiValueSpec] = [
@@ -457,11 +533,55 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # every 60s poll -- see issue #134.
         self._job_failing: set[str] = set()
 
-        # Whether the last _async_ensure_connected attempt failed, deduped
-        # the same way so a persistently unreachable host (e.g. deliberately
+        # The ERR_* code of the last failed _async_ensure_connected attempt,
+        # deduped so a persistently unreachable host (e.g. deliberately
         # powered off via truenas_ce.system_shutdown) logs one ERROR instead
-        # of one every 60s poll -- see issue #145.
-        self._connection_failing: bool = False
+        # of one every 60s poll -- see issue #145. Seeded from hass.data
+        # instead of always None: a failed first refresh raises
+        # ConfigEntryNotReady, which makes Home Assistant retry setup with a
+        # brand-new TrueNASCoordinator instance (see async_setup_entry) --
+        # without this, the in-memory state can never survive that recreation
+        # and every retry re-logs a fresh ERROR, forever, every ~10 min (the
+        # setup-retry backoff cap). hass.data persists across that
+        # recreation (only reset by an actual HA restart, where one fresh
+        # ERROR is correct) -- see _set_connection_failing. Kept as the
+        # error code rather than a bare bool so a cause change mid-outage
+        # (e.g. connection_refused turning into certificate_verify_failed)
+        # can still be re-logged once at ERROR instead of staying pinned to
+        # whichever code was first seen -- see _async_ensure_connected.
+        self._connection_failing_error: str | None = _seed_connection_failing(
+            hass, config_entry
+        )
+        # Derived from the error above rather than a second seeded field: a
+        # persisted failure always carries the ERR_* code that caused it (see
+        # _set_connection_failing), so "was failing" and "has a remembered
+        # error" are the same fact. Kept as its own bool anyway (rather than
+        # spelling `is not None` at each call site) since it reads like the
+        # dedup flag it conceptually is.
+        self._connection_failing: bool = self._connection_failing_error is not None
+        # Human-readable cause of the current _connection_failing episode,
+        # surfaced once in the recovery INFO line and then cleared; see
+        # _note_connection_recovered. Populated either directly (see below)
+        # or via a consumed _expected_disconnect_reason.
+        self._connection_failing_reason: str | None = None
+        # Set by note_expected_disconnect() ahead of a self-triggered
+        # shutdown/reboot so the *first* reconnect failure that follows is
+        # deduped to DEBUG like a repeat, instead of ERROR like a genuine
+        # first-time one -- see issue #145's follow-up report. Deliberately
+        # NOT folded into _connection_failing immediately: TrueNAS keeps the
+        # websocket alive for a few seconds to tens of seconds after the
+        # shutdown/reboot RPC returns while it exports pools/stops services,
+        # so a poll landing in that window would see api.connected() still
+        # True and _note_connection_recovered() would misreport a "recovery"
+        # from a failure that never happened -- clearing this flag right
+        # when the *real* disconnect follows and defeating the dedup. Instead
+        # this is only consumed (see _consume_expected_disconnect_reason)
+        # once a reconnect is actually attempted and found necessary, and
+        # expires after _EXPECTED_DISCONNECT_GRACE so a shutdown/reboot that
+        # never actually happened (e.g. cancelled on the TrueNAS side) does
+        # not mislabel an unrelated, much later failure as expected.
+        self._expected_disconnect_reason: str | None = None
+        self._expected_disconnect_deadline: datetime | None = None
 
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
@@ -576,44 +696,164 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         a persistently unreachable host (e.g. deliberately powered off via
         ``truenas_ce.system_shutdown``, see #145) logs one ERROR instead of
         one every 60s poll, plus an INFO line once the connection recovers.
-        ``quiet`` is threaded into ``api.connect()`` on repeat failures so
-        its own ERROR-level traceback is deduped too, not just the shorter
-        follow-up line below. An unexpected exception from ``api.connect()``
-        itself (rather than a normal False return) bypasses this dedup and
-        relies on the DataUpdateCoordinator's own success/failure-transition
-        logging instead -- that path is rare enough not to warrant its own
+        If the ERR_* code changes while still failing (e.g. the host comes
+        back only far enough to fail TLS instead of refusing the connection
+        outright), one fresh ERROR is logged for that change too, instead of
+        silently staying pinned to whichever code was first seen -- see
+        _connection_failing_error. ``quiet`` is threaded into ``api.connect()``
+        on repeat (or expected,
+        see ``note_expected_disconnect``) failures so its own ERROR-level
+        traceback is deduped too, not just the shorter follow-up line below.
+        An unexpected exception from ``api.connect()`` itself (rather than a
+        normal False return) bypasses this dedup and relies on the
+        DataUpdateCoordinator's own success/failure-transition logging
+        instead -- that path is rare enough not to warrant its own
         bookkeeping here.
         """
         if self.api.connected():
             self._note_connection_recovered()
             return
 
+        expected_reason = self._consume_expected_disconnect_reason()
+        quiet = self._connection_failing or expected_reason is not None
+
         try:
-            connected = await self.api.connect(quiet=self._connection_failing)
+            connected = await self.api.connect(quiet=quiet)
         except Exception as e:
             raise UpdateFailed(f"Error connecting to TrueNAS: {e}") from e
 
         if connected:
+            if expected_reason is not None and not self._connection_failing:
+                # The reconnect succeeded on this very first attempt after the
+                # disconnect was observed, so _connection_failing was never
+                # set True for this episode and _note_connection_recovered
+                # below would otherwise stay silent -- discarding the reason
+                # note_expected_disconnect recorded. Guarded on
+                # not self._connection_failing so an already-ongoing,
+                # unrelated outage (that happened to have a reason armed on
+                # top of it) still reports through the existing
+                # _connection_failing_reason path instead of double-logging.
+                _LOGGER.info(
+                    "TrueNAS connection recovered (following requested %s)",
+                    expected_reason,
+                )
             self._note_connection_recovered()
             return
 
         if self.api.error == ERR_INVALID_KEY:
             raise ConfigEntryAuthFailed("Invalid TrueNAS API key")
         if self._connection_failing:
+            if self.api.error != self._connection_failing_error:
+                # The persisted marker survives coordinator recreation (see
+                # _set_connection_failing), so without this, a failure whose
+                # cause changes mid-outage (e.g. connection_refused turning
+                # into certificate_verify_failed) would stay silently pinned
+                # to DEBUG at the *first* error code for the rest of the
+                # outage instead of surfacing the new one.
+                _LOGGER.error(
+                    "TrueNAS connection failure changed (error code: %s -> %s)",
+                    self._connection_failing_error,
+                    self.api.error,
+                )
+                self._set_connection_failing(True, self.api.error)
+            else:
+                _LOGGER.debug(
+                    "TrueNAS connection still failing (error code: %s)",
+                    self.api.error,
+                )
+        elif expected_reason is not None:
             _LOGGER.debug(
-                "TrueNAS connection still failing (error code: %s)",
+                "TrueNAS connection failed following requested %s (error code: %s)",
+                expected_reason,
                 self.api.error,
             )
+            self._set_connection_failing(True, self.api.error)
+            self._connection_failing_reason = expected_reason
         else:
             _LOGGER.error("TrueNAS connection failed (error code: %s)", self.api.error)
-            self._connection_failing = True
+            self._set_connection_failing(True, self.api.error)
         raise UpdateFailed(f"Error connecting to TrueNAS: {self.api.error}")
+
+    def _set_connection_failing(self, value: bool, error: str | None = None) -> None:
+        """Set _connection_failing/_connection_failing_error and mirror into hass.data.
+
+        The mirror is what lets the dedup -- and the last known ERR_* code,
+        see _connection_failing_error -- survive a TrueNASCoordinator
+        recreated by a Home Assistant setup retry -- see _connection_failing
+        and async_setup_entry. Keyed by config_entry.entry_id so multiple
+        TrueNAS instances don't share dedup state, and validated against a
+        fingerprint of the current host/API key (see _connection_fingerprint)
+        so a later reconfigure to a different target can't be misread as
+        still-failing. Cleared entirely on recovery rather than left as a
+        stale entry, keeping hass.data free of long-lived clutter for
+        entries that never fail again. ``error`` is required whenever
+        ``value`` is True -- see the call sites in _async_ensure_connected.
+        """
+        self._connection_failing = value
+        self._connection_failing_error = error if value else None
+        by_entry = self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            _DATA_CONNECTION_FAILING, {}
+        )
+        if value:
+            by_entry[self.config_entry.entry_id] = (
+                _connection_fingerprint(self.config_entry),
+                error,
+            )
+        else:
+            by_entry.pop(self.config_entry.entry_id, None)
+
+    def _consume_expected_disconnect_reason(self) -> str | None:
+        """Return and clear a still-valid pending expected-disconnect reason.
+
+        Called exactly once per reconnect attempt in _async_ensure_connected,
+        right before that attempt runs -- never while ``api.connected()`` is
+        still True, so a shutdown/reboot RPC that hasn't actually dropped the
+        websocket yet leaves the pending reason untouched for a later poll
+        to consume instead of misfiring _note_connection_recovered(). See
+        _expected_disconnect_reason for why this is a separate, expiring
+        piece of state rather than folded directly into _connection_failing.
+        """
+        reason = self._expected_disconnect_reason
+        deadline = self._expected_disconnect_deadline
+        if reason is not None and (deadline is None or dt_util.utcnow() >= deadline):
+            reason = None
+        self._expected_disconnect_reason = None
+        self._expected_disconnect_deadline = None
+        return reason
 
     def _note_connection_recovered(self) -> None:
         """Log recovery once and clear the dedup flag; see _async_ensure_connected."""
         if self._connection_failing:
-            _LOGGER.info("TrueNAS connection recovered")
-            self._connection_failing = False
+            if self._connection_failing_reason:
+                _LOGGER.info(
+                    "TrueNAS connection recovered (following requested %s)",
+                    self._connection_failing_reason,
+                )
+            else:
+                _LOGGER.info("TrueNAS connection recovered")
+            self._set_connection_failing(False)
+            self._connection_failing_reason = None
+
+    def note_expected_disconnect(self, reason: str) -> None:
+        """Arm the connection-failure dedup ahead of a self-triggered disconnect.
+
+        Call right after a successful system.shutdown/system.reboot RPC (never
+        before -- if the RPC itself failed, the resulting disconnect, if any,
+        is not expected and should log normally). The websocket typically
+        stays up for a few seconds to tens of seconds after the RPC returns
+        while TrueNAS exports pools/stops services, so this does NOT set
+        _connection_failing directly (see _expected_disconnect_reason for why
+        that would misfire _note_connection_recovered on a poll that still
+        sees api.connected() == True); _async_ensure_connected consumes it
+        once a reconnect is actually attempted, treating even that *first*
+        failure as a dedup repeat (DEBUG, quiet api.connect()) instead of a
+        first-time ERROR. ``reason`` is echoed once in the recovery INFO
+        line. See issue #145.
+        """
+        self._expected_disconnect_reason = reason
+        self._expected_disconnect_deadline = (
+            dt_util.utcnow() + _EXPECTED_DISCONNECT_GRACE
+        )
 
     # ---------------------------
     #   _run_job

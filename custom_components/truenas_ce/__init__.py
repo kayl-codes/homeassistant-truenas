@@ -51,7 +51,12 @@ from .const import (
     SERVICE_PASSPHRASE_REMOVE,
     SIGNAL_UPDATE_SENSORS,
 )
-from .coordinator import TrueNASConfigEntry, TrueNASCoordinator, get_truenas_coordinator
+from .coordinator import (
+    TrueNASConfigEntry,
+    TrueNASCoordinator,
+    clear_persisted_connection_failing,
+    get_truenas_coordinator,
+)
 from .entity import (
     TrueNASEntityDescription,
     _cleanup_orphaned_entities,
@@ -733,5 +738,6 @@ async def async_unload_entry(
             await coordinator.api.close()
         if hasattr(config_entry, "runtime_data"):
             del config_entry.runtime_data
+        clear_persisted_connection_failing(hass, config_entry.entry_id)
 
     return unload_ok
