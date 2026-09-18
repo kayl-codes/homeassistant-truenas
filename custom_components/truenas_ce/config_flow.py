@@ -329,8 +329,9 @@ async def _async_safe_disconnect(api: TrueNASAPI) -> None:
         await api.disconnect()
 
 
-# Ports the ``ws``/``wss`` schemes already default to; an mDNS announcement
-# naming one of them adds nothing over probing the bare host.
+# 443 is the wss default; 80 is the web UI's plain-HTTP port, which is
+# worthless to retry now that only wss is probed. Either way, an mDNS
+# announcement naming one of them adds nothing over probing the bare host.
 _DEFAULT_WS_PORTS = frozenset({80, 443})
 
 
@@ -341,13 +342,14 @@ def _probe_candidates(host: str, port: int | None) -> list[str]:
     """Return the host strings to probe for ``host``, most likely first.
 
     TrueNAS only advertises the generic ``_http._tcp`` service, whose port is
-    the web UI's -- normally 80, which ``ws`` already defaults to (as ``wss``
-    does 443). Probing the bare host therefore stays first so a standard box
-    reachable over ``wss`` is not forced onto the advertised plain-HTTP port.
-    A genuinely non-default port is appended as a fallback, so an instance
-    behind a custom port or reverse proxy is no longer misread as "not
-    TrueNAS". ``aiotruenas`` builds its URL from the host verbatim, so
-    ``host:port`` is a valid host string here (see ``helper.sanitize_host``).
+    the web UI's plain-HTTP one -- normally 80, which is worthless for a wss
+    probe (see ``_DEFAULT_WS_PORTS``). Probing the bare host therefore stays
+    first so a standard box reachable over ``wss`` on its own default port
+    (443) is not forced onto the advertised plain-HTTP port. A genuinely
+    non-default port is appended as a fallback, so an instance behind a
+    custom port or reverse proxy is no longer misread as "not TrueNAS".
+    ``aiotruenas`` builds its URL from the host verbatim, so ``host:port`` is
+    a valid host string here (see ``helper.sanitize_host``).
     """
     if port is None or port in _DEFAULT_WS_PORTS:
         return [host]
@@ -362,20 +364,18 @@ async def _async_probe_candidate(host: str) -> bool:
 
     Only a genuine TrueNAS JSON-RPC endpoint completes the WebSocket
     handshake and then answers ``ERR_INVALID_KEY``; every other outcome is
-    treated as "not TrueNAS".
+    treated as "not TrueNAS". Only ``wss`` is probed: validation and every
+    later connection always default to ``wss`` too (the config flow has no
+    scheme field), so a candidate that only answers on plain ``ws`` could
+    never complete setup regardless.
     """
-    for scheme in ("wss", "ws"):
-        api = TrueNASAPI(host, "-", verify_ssl=False, scheme=scheme)
-        try:
-            if not await _async_try_connect(
-                api, host, f"probe ({scheme}) is not reachable"
-            ):
-                continue
-            if api.error == ERR_INVALID_KEY:
-                return True
-        finally:
-            await _async_safe_disconnect(api)
-    return False
+    api = TrueNASAPI(host, "-", verify_ssl=False, scheme="wss")
+    try:
+        if not await _async_try_connect(api, host, "probe is not reachable"):
+            return False
+        return api.error == ERR_INVALID_KEY
+    finally:
+        await _async_safe_disconnect(api)
 
 
 # ---------------------------
@@ -456,15 +456,21 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         errorcode = ""
         try:
             conn, errorcode = await api.connection_test()
+        except Exception:
+            # A bug inside aiotruenas itself must degrade to a retryable
+            # "unknown" form error, not crash the flow.
+            _LOGGER.exception(
+                "TrueNAS %s: connection_test() raised unexpectedly",
+                config.get(CONF_HOST, ""),
+            )
+        else:
             if conn:
                 system_id = await _async_get_system_id(api, config.get(CONF_HOST, ""))
                 if system_id:
                     config[CONF_SYSTEM_ID] = system_id
         finally:
-            # connection_test() can propagate a non-TrueNASError (e.g. a bug
-            # inside aiotruenas itself); disconnecting here too, not just on
-            # the happy path, ensures an already-open WebSocket is never
-            # leaked when that happens.
+            # Runs on both the success and the swallowed-exception path, so
+            # an already-open WebSocket is never leaked either way.
             await _async_safe_disconnect(api)
 
         if not conn:
