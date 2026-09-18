@@ -193,19 +193,24 @@ async def test_validate_connection_system_id_lookup_failure_does_not_block() -> 
     api.disconnect.assert_awaited_once()
 
 
-async def test_validate_connection_disconnects_when_connection_test_raises() -> None:
-    """An unexpected exception from connection_test() must not leak the socket."""
+async def test_validate_connection_unknown_error_when_connection_test_raises() -> None:
+    """An unexpected exception from connection_test() degrades to a retryable error.
+
+    Previously such an exception propagated out of _validate_connection()
+    entirely (crashing the flow with an unhandled traceback) instead of
+    setting a normal, retryable "unknown" form error -- inconsistent with
+    every other connection helper in this file, which already catches and
+    logs broadly. It must also still disconnect, so the socket isn't leaked.
+    """
     flow = TrueNASConfigFlow()
     config = {CONF_HOST: "nas.local", CONF_API_KEY: "key", CONF_VERIFY_SSL: True}
     errors: dict[str, str] = {}
     api = MagicMock()
     api.connection_test = AsyncMock(side_effect=RuntimeError("boom"))
     api.disconnect = AsyncMock()
-    with (
-        patch.object(config_flow, "TrueNASAPI", return_value=api),
-        pytest.raises(RuntimeError, match="boom"),
-    ):
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
         await flow._validate_connection(config, errors)
+    assert errors[CONF_HOST] == "unknown"
     api.disconnect.assert_awaited_once()
 
 
@@ -248,28 +253,8 @@ async def test_probe_is_truenas_false_when_not_truenas() -> None:
     api.error = ERR_CONNECTION_REFUSED
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
-    assert mock_api.call_count == 2
-    assert api.disconnect.await_count == 2
-
-
-async def test_probe_is_truenas_falls_back_from_wss_to_ws() -> None:
-    """A wss failure still tries plain ws before giving up."""
-    wss_api = MagicMock()
-    wss_api.connect = AsyncMock()
-    wss_api.disconnect = AsyncMock()
-    wss_api.error = ERR_CONNECTION_REFUSED
-
-    ws_api = MagicMock()
-    ws_api.connect = AsyncMock()
-    ws_api.disconnect = AsyncMock()
-    ws_api.error = ERR_INVALID_KEY
-
-    with patch.object(
-        config_flow, "TrueNASAPI", side_effect=[wss_api, ws_api]
-    ) as mock_api:
-        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
-    assert mock_api.call_count == 2
-    mock_api.assert_any_call("1.2.3.4", "-", verify_ssl=False, scheme="ws")
+    assert mock_api.call_count == 1
+    assert api.disconnect.await_count == 1
 
 
 async def test_probe_is_truenas_false_when_connect_raises() -> None:
@@ -279,8 +264,8 @@ async def test_probe_is_truenas_false_when_connect_raises() -> None:
     api.disconnect = AsyncMock()
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
-    assert mock_api.call_count == 2
-    assert api.disconnect.await_count == 2
+    assert mock_api.call_count == 1
+    assert api.disconnect.await_count == 1
 
 
 async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
@@ -309,7 +294,7 @@ async def test_probe_is_truenas_falls_back_to_advertised_port() -> None:
     with patch.object(
         config_flow,
         "TrueNASAPI",
-        side_effect=[default_api, default_api, port_api],
+        side_effect=[default_api, port_api],
     ) as mock_api:
         probed = await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", 8443)
     assert probed == "1.2.3.4:8443"
@@ -325,7 +310,7 @@ async def test_probe_is_truenas_ignores_default_ports(port: int | None) -> None:
     api.error = ERR_CONNECTION_REFUSED
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4", port) is None
-    assert mock_api.call_count == 2  # wss + ws on the bare host only
+    assert mock_api.call_count == 1  # bare host only, wss only
 
 
 # ---------------------------
