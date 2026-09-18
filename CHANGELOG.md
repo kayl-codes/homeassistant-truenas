@@ -14,6 +14,41 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.11.1] — Config-Flow, App-Stats & Connection-Log Fixes
+
+### Fixed
+- **Config-flow setup could try a `ws` fallback scheme that TrueNAS's modern `/api/current`
+  endpoint never speaks**, masking real setup problems behind a doomed retry. Host probing during
+  setup now tries `wss` only. Separately, an unexpected error from the connection test itself
+  could escape the config flow instead of being reported as a normal form error; it's now caught
+  and surfaced correctly. (#154)
+- **The four standard `app_stats` sensors (CPU, RAM, Block I/O read/write) went `unavailable` for
+  roughly 60–120s after every Home Assistant restart or integration reload**, because TrueNAS's
+  `app.stats` push subscription needs a full poll interval of buffered events before it can emit
+  its first reading. These sensors are now created eagerly and restore their last known value
+  across a restart, bridging the gap until live data resumes. (Network rx/tx sensors are
+  data-driven by design and unaffected.) Note: the very first restart after upgrading to this
+  version may still show a brief gap, since no restore data exists yet — every restart after that
+  is covered. (#152)
+- **A subscription-read failure in the `app.stats` background job could be silently swallowed**
+  under concurrent polling, leaving `app_stats`-backed entities serving a frozen last-good snapshot
+  forever instead of surfacing an update failure. The read result is now returned directly instead
+  of relying on shared, unsynchronized instance state. (#150)
+- **The config-flow validation client could leak an open WebSocket** if `connection_test()` raised
+  an unexpected error, since disconnect only ran on the happy path; it's now guaranteed via a
+  `finally` block. (#151)
+- **The startup migration that applies the configured GB/GiB display unit was forcing that unit
+  onto *every* `DATA_SIZE` sensor**, including ones with a deliberately fixed unit (app memory,
+  block I/O — always MiB) that never opted into the GB/GiB preference. The migration is now scoped
+  to GB/GiB-scaled sensors only, and any stale forced unit the earlier bug already wrote to an
+  affected install's entity registry is corrected on next startup. (#149)
+- **Deliberately shutting down or restarting TrueNAS via the integration's own actions could still
+  log one full ERROR traceback on the very first reconnect attempt**, and repeated Home Assistant
+  setup retries during a genuine outage re-logged a fresh ERROR roughly every 10 minutes
+  indefinitely, since the dedup introduced in 2.11.0 reset with every retry. Both are now deduped:
+  an expected shutdown/reboot arms a short-lived marker so even the first reconnect failure logs at
+  DEBUG, and the dedup state now persists per config entry across setup retries. (#145, #153)
+
 ## [2.11.0] — Entity-Unavailable Detection for Silently Stale Data
 
 ### Added
