@@ -28,6 +28,7 @@ from custom_components.truenas_ce.entity import (
     format_device_identifier,
     format_unique_id,
     resolve_entry_identity,
+    shorten_free_text_name,
 )
 from custom_components.truenas_ce.sensor_types import TrueNASSensorEntityDescription
 
@@ -474,6 +475,105 @@ def test_name_referenced_entity_falls_back_to_uid() -> None:
     )
     entity = _make_entity(uid="d1", data={"guid": "g1"}, description=desc)
     assert entity.name == "d1 Temperature"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Nightly backup", "Nightly backup"),
+        ("  Nightly backup  \nWhy: the long explanation", "Nightly backup"),
+        ("\n\n  Summary after blank lines\nrest", "Summary after blank lines"),
+        ("x" * 60, "x" * 60),
+        ("", ""),
+        ("  \n  ", ""),
+    ],
+)
+def test_shorten_free_text_name_keeps_first_line(value: str, expected: str) -> None:
+    assert shorten_free_text_name(value) == expected
+
+
+def test_shorten_free_text_name_caps_long_line_with_ellipsis() -> None:
+    value = (
+        "Re-apply the claude egress firewall chain (idempotent), needed because "
+        "docker flushes DOCKER-USER on every restart"
+    )
+    result = shorten_free_text_name(value)
+    assert len(result) <= 60
+    assert result.endswith("…")
+    assert result == value[:59].rstrip() + "…"
+
+
+def _free_text_desc(free_text: bool) -> TrueNASSensorEntityDescription:
+    return TrueNASSensorEntityDescription(
+        key="cronjob_switch",
+        name="Enabled",
+        data_path="disk",  # _make_entity seeds data under "disk"
+        data_reference="id",
+        data_name="display_name",
+        data_name_free_text=free_text,
+    )
+
+
+def test_name_free_text_data_name_is_shortened() -> None:
+    long_description = "Refresh certs\n" + "Long explanation. " * 20
+    entity = _make_entity(
+        uid="1",
+        data={"id": 1, "display_name": long_description},
+        description=_free_text_desc(True),
+    )
+    assert entity.name == "Refresh certs Enabled"
+
+
+def test_name_free_text_blank_description_falls_back_to_uid() -> None:
+    entity = _make_entity(
+        uid="1",
+        data={"id": 1, "display_name": "  \n "},
+        description=_free_text_desc(True),
+    )
+    assert entity.name == "1 Enabled"
+
+
+def test_name_non_free_text_data_name_is_untouched() -> None:
+    """Only flagged descriptions are shortened (e.g. long dataset paths stay)."""
+    value = "tank/" + "nested/" * 12 + "dataset"
+    entity = _make_entity(
+        uid="1",
+        data={"id": 1, "display_name": value},
+        description=_free_text_desc(False),
+    )
+    assert entity.name == f"{value} Enabled"
+
+
+def test_cronjob_and_cloudsync_descriptions_are_flagged_free_text() -> None:
+    """Every description naming entities from a user description opts in."""
+    from custom_components.truenas_ce import button_types, sensor_types, switch_types
+
+    flagged = {
+        desc.key
+        for module in (button_types, sensor_types, switch_types)
+        for desc in module.SENSOR_TYPES
+        if desc.data_name_free_text
+    }
+    assert flagged == {
+        "cloudsync",
+        "cloudsync_run",
+        "cloudsync_switch",
+        "cronjob_run",
+        "cronjob_switch",
+    }
+
+
+def test_name_free_text_does_not_change_unique_id() -> None:
+    """The unique_id stays keyed on the reference, so registry entries survive."""
+    short = _make_entity(
+        uid="1", data={"id": 1, "display_name": "a"}, description=_free_text_desc(True)
+    )
+    long = _make_entity(
+        uid="1",
+        data={"id": 1, "display_name": "a" * 300},
+        description=_free_text_desc(True),
+    )
+    assert short.unique_id == long.unique_id
 
 
 def test_name_referenced_entity_no_desc_name() -> None:

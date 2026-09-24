@@ -128,6 +128,7 @@ DEVICE_ATTRIBUTES_MEMORY = (
 )
 
 DEVICE_ATTRIBUTES_CLOUDSYNC = (
+    "description",
     "direction",
     "path",
     "enabled",
@@ -574,6 +575,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_path="cloudsync",
         data_attribute="state",
         data_name="description",
+        data_name_free_text=True,
         data_uid=None,
         data_reference="id",
         data_attributes_list=DEVICE_ATTRIBUTES_CLOUDSYNC,

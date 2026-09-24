@@ -603,6 +603,24 @@ def register_system_device(
     return device.id
 
 
+# Longest name segment taken from a free-text field (cron job / cloudsync
+# descriptions). TrueNAS puts no limit on those, so a paragraph-long
+# description would otherwise become a 255-char entity_id (#160).
+FREE_TEXT_NAME_MAX_LEN = 60
+
+
+def shorten_free_text_name(value: str) -> str:
+    """Reduce a free-text description to a short, single-line name label.
+
+    Keeps only the first non-blank line (the summary) and caps it at
+    FREE_TEXT_NAME_MAX_LEN characters, ending a cut label with an ellipsis.
+    """
+    first_line = next((line.strip() for line in value.splitlines() if line.strip()), "")
+    if len(first_line) <= FREE_TEXT_NAME_MAX_LEN:
+        return first_line
+    return f"{first_line[: FREE_TEXT_NAME_MAX_LEN - 1].rstrip()}…"
+
+
 # ---------------------------
 #   TrueNASEntityDescription
 # ---------------------------
@@ -624,6 +642,9 @@ class TrueNASEntityDescription(EntityDescription):
     ha_connection_value: str | None = None
     data_path: str | None = None
     data_name: str | None = None
+    # data_name is user-entered free text of unbounded length; shorten it
+    # via shorten_free_text_name before using it in the entity name.
+    data_name_free_text: bool = False
     data_uid: str | None = None
     data_reference: str | None = None
     data_legacy_reference: str | None = None
@@ -1103,6 +1124,12 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
         if data_value is None:
             data_value = str(self._uid)
+        elif self.entity_description.data_name_free_text and isinstance(
+            data_value, str
+        ):
+            # A blank description shortens to "" -- fall back to the uid
+            # instead of producing an empty/space-led name.
+            data_value = shorten_free_text_name(data_value) or str(self._uid)
 
         return f"{data_value} {desc_name}" if desc_name else f"{data_value}"
 
