@@ -19,6 +19,7 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from custom_components.truenas_ce import config_flow
 from custom_components.truenas_ce.config_flow import (
     TrueNASConfigFlow,
+    _base_schema,
     _map_error_to_ha,
     _text_to_passphrases,
 )
@@ -31,6 +32,28 @@ from custom_components.truenas_ce.const import (
     ERR_TIMEOUT,
     LEGACY_DOMAIN,
 )
+
+
+# ---------------------------
+#   _base_schema
+# ---------------------------
+def test_base_schema_api_key_is_optional_not_required() -> None:
+    """Regression guard for #158: a ``vol.Required`` API key field blocks
+    blank submission client-side regardless of its default, which made the
+    legacy-takeover blank-to-keep-the-key flow unusable in the HA frontend
+    (invisible to this backend-only test suite, since voluptuous itself only
+    checks presence -- see test_migrate_import_blank_api_key_keeps_legacy_key
+    in test_config_flow_flows.py, which passed even before this fix).
+    """
+    # Compared against config_flow's own ``vol`` (not a freshly imported
+    # voluptuous): Home Assistant may shadow the real module with its
+    # "probatio" fork at import time, which would make an independently
+    # imported vol.Optional a different (and thus isinstance-mismatching)
+    # class than the one config_flow.py actually built the schema with.
+    schema = _base_schema({})
+    (marker,) = [key for key in schema.schema if key == CONF_API_KEY]
+    assert isinstance(marker, config_flow.vol.Optional)
+    assert not isinstance(marker, config_flow.vol.Required)
 
 
 # ---------------------------

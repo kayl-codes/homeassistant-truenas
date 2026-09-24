@@ -42,6 +42,7 @@ from custom_components.truenas_ce.const import (
     DEFAULT_DATA_UNIT,
     DEFAULT_HOST,
     DOMAIN,
+    ERR_API_KEY_REQUIRED,
     ERR_INVALID_KEY,
     LEGACY_DOMAIN,
     MIGRATION_DONE,
@@ -132,6 +133,28 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
     # immutable connection data.
     assert CONF_DATA_UNIT not in result["data"]
     assert result["options"][CONF_DATA_UNIT] == DEFAULT_DATA_UNIT
+
+
+async def test_user_flow_blank_api_key_on_fresh_setup_sets_field_error(
+    hass: HomeAssistant,
+) -> None:
+    """A blank key with no prior legacy key to fall back on (#158's Optional
+    field now lets this through the frontend) must not open a pointless
+    connection with an empty credential -- and the resulting error belongs
+    on the key field itself, not on host.
+    """
+    with patch(
+        f"{_API_PATH}.connection_test",
+        AsyncMock(side_effect=AssertionError("must not attempt to connect")),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], _user_input(**{CONF_API_KEY: ""})
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_API_KEY: ERR_API_KEY_REQUIRED}
 
 
 async def test_user_flow_creates_entry_with_system_id_as_unique_id(

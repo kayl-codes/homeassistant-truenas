@@ -64,6 +64,7 @@
         },
         "error": {
             "invalid_key": "Prihlásenie zlyhalo, neplatný kľúč API.",
+            "api_key_required": "Pre novú konfiguráciu je potrebný API kľúč. Nechajte ho prázdny iba pri prevzatí existujúcej konfigurácie.",
             "proxy_intercepted": "Spojenie zachytené reverzným proxy alebo SSO portálom (napr. Cloudflare Access). Nasmerujte integráciu priamo na hostiteľa TrueNAS cez vašu LAN/VPN, alebo vyňmite koncový bod WebSocket z autentifikácie proxy.",
             "invalid_hostname": "Neplatný hostiteľ. Zadajte len názov hostiteľa alebo IP adresu — bez \"https://\", cesty alebo koncovej lomky.",
             "connection_refused": "Pripojenie zlyhalo, pripojenie bolo odmietnuté.",

@@ -64,6 +64,7 @@
         },
         "error": {
             "invalid_key": "Falha no login, chave API inválida.",
+            "api_key_required": "Uma chave API é necessária para uma nova configuração. Deixe em branco apenas ao assumir uma configuração existente.",
             "proxy_intercepted": "Conexão interceptada por um proxy reverso ou portal SSO (por exemplo, Cloudflare Access). Aponte a integração diretamente para o host TrueNAS pela sua LAN/VPN, ou isente o endpoint WebSocket da autenticação do proxy.",
             "invalid_hostname": "Host inválido. Informe apenas o nome do host ou o endereço IP — sem \"https://\", caminho ou barra final.",
             "connection_refused": "Falha na conexão, conexão recusada.",

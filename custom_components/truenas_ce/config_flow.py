@@ -47,6 +47,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DEFAULT_SSL_VERIFY,
     DOMAIN,
+    ERR_API_KEY_REQUIRED,
     ERR_API_NOT_FOUND,
     ERR_CERT_VERIFY_FAILED,
     ERR_CONNECTION_REFUSED,
@@ -92,11 +93,21 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
     The API key default is intentionally never pre-filled from
     ``truenas_config`` (e.g. a taken-over legacy entry), even though every
     other field is: a secret's value would otherwise be embedded in the
-    frontend's form state and re-submitted in cleartext -- the same reason
-    ``_reconfigure_schema`` below only ever declares ``CONF_API_KEY`` as
-    ``vol.Optional`` with no default. Leaving it blank is safe because
-    ``_async_apply_user_input`` keeps the previously known key when the
-    field comes back empty.
+    frontend's form state and re-submitted in cleartext. Leaving it blank is
+    safe because ``_async_apply_user_input`` keeps the previously known key
+    when the field comes back empty.
+
+    ``CONF_API_KEY`` is ``vol.Optional`` (not ``vol.Required``) so the
+    frontend actually lets the field be submitted blank -- a ``Required``
+    field blocks empty submission client-side regardless of its default,
+    which made the legacy-takeover blank-to-keep flow unusable (#158).
+    Unlike ``_reconfigure_schema`` below (whose ``CONF_API_KEY`` is
+    ``vol.Optional`` with no default), this one keeps ``default=""``: this
+    schema is also used for a brand-new setup with no prior key to fall back
+    on, and ``_validate_connection`` indexes ``config[CONF_API_KEY]``
+    unconditionally, so the key must always be present in the merged
+    ``truenas_config`` -- ``_pop_blank_api_key`` only ever drops it from
+    ``user_input``, never leaves it missing from ``truenas_config`` itself.
     """
     base_schema = {
         vol.Required(
@@ -105,7 +116,7 @@ def _base_schema(truenas_config: Mapping[str, Any]) -> vol.Schema:
         vol.Required(
             CONF_HOST, default=truenas_config.get(CONF_HOST, DEFAULT_HOST)
         ): str,
-        vol.Required(CONF_API_KEY, default=""): _API_KEY_SELECTOR,
+        vol.Optional(CONF_API_KEY, default=""): _API_KEY_SELECTOR,
         vol.Required(
             CONF_VERIFY_SSL,
             default=truenas_config.get(CONF_VERIFY_SSL, DEFAULT_SSL_VERIFY),
@@ -536,7 +547,19 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         # entry already points at this host.
         self._async_abort_entries_match({CONF_HOST: truenas_config[CONF_HOST]})
 
-        await self._validate_connection(truenas_config, errors)
+        # CONF_API_KEY is optional now (#158, blank means "keep the legacy
+        # key" -- see _base_schema), but a brand-new setup has no prior key
+        # to fall back on: still-blank here means the field was genuinely
+        # left empty. Catch that before _validate_connection, which indexes
+        # config[CONF_API_KEY] unconditionally and would otherwise open a
+        # pointless connection with an empty credential and blame the error
+        # on CONF_HOST instead of the actually-empty field. ERR_INVALID_KEY
+        # ("Login failed...") would be factually wrong here since no login is
+        # attempted -- use the dedicated ERR_API_KEY_REQUIRED message instead.
+        if not truenas_config.get(CONF_API_KEY):
+            errors[CONF_API_KEY] = ERR_API_KEY_REQUIRED
+        else:
+            await self._validate_connection(truenas_config, errors)
 
         # Once the box's stable identity is known, key the entry's unique_id
         # on it rather than on the (zeroconf-set) host, so rediscovery and
