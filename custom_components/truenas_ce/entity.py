@@ -494,7 +494,7 @@ def migrate_legacy_unique_ids(
     config_entry: ConfigEntry,
     coordinator: TrueNASCoordinator,
     descriptions: Sequence[TrueNASEntityDescription],
-) -> None:
+) -> dict[str, str]:
     """Rewrite registry entries from an earlier unique_id format.
 
     ``format_unique_id``'s reference handling has tightened twice: it first
@@ -519,11 +519,16 @@ def migrate_legacy_unique_ids(
     worse than leaving a stale entity behind for the existing orphan-cleanup
     flow to catch (Sourcery finding on the initial version of this
     migration).
+
+    Returns the old-to-new unique_id map it applied, so the legacy
+    ``truenas`` adoption (``migration.async_adopt_legacy_entities``) can
+    translate the adopted entities' pre-2.9 unique_ids with the very same
+    map instead of computing it a second time.
     """
     identity = resolve_entry_identity(config_entry)
     renames = _collect_unique_id_renames(identity, descriptions, coordinator)
     if not renames:
-        return
+        return renames
 
     ent_reg = er.async_get(hass)
     for entity_entry in er.async_entries_for_config_entry(
@@ -549,6 +554,7 @@ def migrate_legacy_unique_ids(
             ent_reg.async_remove(entity_entry.entity_id)
             continue
         ent_reg.async_update_entity(entity_entry.entity_id, new_unique_id=new_id)
+    return renames
 
 
 @lru_cache(maxsize=1)

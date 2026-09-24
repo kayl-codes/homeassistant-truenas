@@ -23,14 +23,16 @@ rename. Forward adoption runs in two phases around the platform setup:
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from logging import getLogger
 from typing import Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry, ConfigEntryDisabler
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -45,6 +47,7 @@ from .const import (
     MIGRATION_RECORDS,
     TO_REDACT,
 )
+from .entity import resolve_entry_identity
 from .helper import sanitize_host
 
 _LOGGER = getLogger(__name__)
@@ -66,6 +69,13 @@ _R_NAME = "name"
 _R_ICON = "icon"
 _R_AREA = "area_id"
 _R_DISABLED = "disabled_user"
+# The unique_id the adopted entity carries in *this* integration. The legacy
+# ``_R_UNIQUE_ID`` stays untouched because rollback looks the legacy entity up
+# by it; records persisted before this key existed fall back to it.
+_R_TARGET_UNIQUE_ID = "target_unique_id"
+# Area/user name of the legacy entity's *device*, carried over to the new device.
+_R_DEVICE_AREA = "device_area_id"
+_R_DEVICE_NAME = "device_name_by_user"
 
 # Belt-and-suspenders safety snapshot written to ``.storage`` before the registry
 # is mutated. Unlike the reverse map on the config entry, this standalone file
@@ -79,7 +89,9 @@ _BACKUP_VERSION = 1
 #   Forward adoption
 # ---------------------------
 async def async_adopt_legacy_entities(
-    hass: HomeAssistant, config_entry: ConfigEntry
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    unique_id_renames: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     """Release the legacy entities' entity_ids for adoption by this entry.
 
@@ -87,6 +99,10 @@ async def async_adopt_legacy_entities(
     re-attach once the new platforms have created their entities. Idempotent:
     after the first successful run (``MIGRATION_DONE``) it returns an empty list.
     Inert while ``DOMAIN == LEGACY_DOMAIN``.
+
+    ``unique_id_renames`` is the old-to-new map ``migrate_legacy_unique_ids``
+    applied to this entry (see :func:`_current_unique_id` for why the legacy
+    unique_ids need it).
     """
     if DOMAIN == LEGACY_DOMAIN or config_entry.data.get(MIGRATION_DONE):
         return []
@@ -118,7 +134,13 @@ async def async_adopt_legacy_entities(
         ent_reg = er.async_get(hass)
         # Capture the records read-only, write the safety snapshot, and only then
         # mutate the registry — so a failed backup never leaves a half-freed state.
-        records = _collect_legacy_records(ent_reg, legacy_entry)
+        records = _collect_legacy_records(ent_reg, dr.async_get(hass), legacy_entry)
+        _add_target_unique_ids(
+            records,
+            legacy_entry.data.get(CONF_NAME, ""),
+            resolve_entry_identity(config_entry),
+            unique_id_renames,
+        )
         backup_key = await _write_migration_backup(
             hass, config_entry, legacy_entry, records
         )
@@ -153,12 +175,111 @@ def finalize_legacy_adoption(
         for record in records
         if (
             new_id := ent_reg.async_get_entity_id(
-                record[_R_ENTITY_DOMAIN], DOMAIN, record[_R_UNIQUE_ID]
+                record[_R_ENTITY_DOMAIN], DOMAIN, _target_unique_id(record)
             )
         )
         is not None
     ]
     _remap_and_restore(ent_reg, pairs)
+    _restore_device_overrides(ent_reg, dr.async_get(hass), records)
+
+
+def _target_unique_id(record: Mapping[str, Any]) -> str:
+    """Return the unique_id an adopted record's entity has in this integration."""
+    return str(record.get(_R_TARGET_UNIQUE_ID) or record[_R_UNIQUE_ID])
+
+
+def _current_unique_id(
+    legacy_unique_id: str,
+    legacy_name: str,
+    identity: str,
+    renames: Mapping[str, str],
+) -> str:
+    """Translate a legacy ``truenas`` unique_id into this integration's format.
+
+    Legacy entities are namespaced by the entry's display name
+    (``<name>-<key>[-<slugified reference>]``), while the current
+    ``format_unique_id`` namespaces by the stable entry identity (#103) and no
+    longer slugifies/lowercases the reference (#107). Swapping the name prefix
+    for the identity yields exactly the id ``migrate_legacy_unique_ids`` would
+    have found for a pre-2.9 entity of this entry, so ``renames`` (the map it
+    built) resolves the reference part; a reference-less id needs only the
+    prefix swap. An id not carrying the legacy name prefix is left as-is.
+    """
+    legacy_prefix = f"{legacy_name.lower()}-"
+    if not legacy_name or not legacy_unique_id.startswith(legacy_prefix):
+        return legacy_unique_id
+    swapped = f"{identity.lower()}-{legacy_unique_id[len(legacy_prefix) :]}"
+    return renames.get(swapped, swapped)
+
+
+def _add_target_unique_ids(
+    records: list[dict[str, Any]],
+    legacy_name: str,
+    identity: str,
+    renames: Mapping[str, str],
+) -> None:
+    """Annotate each record with the unique_id its entity has in this integration.
+
+    A legacy id without the legacy name prefix cannot be translated, so its
+    entity can never reclaim its entity_id -- warn instead of letting it
+    surface only as a quietly "pending" record in the result notification.
+    """
+    untranslatable: list[str] = []
+    legacy_prefix = f"{legacy_name.lower()}-"
+    for record in records:
+        if not legacy_name or not record[_R_UNIQUE_ID].startswith(legacy_prefix):
+            untranslatable.append(record[_R_ENTITY_ID])
+        record[_R_TARGET_UNIQUE_ID] = _current_unique_id(
+            record[_R_UNIQUE_ID], legacy_name, identity, renames
+        )
+    if untranslatable:
+        _LOGGER.warning(
+            "CE migration: %d legacy entities lack the legacy name prefix '%s'"
+            " and cannot be matched to their new entities: %s",
+            len(untranslatable),
+            legacy_prefix,
+            ", ".join(sorted(untranslatable)),
+        )
+
+
+def _adopted_device_id(
+    ent_reg: er.EntityRegistry, record: Mapping[str, Any]
+) -> str | None:
+    """Return the id of the new device the adopted record's entity is on, if any."""
+    entity_id = ent_reg.async_get_entity_id(
+        record[_R_ENTITY_DOMAIN], DOMAIN, _target_unique_id(record)
+    )
+    entity = ent_reg.async_get(entity_id) if entity_id else None
+    return entity.device_id if entity is not None else None
+
+
+def _restore_device_overrides(
+    ent_reg: er.EntityRegistry,
+    dev_reg: dr.DeviceRegistry,
+    records: list[dict[str, Any]],
+) -> None:
+    """Carry the legacy devices' area and user-given name over to the new devices.
+
+    Devices are not adopted like entities (the new ones are created fresh by
+    the platforms), so without this every device lands without an area.
+    Each new device is reached through an adopted entity attached to it, which
+    avoids having to translate the legacy device identifier formats. Only
+    fills values the new device does not have yet, so the first matching
+    record wins and nothing the user already set is overwritten.
+    """
+    for record in records:
+        if record.get(_R_DEVICE_AREA) is None and record.get(_R_DEVICE_NAME) is None:
+            continue
+        device_id = _adopted_device_id(ent_reg, record)
+        device = dev_reg.async_get(device_id) if device_id else None
+        if device is None:
+            continue
+        dev_reg.async_update_device(
+            device.id,
+            area_id=device.area_id or record.get(_R_DEVICE_AREA),
+            name_by_user=device.name_by_user or record.get(_R_DEVICE_NAME),
+        )
 
 
 def _find_legacy_entry(
@@ -179,21 +300,32 @@ def _find_legacy_entry(
 
 
 def _collect_legacy_records(
-    ent_reg: er.EntityRegistry, legacy_entry: ConfigEntry
+    ent_reg: er.EntityRegistry,
+    dev_reg: dr.DeviceRegistry,
+    legacy_entry: ConfigEntry,
 ) -> list[dict[str, Any]]:
-    """Snapshot every registry entry of the legacy config entry (read-only)."""
-    return [
-        {
-            _R_UNIQUE_ID: entry.unique_id,
-            _R_ENTITY_DOMAIN: entry.domain,
-            _R_ENTITY_ID: entry.entity_id,
-            _R_NAME: entry.name,
-            _R_ICON: entry.icon,
-            _R_AREA: entry.area_id,
-            _R_DISABLED: entry.disabled_by == er.RegistryEntryDisabler.USER,
-        }
-        for entry in er.async_entries_for_config_entry(ent_reg, legacy_entry.entry_id)
-    ]
+    """Snapshot every registry entry of the legacy config entry (read-only).
+
+    Also captures the area and user-given name of each entity's legacy
+    device, which :func:`_restore_device_overrides` re-applies to the new one.
+    """
+    records: list[dict[str, Any]] = []
+    for entry in er.async_entries_for_config_entry(ent_reg, legacy_entry.entry_id):
+        device = dev_reg.async_get(entry.device_id) if entry.device_id else None
+        records.append(
+            {
+                _R_UNIQUE_ID: entry.unique_id,
+                _R_ENTITY_DOMAIN: entry.domain,
+                _R_ENTITY_ID: entry.entity_id,
+                _R_NAME: entry.name,
+                _R_ICON: entry.icon,
+                _R_AREA: entry.area_id,
+                _R_DISABLED: entry.disabled_by == er.RegistryEntryDisabler.USER,
+                _R_DEVICE_AREA: device.area_id if device else None,
+                _R_DEVICE_NAME: device.name_by_user if device else None,
+            }
+        )
+    return records
 
 
 def _remove_legacy_entities(
@@ -463,7 +595,7 @@ def _classify_reconnection(
     for record in records:
         target_id = record[_R_ENTITY_ID]
         new_id = ent_reg.async_get_entity_id(
-            record[_R_ENTITY_DOMAIN], DOMAIN, record[_R_UNIQUE_ID]
+            record[_R_ENTITY_DOMAIN], DOMAIN, _target_unique_id(record)
         )
         if new_id == target_id:
             reconnected += 1

@@ -24,15 +24,18 @@ from custom_components.truenas_ce.const import (
     MIGRATION_RECORDS,
 )
 from custom_components.truenas_ce.migration import (
+    _add_target_unique_ids,
     _build_migration_message,
     _classify_reconnection,
     _collect_legacy_records,
+    _current_unique_id,
     _find_legacy_entry,
     _log_reconnection,
     _persist_migration_state,
     _redacted_legacy_config,
     _remap_and_restore,
     _remove_legacy_entities,
+    _restore_device_overrides,
     _restore_overrides,
     _temp_entity_id,
     async_adopt_legacy_entities,
@@ -51,6 +54,8 @@ def _record(
     icon: str | None = None,
     area_id: str | None = None,
     disabled_user: bool = False,
+    device_area_id: str | None = None,
+    device_name_by_user: str | None = None,
 ) -> dict[str, Any]:
     return {
         "unique_id": unique_id,
@@ -60,6 +65,8 @@ def _record(
         "icon": icon,
         "area_id": area_id,
         "disabled_user": disabled_user,
+        "device_area_id": device_area_id,
+        "device_name_by_user": device_name_by_user,
     }
 
 
@@ -131,15 +138,31 @@ def test_collect_legacy_records_snapshots_registry_entries() -> None:
         icon="mdi:chip",
         area_id="office",
         disabled_by=None,
+        device_id="legacy-device",
+    )
+    dev_reg = MagicMock()
+    dev_reg.async_get.return_value = SimpleNamespace(
+        area_id="basement", name_by_user="My NAS"
     )
     with patch.object(
         migration_module.er,
         "async_entries_for_config_entry",
         return_value=[entry1],
     ):
-        records = _collect_legacy_records(ent_reg, SimpleNamespace(entry_id="legacy"))
+        records = _collect_legacy_records(
+            ent_reg, dev_reg, SimpleNamespace(entry_id="legacy")
+        )
 
-    assert records == [_record(name="CPU", icon="mdi:chip", area_id="office")]
+    dev_reg.async_get.assert_called_once_with("legacy-device")
+    assert records == [
+        _record(
+            name="CPU",
+            icon="mdi:chip",
+            area_id="office",
+            device_area_id="basement",
+            device_name_by_user="My NAS",
+        )
+    ]
 
 
 def test_collect_legacy_records_marks_user_disabled() -> None:
@@ -152,13 +175,19 @@ def test_collect_legacy_records_marks_user_disabled() -> None:
         icon=None,
         area_id=None,
         disabled_by=migration_module.er.RegistryEntryDisabler.USER,
+        device_id=None,
     )
+    dev_reg = MagicMock()
     with patch.object(
         migration_module.er,
         "async_entries_for_config_entry",
         return_value=[entry1],
     ):
-        records = _collect_legacy_records(ent_reg, SimpleNamespace(entry_id="legacy"))
+        records = _collect_legacy_records(
+            ent_reg, dev_reg, SimpleNamespace(entry_id="legacy")
+        )
+
+    dev_reg.async_get.assert_not_called()
 
     assert records[0]["disabled_user"] is True
 
@@ -431,13 +460,13 @@ async def test_async_adopt_legacy_entities_inert_when_domain_is_legacy(
     monkeypatch.setattr(migration_module, "DOMAIN", migration_module.LEGACY_DOMAIN)
     hass = MagicMock()
     entry = _config_entry()
-    assert await async_adopt_legacy_entities(hass, entry) == []
+    assert await async_adopt_legacy_entities(hass, entry, {}) == []
 
 
 async def test_async_adopt_legacy_entities_noop_when_already_done() -> None:
     hass = MagicMock()
     entry = _config_entry(data={MIGRATION_DONE: True})
-    assert await async_adopt_legacy_entities(hass, entry) == []
+    assert await async_adopt_legacy_entities(hass, entry, {}) == []
 
 
 async def test_async_adopt_legacy_entities_no_legacy_entry_found() -> None:
@@ -445,7 +474,7 @@ async def test_async_adopt_legacy_entities_no_legacy_entry_found() -> None:
     hass.config_entries.async_entries.return_value = []
     entry = _config_entry(data={"host": "truenas.local"})
 
-    records = await async_adopt_legacy_entities(hass, entry)
+    records = await async_adopt_legacy_entities(hass, entry, {})
 
     assert records == []
     hass.config_entries.async_update_entry.assert_called_once()
@@ -472,6 +501,7 @@ async def test_async_adopt_legacy_entities_full_happy_path() -> None:
         icon=None,
         area_id=None,
         disabled_by=None,
+        device_id=None,
     )
     with (
         patch.object(migration_module.er, "async_get", return_value=ent_reg),
@@ -486,7 +516,7 @@ async def test_async_adopt_legacy_entities_full_happy_path() -> None:
             new=AsyncMock(return_value="backup-key"),
         ),
     ):
-        records = await async_adopt_legacy_entities(hass, entry)
+        records = await async_adopt_legacy_entities(hass, entry, {})
 
     assert len(records) == 1
     hass.config_entries.async_set_disabled_by.assert_awaited_once_with(
@@ -520,7 +550,7 @@ async def test_async_adopt_legacy_entities_skips_disable_when_already_disabled()
             new=AsyncMock(return_value=None),
         ),
     ):
-        await async_adopt_legacy_entities(hass, entry)
+        await async_adopt_legacy_entities(hass, entry, {})
 
     hass.config_entries.async_set_disabled_by.assert_not_awaited()
 
@@ -544,7 +574,7 @@ async def test_async_adopt_legacy_entities_aborts_when_disable_fails() -> None:
     hass.config_entries.async_set_disabled_by = AsyncMock(return_value=False)
     entry = _config_entry(data={"host": "truenas.local"})
 
-    records = await async_adopt_legacy_entities(hass, entry)
+    records = await async_adopt_legacy_entities(hass, entry, {})
 
     assert records == []
     hass.config_entries.async_update_entry.assert_not_called()
@@ -597,6 +627,176 @@ def test_finalize_legacy_adoption_skips_unmatched_records() -> None:
         finalize_legacy_adoption(hass, [record])
 
     ent_reg.async_update_entity.assert_not_called()
+
+
+# ---------------------------
+#   Legacy unique_id translation (#158 follow-up)
+# ---------------------------
+def test_current_unique_id_swaps_name_prefix_for_identity() -> None:
+    """A reference-less legacy id only needs the name->identity prefix swap."""
+    assert (
+        _current_unique_id("truenas-system_cpu", "TrueNAS", "UUID-1", {})
+        == "uuid-1-system_cpu"
+    )
+
+
+def test_current_unique_id_applies_reference_rename() -> None:
+    """The slugified legacy reference resolves through the rename map."""
+    renames = {"uuid-1-dataset-tank_media": "uuid-1-dataset-tank/Media"}
+    assert (
+        _current_unique_id("my nas-dataset-tank_media", "My NAS", "UUID-1", renames)
+        == "uuid-1-dataset-tank/Media"
+    )
+
+
+def test_add_target_unique_ids_warns_about_untranslatable_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    records = [
+        _record(unique_id="truenas-cpu", entity_id="sensor.a"),
+        _record(unique_id="foreign-cpu", entity_id="sensor.b"),
+    ]
+    with caplog.at_level("WARNING"):
+        _add_target_unique_ids(records, "TrueNAS", "UUID-1", {})
+
+    assert records[0]["target_unique_id"] == "uuid-1-cpu"
+    assert records[1]["target_unique_id"] == "foreign-cpu"
+    assert "cannot be matched" in caplog.text
+    assert "sensor.b" in caplog.text
+    assert "sensor.a" not in caplog.text
+
+
+def test_current_unique_id_leaves_foreign_ids_untouched() -> None:
+    assert _current_unique_id("other-cpu", "TrueNAS", "UUID-1", {}) == "other-cpu"
+    assert _current_unique_id("truenas-cpu", "", "UUID-1", {}) == "truenas-cpu"
+
+
+async def test_async_adopt_legacy_entities_records_target_unique_id() -> None:
+    """Regression: legacy name-based ids must map onto the identity-based ones.
+
+    Since #103/#107 the new entities no longer share the legacy unique_id, so
+    without this translation not a single adopted entity reclaimed its
+    entity_id (and history) after the takeover.
+    """
+    hass = MagicMock()
+    legacy_entry = SimpleNamespace(
+        entry_id="legacy-1",
+        data={"host": "truenas.local", "name": "TrueNAS"},
+        options={},
+        disabled_by=None,
+    )
+    hass.config_entries.async_entries.return_value = [legacy_entry]
+    hass.config_entries.async_set_disabled_by = AsyncMock()
+    entry = _config_entry(data={"host": "truenas.local", "system_id": "UUID-1"})
+    reg_entry = SimpleNamespace(
+        unique_id="truenas-dataset-tank_media",
+        domain="sensor",
+        entity_id="sensor.truenas_dataset_tank_media",
+        name=None,
+        icon=None,
+        area_id=None,
+        disabled_by=None,
+        device_id=None,
+    )
+    renames = {"uuid-1-dataset-tank_media": "uuid-1-dataset-tank/Media"}
+    with (
+        patch.object(migration_module.er, "async_get", return_value=MagicMock()),
+        patch.object(
+            migration_module.er,
+            "async_entries_for_config_entry",
+            return_value=[reg_entry],
+        ),
+        patch.object(
+            migration_module,
+            "_write_migration_backup",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        records = await async_adopt_legacy_entities(hass, entry, renames)
+
+    assert records[0]["unique_id"] == "truenas-dataset-tank_media"
+    assert records[0]["target_unique_id"] == "uuid-1-dataset-tank/Media"
+
+
+def test_finalize_legacy_adoption_looks_up_target_unique_id() -> None:
+    hass = MagicMock()
+    ent_reg = MagicMock()
+    ent_reg.async_get_entity_id.return_value = None
+    record = {**_record(unique_id="truenas-cpu"), "target_unique_id": "uuid-1-cpu"}
+
+    with patch.object(migration_module.er, "async_get", return_value=ent_reg):
+        finalize_legacy_adoption(hass, [record])
+
+    ent_reg.async_get_entity_id.assert_any_call("sensor", "truenas_ce", "uuid-1-cpu")
+
+
+def test_classify_reconnection_uses_target_unique_id() -> None:
+    ent_reg = MagicMock()
+    ent_reg.async_get_entity_id.side_effect = lambda _d, _c, uid: (
+        "sensor.truenas_cpu" if uid == "uuid-1-cpu" else None
+    )
+    record = {**_record(unique_id="truenas-cpu"), "target_unique_id": "uuid-1-cpu"}
+
+    assert _classify_reconnection(ent_reg, [record]) == (1, [], [])
+
+
+# ---------------------------
+#   _restore_device_overrides
+# ---------------------------
+def _device_registries(
+    device: SimpleNamespace,
+) -> tuple[MagicMock, MagicMock]:
+    ent_reg = MagicMock()
+    ent_reg.async_get_entity_id.return_value = "sensor.truenas_cpu"
+    ent_reg.async_get.return_value = SimpleNamespace(device_id=device.id)
+    dev_reg = MagicMock()
+    dev_reg.async_get.return_value = device
+    return ent_reg, dev_reg
+
+
+def test_restore_device_overrides_applies_area_and_name() -> None:
+    device = SimpleNamespace(id="new-dev", area_id=None, name_by_user=None)
+    ent_reg, dev_reg = _device_registries(device)
+    record = _record(device_area_id="basement", device_name_by_user="My NAS")
+
+    _restore_device_overrides(ent_reg, dev_reg, [record])
+
+    dev_reg.async_update_device.assert_called_once_with(
+        "new-dev", area_id="basement", name_by_user="My NAS"
+    )
+
+
+def test_restore_device_overrides_never_overwrites_existing_values() -> None:
+    device = SimpleNamespace(id="new-dev", area_id="office", name_by_user="Mine")
+    ent_reg, dev_reg = _device_registries(device)
+    record = _record(device_area_id="basement", device_name_by_user="My NAS")
+
+    _restore_device_overrides(ent_reg, dev_reg, [record])
+
+    # Values the user already set win (the registry no-ops an unchanged update).
+    dev_reg.async_update_device.assert_called_once_with(
+        "new-dev", area_id="office", name_by_user="Mine"
+    )
+
+
+def test_restore_device_overrides_skips_records_without_device_values() -> None:
+    device = SimpleNamespace(id="new-dev", area_id=None, name_by_user=None)
+    ent_reg, dev_reg = _device_registries(device)
+
+    _restore_device_overrides(ent_reg, dev_reg, [_record()])
+
+    ent_reg.async_get_entity_id.assert_not_called()
+    dev_reg.async_update_device.assert_not_called()
+
+
+def test_restore_device_overrides_skips_entity_without_device() -> None:
+    device = SimpleNamespace(id=None, area_id=None, name_by_user=None)
+    ent_reg, dev_reg = _device_registries(device)
+    ent_reg.async_get.return_value = SimpleNamespace(device_id=None)
+
+    _restore_device_overrides(ent_reg, dev_reg, [_record(device_area_id="basement")])
+
+    dev_reg.async_update_device.assert_not_called()
 
 
 # ---------------------------
