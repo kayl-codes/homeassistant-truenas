@@ -672,7 +672,9 @@ async def async_setup_entry(
         raise
     config_entry.runtime_data = coordinator
     migrate_entry_identity_namespace(hass, config_entry)
-    migrate_legacy_unique_ids(hass, config_entry, coordinator, _ALL_DESCRIPTIONS)
+    unique_id_renames = migrate_legacy_unique_ids(
+        hass, config_entry, coordinator, _ALL_DESCRIPTIONS
+    )
     migrate_legacy_device_identifier(
         hass,
         resolve_entry_identity(config_entry),
@@ -684,7 +686,7 @@ async def async_setup_entry(
 
     # Community-Edition rename: free the legacy "truenas" entity_ids before the
     # platforms create the new entities (no-op until the domain is renamed).
-    adopted = await async_adopt_legacy_entities(hass, config_entry)
+    adopted = await async_adopt_legacy_entities(hass, config_entry, unique_id_renames)
 
     _migrate_data_size_units(hass, config_entry, coordinator)
     _cleanup_orphaned_entities(hass, config_entry, coordinator)

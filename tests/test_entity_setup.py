@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -30,6 +31,7 @@ from custom_components.truenas_ce.const import (
     CONF_SYSTEM_ID,
     DOMAIN,
     GROUP_DATA_PATHS,
+    LEGACY_DOMAIN,
     MONITOR_GROUP_SNAPSHOTS,
 )
 from custom_components.truenas_ce.entity import (
@@ -41,6 +43,10 @@ from custom_components.truenas_ce.entity import (
     migrate_legacy_device_identifier,
     migrate_legacy_unique_ids,
     resolve_entry_identity,
+)
+from custom_components.truenas_ce.migration import (
+    async_adopt_legacy_entities,
+    finalize_legacy_adoption,
 )
 from custom_components.truenas_ce.sensor_types import (
     SENSOR_TYPES,
@@ -227,13 +233,15 @@ async def test_migrate_legacy_unique_ids_renames_lossy_reference(
         config_entry=entry,
     )
 
-    migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    renames = migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
 
     migrated = ent_reg.async_get(entity.entity_id)
     assert migrated is not None
     assert migrated.unique_id == format_unique_id(
         "system-guid", "dataset_used", "tank/a-b"
     )
+    # The applied map is returned for the legacy-domain adoption to reuse.
+    assert renames["system-guid-dataset_used-tank_a_b"] == migrated.unique_id
 
 
 async def test_migrate_legacy_unique_ids_leaves_previous_collision_unrenamed(
@@ -871,3 +879,81 @@ async def test_async_setup_entry_creates_snapshottask_sensor_via_dispatcher(
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     assert entity_id is not None
     assert hass.states.get(entity_id) is not None
+
+
+# ---------------------------
+#   Legacy ``truenas`` adoption end-to-end (#158 follow-up)
+# ---------------------------
+async def test_legacy_adoption_reclaims_entity_id_and_device_area(
+    hass: HomeAssistant,
+) -> None:
+    """A legacy name-based, slugified entity must hand its id + area over.
+
+    Regression: since #103/#107 the new entities carry an identity-based,
+    unslugified unique_id, so the adoption looked them up under the legacy
+    unique_id, found none, and every entity came back under a new entity_id
+    (detached history) with its device lacking the old area.
+    """
+    legacy = MockConfigEntry(
+        domain=LEGACY_DOMAIN, data={CONF_NAME: "TrueNAS", CONF_HOST: "nas.local"}
+    )
+    legacy.add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "TrueNAS",
+            CONF_HOST: "nas.local",
+            CONF_SYSTEM_ID: "system-guid",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    area = ar.async_get(hass).async_create("Basement")
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+    legacy_device = dev_reg.async_get_or_create(
+        config_entry_id=legacy.entry_id,
+        identifiers={(LEGACY_DOMAIN, "TrueNAS_Datasets")},
+    )
+    dev_reg.async_update_device(legacy_device.id, area_id=area.id)
+    legacy_entity = ent_reg.async_get_or_create(
+        "sensor",
+        LEGACY_DOMAIN,
+        "truenas-dataset_used-tank_a_b",  # legacy: name prefix + slugified ref
+        config_entry=legacy,
+        device_id=legacy_device.id,
+        suggested_object_id="truenas_dataset_tank_a_b",
+    )
+    coordinator = SimpleNamespace(data={"dataset": {"tank/a-b": {"id": "tank/a-b"}}})
+
+    renames = migrate_legacy_unique_ids(hass, entry, coordinator, [_DATASET_DESC])
+    with patch.object(
+        hass.config_entries, "async_set_disabled_by", AsyncMock(return_value=True)
+    ):
+        records = await async_adopt_legacy_entities(hass, entry, renames)
+    assert ent_reg.async_get(legacy_entity.entity_id) is None
+
+    # What the platform setup does: create the new entity + its fresh device.
+    new_device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "system-guid_Datasets")},
+    )
+    new_unique_id = format_unique_id("system-guid", "dataset_used", "tank/a-b")
+    ent_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        new_unique_id,
+        config_entry=entry,
+        device_id=new_device.id,
+        suggested_object_id="truenas_ce_dataset_tank_a_b",
+    )
+
+    finalize_legacy_adoption(hass, records)
+
+    adopted = ent_reg.async_get(legacy_entity.entity_id)
+    assert adopted is not None
+    assert adopted.platform == DOMAIN
+    assert adopted.unique_id == new_unique_id
+    updated_device = dev_reg.async_get(new_device.id)
+    assert updated_device is not None
+    assert updated_device.area_id == area.id
