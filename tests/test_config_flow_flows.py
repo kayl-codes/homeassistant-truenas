@@ -151,7 +151,7 @@ async def test_user_flow_blank_api_key_on_fresh_setup_sets_field_error(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], _user_input(CONF_API_KEY="")
+            result["flow_id"], _user_input(**{CONF_API_KEY: ""})
         )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_API_KEY: ERR_API_KEY_REQUIRED}
