@@ -39,6 +39,7 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
         data_path="cloudsync",
         data_is_on="enabled",
         data_name="description",
+        data_name_free_text=True,
         data_uid=None,
         data_reference="id",
         func="TrueNASCloudsyncSwitch",
@@ -50,8 +51,10 @@ SENSOR_TYPES: tuple[TrueNASSwitchEntityDescription, ...] = (
         data_path="cronjob",
         data_is_on="enabled",
         data_name="display_name",
+        data_name_free_text=True,
         data_uid=None,
         data_reference="id",
+        data_attributes_list=("description",),
         func="TrueNASCronjobSwitch",
     ),
 )
