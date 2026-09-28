@@ -149,6 +149,8 @@ finishing silently.
 ## Cloudsync
 Control and monitor status and attributes for each TrueNAS cloudsync task.
 Cloudsync control is available through actions.
+Entity names come from the task's TrueNAS description (first line, capped at 60 characters);
+the full text is available in the sensor's `description` attribute.
 
 ![Cloudsync](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/cloudsync.png)
 
@@ -197,6 +199,9 @@ Periodic snapshot tasks can be started on demand through the `snapshottask_run` 
 Monitor and control each TrueNAS cron job. Each job is exposed as a dedicated device with two entities:
 - **Enabled switch** — enable or disable the job on TrueNAS directly from HA
 - **Run button** — trigger the job immediately on demand, independent of its schedule
+
+Entity names come from the job's TrueNAS description: only its first line is used, capped at
+60 characters. The full description is available in the switch's `description` attribute.
 
 > **Cron Jobs** is a monitored group (enabled by default). You can disable it under
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.

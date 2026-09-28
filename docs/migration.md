@@ -32,7 +32,8 @@ domain** — the original `truenas` domain is already taken. Renaming to `truena
 | **Connection settings** | Host, API key, SSL verification and all options are taken over. |
 
 What changes cosmetically: the **devices** are recreated under the new integration (device
-grouping is not history-bearing). The old, now-disabled integration remains visible until
+grouping is not history-bearing). Since v2.11.2, each device's **area** and custom **name**
+are carried over to the new device. The old, now-disabled integration remains visible until
 you remove it.
 
 ---
@@ -60,9 +61,10 @@ Choose **Take over existing configuration**.
 
 ### 3. Confirm the prefilled settings
 
-The setup form is prefilled with your existing host, API key, SSL option and the same
+The setup form is prefilled with your existing host, SSL option and the same
 integration **name** (the name must match — entity IDs are derived from it, which is what
-lets the migration re-attach your history). Just confirm.
+lets the migration re-attach your history). Leave the **API key** field blank to keep your
+existing key, then confirm.
 
 ![Prefilled setup form](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/migration_2.png)
 
