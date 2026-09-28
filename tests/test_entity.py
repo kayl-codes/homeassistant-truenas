@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from _fakes import make_config_entry, make_coordinator
@@ -18,6 +18,7 @@ from custom_components.truenas_ce.entity import (
     _collect_new_entities,
     _composite_id_pairs,
     _extract_composite_ref,
+    _find_entry_device,
     _get_composite_container,
     _is_uid_excluded,
     _legacy_format_unique_id,
@@ -1004,3 +1005,51 @@ def test_handle_coordinator_update_refreshes_data_and_calls_super() -> None:
 
     assert entity._data == {"guid": "g2"}
     super_update.assert_called_once()
+
+
+# ---------------------------
+#   _find_entry_device (#140)
+# ---------------------------
+_IDS = {(DOMAIN, "system-guid-123")}
+
+
+def test_find_entry_device_uses_entry_scoped_api_when_available() -> None:
+    device = SimpleNamespace(id="dev1", config_entries={"entry1"})
+    dev_reg = MagicMock(spec=["async_get_devices", "async_get_device"])
+    dev_reg.async_get_devices.return_value = [device]
+
+    assert _find_entry_device(dev_reg, _IDS, "entry1") is device
+    dev_reg.async_get_devices.assert_called_once_with(
+        identifiers=_IDS, config_entry_id="entry1"
+    )
+    dev_reg.async_get_device.assert_not_called()
+
+
+def test_find_entry_device_returns_none_when_entry_scoped_api_finds_nothing() -> None:
+    dev_reg = MagicMock(spec=["async_get_devices", "async_get_device"])
+    dev_reg.async_get_devices.return_value = []
+
+    assert _find_entry_device(dev_reg, _IDS, "entry1") is None
+    dev_reg.async_get_device.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        SimpleNamespace(id="dev1", config_entries={"entry1"}),
+        # Another entry's device still counts: identifiers are globally unique
+        # before 2026.8, so async_update_device would raise on this collision.
+        SimpleNamespace(id="dev2", config_entries={"entry2"}),
+        None,
+    ],
+)
+def test_find_entry_device_falls_back_on_pre_2026_8_registry(
+    found: SimpleNamespace | None,
+) -> None:
+    """HA < 2026.8 has no ``async_get_devices``: fall back to the global,
+    unfiltered ``async_get_device`` lookup (pre-#140 behaviour)."""
+    dev_reg = MagicMock(spec=["async_get_device"])
+    dev_reg.async_get_device.return_value = found
+
+    assert _find_entry_device(dev_reg, _IDS, "entry1") is found
+    dev_reg.async_get_device.assert_called_once_with(identifiers=_IDS)

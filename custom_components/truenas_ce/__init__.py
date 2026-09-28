@@ -677,6 +677,7 @@ async def async_setup_entry(
     )
     migrate_legacy_device_identifier(
         hass,
+        config_entry.entry_id,
         resolve_entry_identity(config_entry),
         coordinator.data["system_info"]["hostname"],
     )

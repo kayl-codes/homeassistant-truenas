@@ -132,11 +132,38 @@ def _legacy_format_device_identifier(identity: str, hostname: str) -> str:
     return f"{identity}_{hostname}"
 
 
+def _find_entry_device(
+    dev_reg: dr.DeviceRegistry,
+    identifiers: set[tuple[str, str]],
+    config_entry_id: str,
+) -> dr.DeviceEntry | None:
+    """Return the device owning any of ``identifiers`` in this entry's namespace.
+
+    Since HA 2026.8 device identifiers are only unique per config entry, so
+    ``async_get_device`` is deprecated (breaks in 2027.8) in favour of the
+    entry-scoped ``async_get_devices``. That replacement doesn't exist
+    before 2026.8, while this integration still supports older releases, so
+    fall back to the global ``async_get_device`` there. Deliberately *not*
+    filtered by ``config_entry_id``: on those releases identifiers are still
+    globally unique and ``async_update_device`` raises on a collision with
+    any other entry's device, so the global result is the correct collision
+    namespace (and matches the pre-#140 behaviour exactly). Drop the
+    fallback once the minimum HA version is >= 2026.8.0.
+    """
+    if (get_devices := getattr(dev_reg, "async_get_devices", None)) is not None:
+        devices: list[dr.DeviceEntry] = get_devices(
+            identifiers=identifiers, config_entry_id=config_entry_id
+        )
+        return devices[0] if devices else None
+    return dev_reg.async_get_device(identifiers=identifiers)
+
+
 def _rename_device_identifiers(
     dev_reg: dr.DeviceRegistry,
     ent_reg: er.EntityRegistry,
     device_entry: dr.DeviceEntry,
     new_identifiers: set[tuple[str, str]],
+    config_entry_id: str,
 ) -> None:
     """Update a device's identifiers, resolving collisions from stale duplicates.
 
@@ -144,12 +171,14 @@ def _rename_device_identifiers(
     recreated it under an earlier identifier format (e.g. a
     downgrade-then-upgrade cycle -- see ``migrate_entry_identity_namespace``
     and ``migrate_legacy_device_identifier``). If the target identifiers are
-    already owned by a *different* device, that other device is the real
-    one: remove this duplicate if it is now empty, or leave it unmigrated
+    already owned by a *different* device (within this entry's identifier
+    namespace on HA >= 2026.8, globally before -- see ``_find_entry_device``),
+    that other device wins: remove this duplicate if it is now empty, or
+    leave it unmigrated
     (better a stale leftover than a crashed config entry) when entities are
     still attached, logging either outcome for follow-up.
     """
-    colliding_device = dev_reg.async_get_device(identifiers=new_identifiers)
+    colliding_device = _find_entry_device(dev_reg, new_identifiers, config_entry_id)
     if colliding_device is None or colliding_device.id == device_entry.id:
         dev_reg.async_update_device(device_entry.id, new_identifiers=new_identifiers)
         return
@@ -177,7 +206,7 @@ def _rename_device_identifiers(
 
 
 def migrate_legacy_device_identifier(
-    hass: HomeAssistant, identity: str, hostname: str
+    hass: HomeAssistant, config_entry_id: str, identity: str, hostname: str
 ) -> None:
     """Rewrite the System device's registry identifier from the earlier format.
 
@@ -191,11 +220,15 @@ def migrate_legacy_device_identifier(
     """
     legacy_identifier = _legacy_format_device_identifier(identity, hostname)
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, legacy_identifier)})
+    device = _find_entry_device(dev_reg, {(DOMAIN, legacy_identifier)}, config_entry_id)
     if device is not None:
         ent_reg = er.async_get(hass)
         _rename_device_identifiers(
-            dev_reg, ent_reg, device, {(DOMAIN, format_device_identifier(identity))}
+            dev_reg,
+            ent_reg,
+            device,
+            {(DOMAIN, format_device_identifier(identity))},
+            config_entry_id,
         )
 
 
@@ -274,7 +307,9 @@ def migrate_entry_identity_namespace(
             for domain, value in device_entry.identifiers
         }
         if new_identifiers != device_entry.identifiers:
-            _rename_device_identifiers(dev_reg, ent_reg, device_entry, new_identifiers)
+            _rename_device_identifiers(
+                dev_reg, ent_reg, device_entry, new_identifiers, config_entry.entry_id
+            )
 
 
 _LegacyFormatter = Callable[[str, str, object], str]
