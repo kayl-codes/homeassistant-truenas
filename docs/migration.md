@@ -32,7 +32,8 @@ domain** — the original `truenas` domain is already taken. Renaming to `truena
 | **Connection settings** | Host, API key, SSL verification and all options are taken over. |
 
 What changes cosmetically: the **devices** are recreated under the new integration (device
-grouping is not history-bearing). The old, now-disabled integration remains visible until
+grouping is not history-bearing). Since v2.11.2, each device's **area** and custom **name**
+are carried over to the new device. The old, now-disabled integration remains visible until
 you remove it.
 
 ---
@@ -60,9 +61,10 @@ Choose **Take over existing configuration**.
 
 ### 3. Confirm the prefilled settings
 
-The setup form is prefilled with your existing host, API key, SSL option and the same
-integration **name** (the name must match — entity IDs are derived from it, which is what
-lets the migration re-attach your history). Just confirm.
+The setup form is prefilled with your existing host, SSL option and integration **name**.
+Leave the **API key** field blank to keep your existing key, then confirm. The migration
+re-attaches your entity IDs and history from the old integration's registry entries, so
+changing the name here does not affect it.
 
 ![Prefilled setup form](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/migration_2.png)
 
@@ -130,9 +132,10 @@ complete the move. There's no rush — leaving it disabled does no harm.
 
 ## Troubleshooting
 
-- **History didn't reconnect for some entities** — make sure the **integration name**
-  matches the old one. Entity IDs (and therefore statistics) are derived from the name; a
-  different name regenerates different IDs.
+- **History didn't reconnect for some entities** — check the Home Assistant log for a
+  `CE migration: … legacy entities lack the legacy name prefix` warning. Those entities had
+  a unique ID the migration could not translate, so they could not be matched to their new
+  counterparts. Roll back and report the log lines in an issue.
 - **Old `sensor.truenas_* _2` duplicates appear** — this happens if the old integration
   was still enabled when the new entities were created. Roll back, ensure the old
   integration is present (it will be auto-disabled), and let the migration run again.
@@ -155,7 +158,7 @@ Yes — that's the whole point of the adoption step.
 
 **Can I run both integrations at once?**
 No. During migration the old one is disabled on purpose; running both against the same
-host with the same name would collide on entity IDs.
+host would poll it twice and compete for the same entity IDs.
 
 **The brand still says "TrueNAS" — is that right?**
 Yes. Only the internal domain changed (`truenas` → `truenas_ce`); the display name stays
