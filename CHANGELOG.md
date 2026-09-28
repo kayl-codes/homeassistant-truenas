@@ -27,10 +27,10 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   device's area and custom name are carried over to the new device (only where none is set yet).
   (#158, #161)
 - **Cron job and cloudsync entities used the full TrueNAS `description` as their name**, so a
-  paragraph-long description produced very long names, entity IDs near Home Assistant's 255-character
-  limit and `_2` collisions. Names now use only the first line of the description, capped at 60
-  characters. The full text is still available in the `description` attribute. Existing entity IDs
-  are kept; only the display name changes. (#160, #162)
+  paragraph-long description produced very long names, entity IDs near Home Assistant's
+  255-character limit and `_2` collisions. Names now use only the first non-blank line of the
+  description, capped at 60 characters. The full text is still available in the `description`
+  attribute. Existing entity IDs are kept; only the display name changes. (#160, #162)
 - **Home Assistant 2026.8+ logged a deprecation warning for `device_registry.async_get_device` on
   every startup** (the call stops working in 2027.8). The device-identifier migrations now use the
   per-config-entry lookup on Home Assistant 2026.8+ and keep the previous behaviour on older
