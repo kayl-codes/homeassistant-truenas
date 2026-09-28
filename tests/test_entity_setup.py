@@ -13,6 +13,7 @@ repo's Windows dev machine).
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -203,8 +204,22 @@ async def test_migrate_legacy_device_identifier_noop_when_no_legacy_record(
     assert untouched_device.identifiers == {(DOMAIN, "system-guid-123")}
 
 
-def _forbid_deprecated_device_lookup() -> Any:
-    """Fail loudly if code under test calls the deprecated lookup (#140)."""
+# Entry-scoped device lookup (and per-entry identifier uniqueness) only exists
+# on HA >= 2026.8; older cores -- incl. the one CI's pinned
+# pytest-homeassistant-custom-component installs -- keep global identifiers and
+# must go through the deprecated-but-only lookup.
+_HAS_ENTRY_SCOPED_LOOKUP = hasattr(dr.DeviceRegistry, "async_get_devices")
+_requires_entry_scoped_lookup = pytest.mark.skipif(
+    not _HAS_ENTRY_SCOPED_LOOKUP,
+    reason="per-entry device identifiers need Home Assistant >= 2026.8",
+)
+
+
+def _forbid_deprecated_device_lookup() -> AbstractContextManager[Any]:
+    """Fail loudly if code under test calls the deprecated lookup (#140),
+    on cores where a replacement exists."""
+    if not _HAS_ENTRY_SCOPED_LOOKUP:
+        return nullcontext()
     return patch.object(
         dr.DeviceRegistry,
         "async_get_device",
@@ -212,6 +227,7 @@ def _forbid_deprecated_device_lookup() -> Any:
     )
 
 
+@_requires_entry_scoped_lookup
 async def test_migrate_legacy_device_identifier_ignores_other_entry_device(
     hass: HomeAssistant,
 ) -> None:
@@ -244,6 +260,7 @@ async def test_migrate_legacy_device_identifier_ignores_other_entry_device(
     assert untouched_device.identifiers == {(DOMAIN, "system-guid-123_truenas.local")}
 
 
+@_requires_entry_scoped_lookup
 async def test_migrate_legacy_device_identifier_other_entry_target_no_collision(
     hass: HomeAssistant,
 ) -> None:
