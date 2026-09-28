@@ -168,7 +168,9 @@ async def test_migrate_legacy_device_identifier_renames_existing_record(
         identifiers={(DOMAIN, "system-guid-123_truenas.local")},
     )
 
-    migrate_legacy_device_identifier(hass, "system-guid-123", "truenas.local")
+    migrate_legacy_device_identifier(
+        hass, entry.entry_id, "system-guid-123", "truenas.local"
+    )
 
     migrated_device = dev_reg.async_get(device.id)
     assert migrated_device is not None
@@ -192,11 +194,120 @@ async def test_migrate_legacy_device_identifier_noop_when_no_legacy_record(
         identifiers={(DOMAIN, "system-guid-123")},
     )
 
-    migrate_legacy_device_identifier(hass, "system-guid-123", "truenas.local")
+    migrate_legacy_device_identifier(
+        hass, entry.entry_id, "system-guid-123", "truenas.local"
+    )
 
     untouched_device = dev_reg.async_get(device.id)
     assert untouched_device is not None
     assert untouched_device.identifiers == {(DOMAIN, "system-guid-123")}
+
+
+def _forbid_deprecated_device_lookup() -> Any:
+    """Fail loudly if code under test calls the deprecated lookup (#140)."""
+    return patch.object(
+        dr.DeviceRegistry,
+        "async_get_device",
+        side_effect=AssertionError("deprecated async_get_device called"),
+    )
+
+
+async def test_migrate_legacy_device_identifier_ignores_other_entry_device(
+    hass: HomeAssistant,
+) -> None:
+    """Device identifiers are only unique per config entry (#140): a legacy
+    identifier owned by *another* entry's device must not be renamed by this
+    entry's migration -- and the lookup must not hit the deprecated
+    ``device_registry.async_get_device``."""
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry_b.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    other_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_b.entry_id,
+        identifiers={(DOMAIN, "system-guid-123_truenas.local")},
+    )
+
+    with _forbid_deprecated_device_lookup():
+        migrate_legacy_device_identifier(
+            hass, entry_a.entry_id, "system-guid-123", "truenas.local"
+        )
+
+    untouched_device = dev_reg.async_get(other_device.id)
+    assert untouched_device is not None
+    assert untouched_device.identifiers == {(DOMAIN, "system-guid-123_truenas.local")}
+
+
+async def test_migrate_legacy_device_identifier_other_entry_target_no_collision(
+    hass: HomeAssistant,
+) -> None:
+    """Another entry already owning the *target* identifier is no collision
+    since identifiers are per-entry (#140): this entry's legacy device is
+    renamed in place without raising, the other entry's device untouched."""
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry_b.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    own_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_a.entry_id,
+        identifiers={(DOMAIN, "system-guid-123_truenas.local")},
+    )
+    other_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_b.entry_id, identifiers={(DOMAIN, "system-guid-123")}
+    )
+
+    with _forbid_deprecated_device_lookup():
+        migrate_legacy_device_identifier(
+            hass, entry_a.entry_id, "system-guid-123", "truenas.local"
+        )
+
+    migrated_device = dev_reg.async_get(own_device.id)
+    assert migrated_device is not None
+    assert migrated_device.identifiers == {(DOMAIN, "system-guid-123")}
+    other = dev_reg.async_get(other_device.id)
+    assert other is not None
+    assert other.identifiers == {(DOMAIN, "system-guid-123")}
+
+
+async def test_migrate_legacy_device_identifier_removes_empty_same_entry_duplicate(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A same-entry device already owning the target identifier wins: the
+    now-empty legacy duplicate is removed instead of raising a collision."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-guid-123"}
+    )
+    entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    legacy_device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "system-guid-123_truenas.local")},
+    )
+    real_device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "system-guid-123")}
+    )
+
+    with _forbid_deprecated_device_lookup():
+        migrate_legacy_device_identifier(
+            hass, entry.entry_id, "system-guid-123", "truenas.local"
+        )
+
+    assert dev_reg.async_get(legacy_device.id) is None
+    assert dev_reg.async_get(real_device.id) is not None
+    assert "removing duplicate device" in caplog.text
 
 
 # ---------------------------
