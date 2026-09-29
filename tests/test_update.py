@@ -384,6 +384,17 @@ def test_summarize_job_error_without_exception_line_uses_last_line() -> None:
     assert summarize_job_error(error) == "Job failed: weird tail"
 
 
+def test_summarize_job_error_ignores_non_exception_colon_lines() -> None:
+    error = (
+        "Traceback (most recent call last):\n"
+        "ValueError: real reason\n"
+        "note: File x, SomeError: not an exception line\n"
+    )
+    assert summarize_job_error(error) == (
+        "real reason note: File x, SomeError: not an exception line"
+    )
+
+
 _FAILED_JOB = {"state": "FAILED", "error": _MIGRATION_ERROR}
 
 
@@ -507,11 +518,68 @@ async def test_successful_upgrade_dismisses_previous_failure_notification(
     notifications.async_create.assert_not_called()
 
 
-async def test_app_update_async_install_stops_when_job_vanishes() -> None:
+async def test_app_update_vanished_job_reports_unknown_outcome(
+    notifications: MagicMock,
+) -> None:
+    """A job TrueNAS no longer reports must not be treated as a success."""
     update = _install_ready_update([{"state": "RUNNING"}, None])
-    with patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()):
-        await update.async_install(version=None, backup=False)
+    update.coordinator.api.query = AsyncMock(
+        side_effect=lambda method, params=None: {
+            "app.upgrade": 99,
+            "core.get_jobs": [],
+            "app.get_instance": {"state": "RUNNING"},
+        }[method]
+    )
+    err = await _install_expecting_failure(update)
 
     assert update.coordinator.async_refresh_app_update_job.await_count == 2
     assert update._data["update_jobid"] == 0
     assert update.in_progress is False
+    assert err.translation_key == "app_update_job_failed"
+    assert "outcome is unknown" in err.translation_placeholders["error"]
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.start" not in methods
+    message = notifications.async_create.call_args.args[1]
+    assert "outcome is unknown" in message
+    assert "Reason reported by TrueNAS" not in message
+
+
+def _coordinator_finished_update(recorded_state: str) -> TrueNASAppUpdate:
+    """Coordinator saw the terminal state first; the direct lookup then fails."""
+    update = _install_ready_update([])
+
+    async def _refresh(uid: str) -> None:
+        update._data["update_state"] = recorded_state
+        update._data["update_jobid"] = 0
+
+    update.coordinator.async_refresh_app_update_job = AsyncMock(side_effect=_refresh)
+    update.coordinator.api.query = AsyncMock(
+        side_effect=lambda method, params=None: {
+            "app.upgrade": 99,
+            "core.get_jobs": None,
+            "app.get_instance": {"state": "RUNNING"},
+        }[method]
+    )
+    return update
+
+
+async def test_untracked_job_lookup_error_keeps_recorded_success(
+    notifications: MagicMock,
+) -> None:
+    """A transient lookup error must not turn a successful upgrade into a failure."""
+    update = _coordinator_finished_update("SUCCESS")
+    with patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()):
+        await update.async_install(version=None, backup=False)
+
+    notifications.async_create.assert_not_called()
+    notifications.async_dismiss.assert_called_once()
+
+
+async def test_untracked_job_lookup_error_keeps_recorded_failure(
+    notifications: MagicMock,
+) -> None:
+    update = _coordinator_finished_update("FAILED")
+    err = await _install_expecting_failure(update)
+
+    assert err.translation_placeholders["error"] == "FAILED"
+    assert "Reason reported by TrueNAS" in notifications.async_create.call_args.args[1]
