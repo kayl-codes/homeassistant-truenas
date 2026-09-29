@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from logging import getLogger
 from time import monotonic
 from typing import Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.update import (
     UpdateDeviceClass,
     UpdateEntity,
@@ -14,7 +16,7 @@ from homeassistant.components.update import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -33,6 +35,53 @@ from .update_types import (  # noqa: F401
 
 _LOGGER = getLogger(__name__)
 DEVICE_UPDATE = "device_update"
+
+_APP_RUNNING = "RUNNING"
+_TRACEBACK_MARKER = "Traceback (most recent call last):"
+# Final traceback line, e.g. "Exception: <reason>" or "middlewared.CallError: ...".
+_EXCEPTION_LINE = re.compile(r"^[\w.]*(?:Error|Exception):\s*(?P<msg>.+)$")
+_UPDATE_FAILED_NOTIFY_PREFIX = "truenas_ce_app_update_failed"
+
+# Outcomes of the post-failure restart attempt, rendered in the notification.
+_RESTART_NOT_NEEDED = "The app is still running."
+_APP_RESTARTABLE_STATES: frozenset[str] = frozenset({"STOPPED", "CRASHED"})
+_RESTART_TRIGGERED = (
+    "The app was stopped by the failed update; a restart has been requested. "
+    "Please verify in TrueNAS that it is running again."
+)
+_RESTART_TRANSITIONING = (
+    "The app is currently {state}; please check in TrueNAS that it comes back up."
+)
+_RESTART_FAILED = (
+    "The app was stopped by the failed update and could not be restarted "
+    "automatically; please start it manually in TrueNAS."
+)
+_RESTART_UNKNOWN = "The app state could not be determined; please check it in TrueNAS."
+
+
+def summarize_job_error(error: Any) -> str:
+    """Reduce a TrueNAS job error to a human-readable reason.
+
+    Failed chart migrations embed a full Python traceback. Keep the leading
+    context (e.g. "[EFAULT] Failed to execute 'x' migration") and the message
+    of the final exception line; plain errors are returned unchanged.
+    """
+    text = str(error or "").strip()
+    head, marker, tail = text.partition(_TRACEBACK_MARKER)
+    if not marker:
+        return text
+
+    head = head.strip().rstrip(":").strip()
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    # The exception message starts at the last "SomeError: ..." line and may
+    # continue over further lines; fall back to the very last line.
+    reason = lines[-1] if lines else ""
+    for index in range(len(lines) - 1, -1, -1):
+        if match := _EXCEPTION_LINE.match(lines[index]):
+            reason = " ".join([match.group("msg"), *lines[index + 1 :]])
+            break
+    return f"{head}: {reason}" if head and reason else head or reason
+
 
 # Updates are centralized in the coordinator; entity actions may run unlimited.
 PARALLEL_UPDATES = 0
@@ -179,12 +228,15 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
     ) -> None:
         """Install an update."""
         app_data = self.coordinator.data.get("app", {}).get(str(self._data["id"]), {})
-        if app_data.get("state") != "RUNNING":
-            _LOGGER.error(
-                "In order to upgrade the app %s, it must be in the RUNNING state.",
-                self._data["id"],
+        if app_data.get("state") != _APP_RUNNING:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="app_update_not_running",
+                translation_placeholders={
+                    "app": str(self._data["id"]),
+                    "state": str(app_data.get("state") or "unknown"),
+                },
             )
-            return
 
         job_id = await self.coordinator.api.query("app.upgrade", [self._data["id"]])
         if job_id is None:
@@ -205,19 +257,115 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         self.async_write_ha_state()
 
         job = await self._async_track_upgrade_job()
+        if job is None and not self._data.get("update_jobid"):
+            # The coordinator's own poll/push pass saw the final state first and
+            # stopped tracking; fetch the outcome so a failure is not lost.
+            job = await self._async_fetch_job(job_id)
         # Re-sync versions/state from TrueNAS now that the job is done.
         await self.coordinator.async_request_refresh()
 
-        if job is not None and job.get("state") != "SUCCESS":
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="app_update_job_failed",
-                translation_placeholders={
-                    "app": self._data["id"],
-                    "host": self.coordinator.host,
-                    "error": str(job.get("error") or job.get("state") or "unknown"),
-                },
+        if job is None:
+            return
+        if job.get("state") == "SUCCESS":
+            persistent_notification.async_dismiss(self.hass, self._notification_id)
+            return
+
+        reason = summarize_job_error(job.get("error")) or str(
+            job.get("state") or "unknown"
+        )
+        restart_outcome = await self._async_restart_after_failed_upgrade()
+        self._notify_update_failed(reason, restart_outcome)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="app_update_job_failed",
+            translation_placeholders={
+                "app": self._data["id"],
+                "host": self.coordinator.host,
+                "error": reason,
+            },
+        )
+
+    @property
+    def _notification_id(self) -> str:
+        """Stable notification id so repeated failures replace, not stack."""
+        return (
+            f"{_UPDATE_FAILED_NOTIFY_PREFIX}_"
+            f"{self.coordinator.config_entry.entry_id}_{self._data['id']}"
+        )
+
+    async def _async_fetch_job(self, job_id: Any) -> dict[str, Any] | None:
+        """Look up an upgrade job directly by id, or ``None`` if unavailable."""
+        jobs = await self.coordinator.api.query(
+            "core.get_jobs", params=[[["id", "=", job_id]]]
+        )
+        if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict):
+            return jobs[0]
+        _LOGGER.warning(
+            "Could not determine the outcome of upgrade job %s for app %s on %s",
+            job_id,
+            self._data["id"],
+            self.coordinator.host,
+        )
+        return None
+
+    async def _async_restart_after_failed_upgrade(self) -> str:
+        """Bring the app back up if the failed upgrade left it stopped.
+
+        The install pre-check guarantees the app was RUNNING before the
+        upgrade, so starting it again restores the pre-update state and never
+        starts an app the user stopped on purpose. Apps still transitioning
+        (DEPLOYING/STOPPING) are left alone.
+        """
+        app_id = self._data["id"]
+        instance = await self.coordinator.api.query("app.get_instance", [app_id])
+        if not isinstance(instance, dict) or "state" not in instance:
+            _LOGGER.warning(
+                "Could not determine the state of app %s on %s after its "
+                "upgrade failed: %s",
+                app_id,
+                self.coordinator.host,
+                self.coordinator.api.error or "invalid response",
             )
+            return _RESTART_UNKNOWN
+        state = str(instance["state"])
+        if state == _APP_RUNNING:
+            return _RESTART_NOT_NEEDED
+        if state not in _APP_RESTARTABLE_STATES:
+            return _RESTART_TRANSITIONING.format(state=state)
+
+        _LOGGER.warning(
+            "App %s on %s is %s after its upgrade failed; starting it again",
+            app_id,
+            self.coordinator.host,
+            state,
+        )
+        if await self.coordinator.api.query("app.start", [app_id]) is None:
+            _LOGGER.error(
+                "Failed to restart app %s on %s after its upgrade failed: %s",
+                app_id,
+                self.coordinator.host,
+                self.coordinator.api.error or "unknown error",
+            )
+            return _RESTART_FAILED
+        await self.coordinator.async_request_refresh()
+        return _RESTART_TRIGGERED
+
+    def _notify_update_failed(self, reason: str, restart_outcome: str) -> None:
+        """Tell the user why the upgrade failed and what happened to the app."""
+        name = self._data.get("name") or self._data["id"]
+        target = self._data.get("latest_version")
+        target_text = f" to version {target}" if target and target != "unknown" else ""
+        persistent_notification.async_create(
+            self.hass,
+            (
+                f"The update of app **{name}**{target_text} on "
+                f"{self.coordinator.host} failed.\n\n"
+                f"**Reason reported by TrueNAS:**\n{reason}\n\n"
+                f"{restart_outcome}"
+            ),
+            title=f"TrueNAS app update failed: {name}",
+            notification_id=self._notification_id,
+        )
 
     async def _async_track_upgrade_job(self) -> dict[str, Any] | None:
         """Poll the running upgrade job and push progress to HA until it ends.

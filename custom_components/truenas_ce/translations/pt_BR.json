@@ -179,6 +179,9 @@
         "app_update_job_failed": {
             "message": "A atualização do app TrueNAS {app} em {host} não foi concluída com sucesso: {error}"
         },
+        "app_update_not_running": {
+            "message": "The app {app} cannot be updated while it is {state}; TrueNAS only upgrades running apps. Start the app and try again."
+        },
         "missing_uuid": {
             "message": "Parâmetro obrigatório ausente: uuid"
         },

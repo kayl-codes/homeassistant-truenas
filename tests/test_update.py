@@ -6,15 +6,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _fakes import make_coordinator
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from custom_components.truenas_ce.update import TrueNASAppUpdate, TrueNASUpdate
+from custom_components.truenas_ce.update import (
+    TrueNASAppUpdate,
+    TrueNASUpdate,
+    summarize_job_error,
+)
 from custom_components.truenas_ce.update_types import TrueNASUpdateEntityDescription
 
 _SYSTEM_DESC = TrueNASUpdateEntityDescription(
     key="system_update", name=None, data_path="system_info", title="TrueNAS"
 )
 _APP_DESC = TrueNASUpdateEntityDescription(key="app_update", name=None, data_path="app")
+
+
+@pytest.fixture(autouse=True)
+def notifications():
+    """Stub persistent notifications; the fake coordinator has no real hass."""
+    with patch("custom_components.truenas_ce.update.persistent_notification") as notify:
+        yield notify
 
 
 def _make_system_update(data: dict | None = None) -> TrueNASUpdate:
@@ -128,10 +139,13 @@ def test_app_update_title_and_in_progress() -> None:
     assert update.in_progress is True
 
 
-async def test_app_update_async_install_not_running_logs_and_skips() -> None:
+async def test_app_update_async_install_not_running_raises_validation_error() -> None:
     update = _make_app_update({"id": "a1"})
     update.coordinator.data["app"] = {"a1": {"state": "STOPPED"}}
-    await update.async_install(version=None, backup=False)
+    with pytest.raises(ServiceValidationError) as exc_info:
+        await update.async_install(version=None, backup=False)
+    assert exc_info.value.translation_key == "app_update_not_running"
+    assert exc_info.value.translation_placeholders == {"app": "a1", "state": "STOPPED"}
     update.coordinator.api.query.assert_not_awaited()
 
 
@@ -328,6 +342,169 @@ async def test_app_update_async_install_raises_when_job_fails() -> None:
         "error": "image pull failed",
     }
     assert update._data["update_jobid"] == 0
+
+
+_MIGRATION_ERROR = (
+    "[EFAULT] Failed to execute 'remove_deprecated_volumes' migration: "
+    "Traceback (most recent call last):\n"
+    '  File "/mnt/.ix-apps/app_configs/code-server/versions/1.1.40/migrations/'
+    'remove_deprecated_volumes", line 10, in migrate\n'
+    "    raise Exception(\n"
+    "Exception: The deprecated storages have been removed. Before upgrading: "
+    "edit the application.\n"
+)
+_MIGRATION_REASON = (
+    "[EFAULT] Failed to execute 'remove_deprecated_volumes' migration: "
+    "The deprecated storages have been removed. Before upgrading: "
+    "edit the application."
+)
+
+
+def test_summarize_job_error_extracts_traceback_reason() -> None:
+    assert summarize_job_error(_MIGRATION_ERROR) == _MIGRATION_REASON
+
+
+def test_summarize_job_error_joins_multiline_exception_message() -> None:
+    error = (
+        "Traceback (most recent call last):\n"
+        '  File "x", line 1\n'
+        "middlewared.service_exception.CallError: first line\n"
+        "second line\n"
+    )
+    assert summarize_job_error(error) == "first line second line"
+
+
+def test_summarize_job_error_passes_plain_errors_through() -> None:
+    assert summarize_job_error("  image pull failed \n") == "image pull failed"
+    assert summarize_job_error(None) == ""
+
+
+def test_summarize_job_error_without_exception_line_uses_last_line() -> None:
+    error = "Job failed: Traceback (most recent call last):\n  weird tail\n"
+    assert summarize_job_error(error) == "Job failed: weird tail"
+
+
+_FAILED_JOB = {"state": "FAILED", "error": _MIGRATION_ERROR}
+
+
+def _failing_update(
+    instance: object, start_result: object = 7, job_snapshots: list | None = None
+) -> TrueNASAppUpdate:
+    """App update whose upgrade job fails with the migration traceback."""
+    update = _install_ready_update(job_snapshots or [_FAILED_JOB])
+    update._data.update({"name": "code-server", "latest_version": "1.1.40"})
+
+    async def _query(method: str, params: object = None) -> object:
+        return {
+            "app.upgrade": 99,
+            "app.get_instance": instance,
+            "app.start": start_result,
+            "core.get_jobs": [_FAILED_JOB],
+        }[method]
+
+    update.coordinator.api.query = AsyncMock(side_effect=_query)
+    return update
+
+
+async def _install_expecting_failure(update: TrueNASAppUpdate) -> HomeAssistantError:
+    with (
+        patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await update.async_install(version=None, backup=False)
+    return exc_info.value
+
+
+async def test_failed_upgrade_restarts_stopped_app_and_notifies(
+    notifications: MagicMock,
+) -> None:
+    update = _failing_update({"state": "STOPPED"})
+    err = await _install_expecting_failure(update)
+
+    assert err.translation_key == "app_update_job_failed"
+    assert err.translation_placeholders["error"] == _MIGRATION_REASON
+    update.coordinator.api.query.assert_any_await("app.start", ["a1"])
+    notifications.async_create.assert_called_once()
+    args, kwargs = notifications.async_create.call_args
+    message = args[1]
+    assert _MIGRATION_REASON in message
+    assert "Traceback" not in message
+    assert "1.1.40" in message
+    assert "restart has been requested" in message
+    assert kwargs["title"] == "TrueNAS app update failed: code-server"
+    assert kwargs["notification_id"] == "truenas_ce_app_update_failed_TrueNAS_a1"
+
+
+async def test_failed_upgrade_does_not_restart_running_app(
+    notifications: MagicMock,
+) -> None:
+    update = _failing_update({"state": "RUNNING"})
+    await _install_expecting_failure(update)
+
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.start" not in methods
+    assert "still running" in notifications.async_create.call_args.args[1]
+
+
+async def test_failed_upgrade_reports_failed_restart(
+    notifications: MagicMock,
+) -> None:
+    update = _failing_update({"state": "STOPPED"}, start_result=None)
+    update.coordinator.api.error = "start refused"
+    await _install_expecting_failure(update)
+
+    assert "start it manually" in notifications.async_create.call_args.args[1]
+
+
+async def test_failed_upgrade_leaves_transitioning_app_alone(
+    notifications: MagicMock,
+) -> None:
+    update = _failing_update({"state": "DEPLOYING"})
+    await _install_expecting_failure(update)
+
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.start" not in methods
+    assert "currently DEPLOYING" in notifications.async_create.call_args.args[1]
+
+
+async def test_failed_upgrade_seen_first_by_coordinator_is_not_lost(
+    notifications: MagicMock,
+) -> None:
+    """The coordinator's poll/push pass can observe the final job state first
+    and clear ``update_jobid``; the entity must still fetch the outcome."""
+    update = _failing_update({"state": "STOPPED"}, job_snapshots=[None])
+    err = await _install_expecting_failure(update)
+
+    assert err.translation_placeholders["error"] == _MIGRATION_REASON
+    update.coordinator.api.query.assert_any_await(
+        "core.get_jobs", params=[[["id", "=", 99]]]
+    )
+    update.coordinator.api.query.assert_any_await("app.start", ["a1"])
+    notifications.async_create.assert_called_once()
+
+
+async def test_failed_upgrade_with_unknown_app_state_skips_restart(
+    notifications: MagicMock,
+) -> None:
+    update = _failing_update(None)
+    await _install_expecting_failure(update)
+
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.start" not in methods
+    assert "could not be determined" in notifications.async_create.call_args.args[1]
+
+
+async def test_successful_upgrade_dismisses_previous_failure_notification(
+    notifications: MagicMock,
+) -> None:
+    update = _install_ready_update([{"state": "SUCCESS"}])
+    with patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()):
+        await update.async_install(version=None, backup=False)
+
+    notifications.async_dismiss.assert_called_once_with(
+        update.hass, "truenas_ce_app_update_failed_TrueNAS_a1"
+    )
+    notifications.async_create.assert_not_called()
 
 
 async def test_app_update_async_install_stops_when_job_vanishes() -> None:
