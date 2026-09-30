@@ -64,6 +64,9 @@ _RESTART_FAILED = (
     "automatically; please start it manually in TrueNAS."
 )
 _RESTART_UNKNOWN = "The app state could not be determined; please check it in TrueNAS."
+_RESTART_SKIPPED_UNKNOWN = (
+    "The app was left untouched because the update outcome is unknown."
+)
 
 
 def summarize_job_error(error: Any) -> str:
@@ -338,8 +341,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
     async def _async_handle_upgrade_outcome(self, job: dict[str, Any]) -> str | None:
         """Act on a finished upgrade job.
 
-        Returns ``None`` on success; on failure restarts the app if needed,
-        notifies the user and returns the shortened failure reason.
+        Returns ``None`` on success. Otherwise notifies the user and returns
+        the shortened failure reason; the app is restarted if needed only for
+        a confirmed failure, never for an unknown outcome.
         """
         if job.get("state") == "SUCCESS":
             persistent_notification.async_dismiss(self.hass, self._notification_id)
@@ -347,10 +351,14 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         reason = summarize_job_error(job.get("error")) or str(
             job.get("state") or "unknown"
         )
+        if job is _JOB_OUTCOME_UNKNOWN:
+            # No evidence the upgrade failed: never change the app's state.
+            self._notify_update_failed(
+                reason, _RESTART_SKIPPED_UNKNOWN, outcome_known=False
+            )
+            return reason
         restart_outcome = await self._async_restart_after_failed_upgrade()
-        self._notify_update_failed(
-            reason, restart_outcome, from_truenas=job is not _JOB_OUTCOME_UNKNOWN
-        )
+        self._notify_update_failed(reason, restart_outcome)
         return reason
 
     async def _async_watch_late_upgrade(self, job_id: Any) -> None:
@@ -462,22 +470,33 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         return _RESTART_TRIGGERED
 
     def _notify_update_failed(
-        self, reason: str, restart_outcome: str, *, from_truenas: bool = True
+        self, reason: str, restart_outcome: str, *, outcome_known: bool = True
     ) -> None:
-        """Tell the user why the upgrade failed and what happened to the app."""
+        """Tell the user why the upgrade failed and what happened to the app.
+
+        With ``outcome_known=False`` the job vanished without a recorded
+        result, so the upgrade is reported as unknown rather than failed.
+        """
         name = self._data.get("name") or self._data["id"]
         target = self._data.get("latest_version")
         target_text = f" to version {target}" if target and target != "unknown" else ""
-        label = "Reason reported by TrueNAS" if from_truenas else "Details"
+        if outcome_known:
+            label, verdict, title = "Reason reported by TrueNAS", "failed", "failed"
+        else:
+            label, verdict, title = (
+                "Details",
+                "has an unknown outcome",
+                "outcome unknown",
+            )
         persistent_notification.async_create(
             self.hass,
             (
                 f"The update of app **{name}**{target_text} on "
-                f"{self.coordinator.host} failed.\n\n"
+                f"{self.coordinator.host} {verdict}.\n\n"
                 f"**{label}:**\n{reason}\n\n"
                 f"{restart_outcome}"
             ),
-            title=f"TrueNAS app update failed: {name}",
+            title=f"TrueNAS app update {title}: {name}",
             notification_id=self._notification_id,
         )
 

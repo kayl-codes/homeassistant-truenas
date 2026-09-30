@@ -563,7 +563,8 @@ async def test_app_update_vanished_job_reports_unknown_outcome(
         side_effect=lambda method, params=None: {
             "app.upgrade": 99,
             "core.get_jobs": [],
-            "app.get_instance": {"state": "RUNNING"},
+            "app.get_instance": {"state": "STOPPED"},
+            "app.start": 7,
         }[method]
     )
     err = await _install_expecting_failure(update)
@@ -573,11 +574,17 @@ async def test_app_update_vanished_job_reports_unknown_outcome(
     assert update.in_progress is False
     assert err.translation_key == "app_update_job_failed"
     assert "outcome is unknown" in err.translation_placeholders["error"]
+    # No evidence the upgrade failed: the app's state is never touched.
     methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.get_instance" not in methods
     assert "app.start" not in methods
     message = notifications.async_create.call_args.args[1]
     assert "outcome is unknown" in message
+    assert "left untouched" in message
+    assert "has an unknown outcome" in message
     assert "Reason reported by TrueNAS" not in message
+    title = notifications.async_create.call_args.kwargs["title"]
+    assert title == "TrueNAS app update outcome unknown: a1"
 
 
 def _coordinator_finished_update(recorded_state: str) -> TrueNASAppUpdate:
