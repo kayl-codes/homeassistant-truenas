@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -304,6 +305,7 @@ async def test_app_update_async_install_gives_up_after_timeout() -> None:
     update = _install_ready_update(
         [{"state": "RUNNING", "progress": {"percent": 10}}] * 3
     )
+    create_task = _capture_background_task(update)
     with (
         patch("custom_components.truenas_ce.update.asyncio.sleep", AsyncMock()),
         patch("custom_components.truenas_ce.update.APP_UPDATE_JOB_TIMEOUT", 100),
@@ -320,6 +322,40 @@ async def test_app_update_async_install_gives_up_after_timeout() -> None:
     assert update.in_progress is True
     assert update.async_write_ha_state.call_count == 4
     update.coordinator.async_request_refresh.assert_awaited_once()
+    # A background watch takes over so a late outcome is still reported.
+    create_task.assert_called_once()
+    create_task.call_args.args[1].close()
+
+
+def _capture_background_task(update: TrueNASAppUpdate) -> MagicMock:
+    """Stub the config entry's background-task hook (fake entry lacks it)."""
+    create_task = MagicMock()
+    update.coordinator.config_entry.async_create_background_task = create_task
+    return create_task
+
+
+async def _run_late_watch(update: TrueNASAppUpdate, final_state: str) -> None:
+    """Run the late-upgrade watch while the coordinator finishes the job."""
+    update._data["update_jobid"] = 99
+    listeners: list = []
+    unsubscribe = MagicMock()
+
+    def _add_listener(listener) -> MagicMock:
+        listeners.append(listener)
+        return unsubscribe
+
+    update.coordinator.async_add_listener = _add_listener
+    watch = asyncio.create_task(update._async_watch_late_upgrade(99))
+    await asyncio.sleep(0)
+    assert not watch.done()  # still waiting while the job runs
+
+    # A later coordinator poll sees the job end and stops tracking it.
+    update._data["update_state"] = final_state
+    update._data["update_jobid"] = 0
+    for listener in listeners:
+        listener()
+    await watch
+    unsubscribe.assert_called_once()
 
 
 async def test_app_update_async_install_raises_when_job_fails() -> None:
@@ -583,3 +619,69 @@ async def test_untracked_job_lookup_error_keeps_recorded_failure(
 
     assert err.translation_placeholders["error"] == "FAILED"
     assert "Reason reported by TrueNAS" in notifications.async_create.call_args.args[1]
+
+
+async def test_late_upgrade_failure_is_reported_after_timeout(
+    notifications: MagicMock,
+) -> None:
+    """A job that fails after the install call gave up must still be handled."""
+    update = _failing_update({"state": "STOPPED"})
+    await _run_late_watch(update, "FAILED")
+
+    update.coordinator.api.query.assert_any_await(
+        "core.get_jobs", params=[[["id", "=", 99]]]
+    )
+    update.coordinator.api.query.assert_any_await("app.start", ["a1"])
+    message = notifications.async_create.call_args.args[1]
+    assert _MIGRATION_REASON in message
+    assert "restart has been requested" in message
+
+
+async def test_late_upgrade_success_dismisses_failure_notification(
+    notifications: MagicMock,
+) -> None:
+    update = _install_ready_update([])
+    update.coordinator.api.query = AsyncMock(
+        return_value=[{"state": "SUCCESS", "id": 99}]
+    )
+    await _run_late_watch(update, "SUCCESS")
+
+    notifications.async_create.assert_not_called()
+    notifications.async_dismiss.assert_called_once_with(
+        update.hass, "truenas_ce_app_update_failed_TrueNAS_a1"
+    )
+
+
+async def test_late_watch_stops_quietly_when_app_disappears(
+    notifications: MagicMock,
+) -> None:
+    """An app removed mid-upgrade must not produce a bogus failure report."""
+    update = _failing_update({"state": "STOPPED"})
+    update._data["update_jobid"] = 99
+    listeners: list = []
+    update.coordinator.async_add_listener = lambda listener: (
+        listeners.append(listener) or MagicMock()
+    )
+    watch = asyncio.create_task(update._async_watch_late_upgrade(99))
+    await asyncio.sleep(0)
+
+    update.coordinator.data["app"] = {}
+    for listener in listeners:
+        listener()
+    await watch
+
+    update.coordinator.api.query.assert_not_awaited()
+    notifications.async_create.assert_not_called()
+
+
+async def test_late_watch_does_not_report_a_still_running_job(
+    notifications: MagicMock,
+) -> None:
+    update = _install_ready_update([])
+    update.coordinator.api.query = AsyncMock(return_value=[{"state": "RUNNING"}])
+    await _run_late_watch(update, "unknown")
+
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert "app.start" not in methods
+    notifications.async_create.assert_not_called()
+    notifications.async_dismiss.assert_not_called()

@@ -14,7 +14,7 @@ from homeassistant.components.update import (
     UpdateEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -281,26 +281,26 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         self.async_write_ha_state()
 
         job = await self._async_track_upgrade_job()
-        if job is None and not self._data.get("update_jobid"):
+        if job is None and self._data.get("update_jobid"):
+            # Tracking timed out while the job is still running: keep watching
+            # it in the background so a late failure is still reported.
+            self.coordinator.config_entry.async_create_background_task(
+                self.hass,
+                self._async_watch_late_upgrade(job_id),
+                f"{DOMAIN} app upgrade watch {self._data['id']}",
+            )
+            await self.coordinator.async_request_refresh()
+            return
+        if job is None:
             # The coordinator's own poll/push pass saw the final state first and
             # stopped tracking; fetch the outcome so a failure is not lost.
             job = await self._async_resolve_untracked_job(job_id)
         # Re-sync versions/state from TrueNAS now that the job is done.
         await self.coordinator.async_request_refresh()
 
-        if job is None:
+        reason = await self._async_handle_upgrade_outcome(job)
+        if reason is None:
             return
-        if job.get("state") == "SUCCESS":
-            persistent_notification.async_dismiss(self.hass, self._notification_id)
-            return
-
-        reason = summarize_job_error(job.get("error")) or str(
-            job.get("state") or "unknown"
-        )
-        restart_outcome = await self._async_restart_after_failed_upgrade()
-        self._notify_update_failed(
-            reason, restart_outcome, from_truenas=job is not _JOB_OUTCOME_UNKNOWN
-        )
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="app_update_job_failed",
@@ -334,6 +334,76 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
             self.coordinator.api.error or "job not found",
         )
         return None
+
+    async def _async_handle_upgrade_outcome(self, job: dict[str, Any]) -> str | None:
+        """Act on a finished upgrade job.
+
+        Returns ``None`` on success; on failure restarts the app if needed,
+        notifies the user and returns the shortened failure reason.
+        """
+        if job.get("state") == "SUCCESS":
+            persistent_notification.async_dismiss(self.hass, self._notification_id)
+            return None
+        reason = summarize_job_error(job.get("error")) or str(
+            job.get("state") or "unknown"
+        )
+        restart_outcome = await self._async_restart_after_failed_upgrade()
+        self._notify_update_failed(
+            reason, restart_outcome, from_truenas=job is not _JOB_OUTCOME_UNKNOWN
+        )
+        return reason
+
+    async def _async_watch_late_upgrade(self, job_id: Any) -> None:
+        """Report the outcome of an upgrade that outlived the install call.
+
+        The coordinator keeps mirroring the job on every poll and clears
+        ``update_jobid`` once it ends (or vanishes); the outcome is then
+        handled exactly like one seen within the install call.
+        """
+        uid = str(self._data["id"])
+        finished = asyncio.Event()
+
+        @callback
+        def _check_job() -> None:
+            app = self.coordinator.data.get("app", {}).get(uid)
+            if not app or not app.get("update_jobid"):
+                finished.set()
+
+        unsubscribe = self.coordinator.async_add_listener(_check_job)
+        try:
+            _check_job()
+            await finished.wait()
+        finally:
+            unsubscribe()
+
+        if uid not in self.coordinator.data.get("app", {}):
+            _LOGGER.warning(
+                "App %s disappeared from %s while its upgrade job %s was running; "
+                "its outcome cannot be reported",
+                uid,
+                self.coordinator.host,
+                job_id,
+            )
+            return
+        job = await self._async_resolve_untracked_job(job_id)
+        if job.get("state") in APP_UPDATE_JOB_ACTIVE_STATES:
+            _LOGGER.warning(
+                "Lost track of upgrade job %s for app %s on %s while it was still "
+                "%s; its outcome cannot be reported",
+                job_id,
+                uid,
+                self.coordinator.host,
+                job.get("state"),
+            )
+            return
+        if await self._async_handle_upgrade_outcome(job) is not None:
+            _LOGGER.warning(
+                "Upgrade job %s for app %s on %s failed after the install call "
+                "had returned; the user was notified",
+                job_id,
+                uid,
+                self.coordinator.host,
+            )
 
     async def _async_resolve_untracked_job(self, job_id: Any) -> dict[str, Any]:
         """Final outcome of a job the coordinator already stopped tracking.
