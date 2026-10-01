@@ -1,0 +1,607 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "description": "Skonfiguruj integrację TrueNAS CE.",
+                "data": {
+                    "name": "Nazwa integracji",
+                    "host": "Host",
+                    "api_key": "Klucz API",
+                    "verify_ssl": "Weryfikuj certyfikat SSL",
+                    "cronjob_skip_disabled": "Pomijaj wyłączone zadania cron",
+                    "data_unit": "Jednostka rozmiaru danych (GB lub GiB)"
+                },
+                "data_description": {
+                    "name": "Przyjazna nazwa pozwalająca odróżnić tę instancję TrueNAS od innych, jeśli skonfigurujesz więcej niż jedną.",
+                    "host": "Nazwa hosta lub adres IP instancji TrueNAS, bez „https://”, ścieżki ani końcowego ukośnika.",
+                    "api_key": "Klucz API wygenerowany w TrueNAS w sekcji Credentials > API Keys. Pozostaw puste, aby zachować wcześniej skonfigurowany klucz podczas przejmowania istniejącej konfiguracji.",
+                    "verify_ssl": "Weryfikuj certyfikat SSL instancji TrueNAS. Wyłącz tylko wtedy, gdy używasz certyfikatu z podpisem własnym, którego nie możesz zweryfikować w inny sposób.",
+                    "cronjob_skip_disabled": "Wyklucz z monitorowania zadania cron wyłączone w TrueNAS; nie będą dla nich tworzone encje czujników.",
+                    "data_unit": "Wybierz, czy rozmiary danych mają być wyświetlane w jednostkach dziesiętnych (GB), czy binarnych (GiB)."
+                }
+            },
+            "reconfigure": {
+                "description": "Zmień konfigurację integracji TrueNAS.",
+                "data": {
+                    "host": "Host",
+                    "api_key": "Klucz API",
+                    "verify_ssl": "Weryfikuj certyfikat SSL",
+                    "cronjob_skip_disabled": "Pomijaj wyłączone zadania cron",
+                    "data_unit": "Jednostka rozmiaru danych (GB lub GiB)",
+                    "dataset_passphrases": "Dodaj/zaktualizuj hasła datasetów"
+                },
+                "data_description": {
+                    "host": "Nazwa hosta lub adres IP instancji TrueNAS, bez „https://”, ścieżki ani końcowego ukośnika.",
+                    "api_key": "Klucz API wygenerowany w TrueNAS w sekcji Credentials > API Keys. Pozostaw puste, aby zachować bieżący klucz bez zmian.",
+                    "verify_ssl": "Weryfikuj certyfikat SSL instancji TrueNAS. Wyłącz tylko wtedy, gdy używasz certyfikatu z podpisem własnym, którego nie możesz zweryfikować w inny sposób.",
+                    "cronjob_skip_disabled": "Wyklucz z monitorowania zadania cron wyłączone w TrueNAS; nie będą dla nich tworzone encje czujników.",
+                    "data_unit": "Wybierz, czy rozmiary danych mają być wyświetlane w jednostkach dziesiętnych (GB), czy binarnych (GiB).",
+                    "dataset_passphrases": "Wprowadź pary NazwaDatasetu#Hasło (po jednej w wierszu, np. tank/encrypted#MojeHaslo), aby dodać lub zaktualizować zapisane hasła. Pozostaw puste, aby zachować istniejące hasła bez zmian. Użyj akcji passphrase_remove, aby usunąć zapisane hasło, podając ścieżkę datasetu."
+                }
+            },
+            "reauth_confirm": {
+                "title": "Ponowne uwierzytelnianie TrueNAS",
+                "description": "Klucz API dla „{name}” nie jest już prawidłowy. Wprowadź nowy klucz API, aby przywrócić połączenie.",
+                "data": {
+                    "api_key": "Klucz API"
+                },
+                "data_description": {
+                    "api_key": "Nowy klucz API wygenerowany w TrueNAS w sekcji Credentials > API Keys."
+                }
+            },
+            "migrate": {
+                "title": "Znaleziono istniejącą konfigurację TrueNAS",
+                "description": "Wykryto poprzednią integrację TrueNAS. Możesz przejąć jej ustawienia (host, klucz API i opcje), aby nie wprowadzać ich ponownie — istniejące encje i ich historia zostaną zachowane. Możesz też skonfigurować TrueNAS CE od nowa.",
+                "menu_options": {
+                    "migrate_import": "Przejmij istniejącą konfigurację",
+                    "migrate_manual": "Skonfiguruj od nowa"
+                }
+            },
+            "zeroconf_confirm": {
+                "title": "Wykryto TrueNAS",
+                "description": "Wykryto instancję TrueNAS pod adresem {host}. Czy chcesz ją skonfigurować?"
+            }
+        },
+        "error": {
+            "invalid_key": "Logowanie nie powiodło się, nieprawidłowy klucz API.",
+            "api_key_required": "Klucz API jest wymagany dla nowej konfiguracji. Pozostaw go pusty tylko podczas przejmowania istniejącej konfiguracji.",
+            "proxy_intercepted": "Połączenie zostało przechwycone przez reverse proxy lub portal SSO (np. Cloudflare Access). Skieruj integrację bezpośrednio na host TrueNAS przez sieć LAN/VPN lub wyłącz uwierzytelnianie proxy dla punktu końcowego WebSocket.",
+            "invalid_hostname": "Nieprawidłowy host. Wprowadź tylko nazwę hosta lub adres IP — bez „https://”, ścieżki ani końcowego ukośnika.",
+            "connection_refused": "Połączenie nie powiodło się, połączenie zostało odrzucone.",
+            "handshake_timeout": "Połączenie nie powiodło się, przekroczono limit czasu oczekiwania na odpowiedź handshake.",
+            "api_not_found": "Połączenie nie powiodło się, nie znaleziono API.",
+            "timeout": "Połączenie nie powiodło się, przekroczono limit czasu wywołania API.",
+            "cannot_connect": "Nie udało się połączyć z hostem (port TCP zamknięty lub przekroczono limit czasu).",
+            "malformed_result": "Odpowiedź API jest nieprawidłowa.",
+            "certificate_verify_failed": "Weryfikacja certyfikatu nie powiodła się.",
+            "http_used": "Zwykłe żądanie HTTP zostało wysłane na port HTTPS. Reverse proxy?",
+            "tlsv1_not_supported": "TLSv1 nie jest obsługiwany. Reverse proxy?",
+            "websocket_not_supported": "WebSocket nie jest obsługiwany. Reverse proxy?",
+            "unknown_hostname": "Nieznana nazwa hosta, sprawdź DNS.",
+            "unknown": "Wystąpił nieznany błąd.",
+            "unknown_dataset": "Nieznane ścieżki datasetów: {datasets}. Sprawdź pisownię i spróbuj ponownie.",
+            "passphrase_malformed_line": "Nieprawidłowy wpis hasła (brak „#”) w wierszu: {line}. Każdy wiersz musi mieć format: NazwaDatasetu#Hasło.",
+            "passphrase_empty_value": "Puste hasło jest niedozwolone. Błędny wiersz: {line}. Każdy wiersz musi mieć format: NazwaDatasetu#Hasło.",
+            "passphrase_empty_name": "Pusta nazwa datasetu jest niedozwolona w wierszu: {line}. Każdy wiersz musi mieć format: NazwaDatasetu#Hasło."
+        },
+        "abort": {
+            "already_configured": "Ten host TrueNAS jest już skonfigurowany.",
+            "reconfigure_successful": "Zmiana konfiguracji zakończona pomyślnie.",
+            "reauth_successful": "Ponowne uwierzytelnienie zakończone pomyślnie.",
+            "not_truenas": "Wykryte urządzenie nie wygląda na instancję TrueNAS."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Opcje TrueNAS",
+                "data": {
+                    "poll_interval": "Interwał odpytywania (sekundy)",
+                    "data_unit": "Jednostka rozmiaru danych",
+                    "behaviors": "Zachowanie",
+                    "monitored_groups": "Monitorowane grupy"
+                },
+                "data_description": {
+                    "poll_interval": "Jak często (w sekundach) odpytywać instancję TrueNAS o zaktualizowane dane.",
+                    "data_unit": "Wybierz, czy rozmiary danych mają być wyświetlane w jednostkach dziesiętnych (GB), czy binarnych (GiB).",
+                    "behaviors": "Wybierz, które zachowania mają być aktywne",
+                    "monitored_groups": "Odznacz grupy, których nie używasz, aby zmniejszyć liczbę czujników"
+                }
+            }
+        }
+    },
+    "issues": {
+        "statistics_orphaned": {
+            "title": "Osierocone statystyki TrueNAS",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "Wyczyść osierocone statystyki TrueNAS",
+                        "description": "Liczba statystyk długoterminowych należących do nieistniejących już encji TrueNAS: {count}. Liczba spośród nich, które nadal zawierają zapisane dane: {with_data} — przed usunięciem możesz je sprawdzić w sekcji Narzędzia deweloperskie > Statystyki.\n\n{entities}\n\nWybierz, co zrobić.",
+                        "menu_options": {
+                            "fix": "Usuń osierocone statystyki",
+                            "ignore": "Ignoruj (nie powiadamiaj ponownie)"
+                        }
+                    },
+                    "init_metadata_only": {
+                        "title": "Wyczyść osierocone statystyki TrueNAS",
+                        "description": "Liczba statystyk długoterminowych należących do nieistniejących już encji TrueNAS: {count}. Żadna z nich nie zawiera już zapisanych danych — ich punkty danych zostały dawno usunięte i pozostały tylko puste wiersze metadanych, dlatego nie znajdziesz ich w sekcji Narzędzia deweloperskie > Statystyki.\n\n{entities}\n\nWybierz, co zrobić.",
+                        "menu_options": {
+                            "fix": "Usuń osierocone statystyki",
+                            "ignore": "Ignoruj (nie powiadamiaj ponownie)"
+                        }
+                    }
+                }
+            }
+        },
+        "migration_rollback_available": {
+            "title": "Migracja TrueNAS CE — dostępne wycofanie",
+            "fix_flow": {
+                "step": {
+                    "init": {
+                        "title": "Wycofać migrację TrueNAS CE?",
+                        "description": "TrueNAS Community Edition przejął z poprzedniej integracji TrueNAS encje wraz z ich historią (liczba encji: {count}). Poprzednia integracja jest teraz wyłączona (a nie usunięta). Zachowaj TrueNAS CE lub wycofaj migrację, aby przekazać encje i historię z powrotem do starej integracji. Wycofanie usuwa integrację TrueNAS CE. Jest to możliwe tylko wtedy, gdy stara integracja nadal istnieje.",
+                        "menu_options": {
+                            "rollback": "Wycofaj do poprzedniej integracji",
+                            "ignore": "Zachowaj TrueNAS CE (zamknij)"
+                        }
+                    }
+                }
+            }
+        },
+        "migration_rollback_failed": {
+            "title": "Wycofanie migracji TrueNAS CE nie powiodło się",
+            "description": "Wycofanie migracji TrueNAS CE dla {name} zostało przerwane w trakcie. Integracja może pozostać w niespójnym stanie — sprawdź logi Home Assistanta, aby poznać szczegóły, a następnie spróbuj ponownie nacisnąć przycisk wycofania lub zainstaluj integrację ponownie."
+        }
+    },
+    "exceptions": {
+        "unsupported_action": {
+            "message": "Akcja {action} nie jest obsługiwana przez tę encję TrueNAS ({entity_id})"
+        },
+        "action_failed": {
+            "message": "Akcja TrueNAS {action} nie powiodła się na {host}: {error}"
+        },
+        "run_task_failed": {
+            "message": "Akcja TrueNAS nie powiodła się na {host}: {error}"
+        },
+        "scrub_failed": {
+            "message": "Scrub TrueNAS puli {pool} na {host} nie powiódł się: {error}"
+        },
+        "alert_action_failed": {
+            "message": "Nie udało się wykonać akcji {action} dla alertu {uuid} na {host}: {error}"
+        },
+        "system_update_failed": {
+            "message": "Nie udało się uruchomić aktualizacji systemu TrueNAS na {host}: {error}"
+        },
+        "app_update_failed": {
+            "message": "Nie udało się uruchomić aktualizacji aplikacji TrueNAS {app} na {host}: {error}"
+        },
+        "app_update_job_failed": {
+            "message": "Aktualizacja aplikacji TrueNAS {app} na {host} nie powiodła się: {error}"
+        },
+        "app_update_not_running": {
+            "message": "Aplikacji {app} nie można zaktualizować, gdy jest w stanie {state}; TrueNAS aktualizuje tylko uruchomione aplikacje. Uruchom aplikację i spróbuj ponownie."
+        },
+        "missing_uuid": {
+            "message": "Brak wymaganego parametru: uuid"
+        },
+        "dataset_action_failed": {
+            "message": "Nie udało się wykonać akcji {action} dla datasetu {dataset} na {host}: {reason}"
+        },
+        "dataset_not_encrypted": {
+            "message": "Dataset {dataset} nie jest zaszyfrowany, więc akcja {action} nie jest możliwa"
+        },
+        "missing_passphrase": {
+            "message": "Nie podano ani nie zapisano hasła dla datasetu {dataset}. Najpierw wywołaj passphrase_set lub podaj hasło w wywołaniu akcji."
+        },
+        "unknown_dataset_name": {
+            "message": "Nie można zapisać hasła: nieznana nazwa datasetu"
+        },
+        "config_entry_not_loaded": {
+            "message": "Instancja TrueNAS {entry_id} nie jest załadowana (stan: {state})"
+        },
+        "config_entry_not_found": {
+            "message": "Nie znaleziono instancji TrueNAS {entry_id}"
+        },
+        "no_config_entries": {
+            "message": "Nie skonfigurowano żadnej instancji TrueNAS"
+        },
+        "multiple_config_entries": {
+            "message": "Wiele instancji TrueNAS ({count}); określ config_entry"
+        },
+        "missing_alert_uuid": {
+            "message": "UUID alertu jest wymagany dla akcji {action}"
+        },
+        "missing_dataset_path": {
+            "message": "Parametr dataset_path jest wymagany"
+        },
+        "passphrase_not_found": {
+            "message": "Nie znaleziono zapisanego hasła dla datasetu {dataset}"
+        }
+    },
+    "entity": {
+        "button": {
+            "statistics_cleanup": {
+                "name": "Wyczyść osierocone statystyki"
+            },
+            "migration_rollback": {
+                "name": "Wycofaj migrację"
+            },
+            "system_refresh": {
+                "name": "Odśwież dane"
+            },
+            "scrub_run": {
+                "name": "Uruchom scrub"
+            },
+            "snapshottask_run": {
+                "name": "Uruchom"
+            },
+            "rsync_run": {
+                "name": "Uruchom"
+            },
+            "replication_run": {
+                "name": "Uruchom"
+            },
+            "cloudsync_run": {
+                "name": "Uruchom"
+            },
+            "cronjob_run": {
+                "name": "Uruchom"
+            }
+        },
+        "sensor": {
+            "alerts": {
+                "name": "Alerty",
+                "state_attributes": {
+                    "uuids": {
+                        "name": "UUID alertów"
+                    }
+                }
+            },
+            "system_smb_connections": {
+                "name": "Połączenia SMB"
+            },
+            "system_uptime": {
+                "name": "Czas pracy"
+            },
+            "system_cpu_temperature": {
+                "name": "Temperatura"
+            },
+            "system_load_shortterm": {
+                "name": "Krótkoterminowe obciążenie CPU"
+            },
+            "system_load_midterm": {
+                "name": "Średnioterminowe obciążenie CPU"
+            },
+            "system_load_longterm": {
+                "name": "Długoterminowe obciążenie CPU"
+            },
+            "system_cpu_usage": {
+                "name": "Użycie CPU"
+            },
+            "system_memory_usage": {
+                "name": "Użycie pamięci"
+            },
+            "system_cache_size_arc_value": {
+                "name": "Rozmiar ARC"
+            },
+            "system_memory_total": {
+                "name": "Pamięć całkowita"
+            },
+            "system_memory_free": {
+                "name": "Pamięć wolna"
+            },
+            "pool_free": {
+                "name": "Wolne"
+            },
+            "pool_size": {
+                "name": "Rozmiar"
+            },
+            "pool_allocated": {
+                "name": "Zajęte"
+            },
+            "pool_errors": {
+                "name": "Błędy"
+            },
+            "pool_fragmentation": {
+                "name": "Fragmentacja"
+            },
+            "pool_scrub_start": {
+                "name": "Rozpoczęcie scrubu"
+            },
+            "pool_scrub_end": {
+                "name": "Zakończenie scrubu"
+            },
+            "pool_scrub_state": {
+                "name": "Stan scrubu"
+            },
+            "traffic_rx": {
+                "name": "RX"
+            },
+            "traffic_tx": {
+                "name": "TX"
+            },
+            "ups_charge": {
+                "name": "Naładowanie"
+            },
+            "ups_runtime": {
+                "name": "Pozostały czas pracy"
+            },
+            "ups_load": {
+                "name": "Obciążenie"
+            },
+            "ups_voltage": {
+                "name": "Napięcie"
+            },
+            "ups_current": {
+                "name": "Prąd"
+            },
+            "ups_frequency": {
+                "name": "Częstotliwość"
+            },
+            "ups_temperature": {
+                "name": "Temperatura"
+            },
+            "directoryservices": {
+                "name": "Stan"
+            },
+            "certificate_expiry": {
+                "name": "Czas do wygaśnięcia"
+            },
+            "certificate_expiration_time": {
+                "name": "Czas wygaśnięcia"
+            },
+            "arc_data_hit_percent": {
+                "name": "Współczynnik trafień danych"
+            },
+            "arc_metadata_hit_percent": {
+                "name": "Współczynnik trafień metadanych"
+            },
+            "arc_l2_hit_percent": {
+                "name": "Współczynnik trafień L2 ARC"
+            },
+            "app_stats_cpu": {
+                "name": "CPU"
+            },
+            "app_stats_memory": {
+                "name": "RAM"
+            },
+            "app_stats_network_rx": {
+                "name": "Sieć RX"
+            },
+            "app_stats_network_tx": {
+                "name": "Sieć TX"
+            },
+            "app_stats_blkio_read": {
+                "name": "Odczyt blokowy (I/O)"
+            },
+            "app_stats_blkio_write": {
+                "name": "Zapis blokowy (I/O)"
+            }
+        },
+        "binary_sensor": {
+            "disk_issues": {
+                "name": "Problemy z dyskami/pulami"
+            },
+            "pool_healthy": {
+                "name": "sprawna"
+            },
+            "interface": {
+                "name": "Łącze"
+            },
+            "certificate_expired": {
+                "name": "Wygasł"
+            }
+        },
+        "switch": {
+            "cloudsync_switch": {
+                "name": "Włączone"
+            },
+            "cronjob_switch": {
+                "name": "Włączone"
+            }
+        }
+    },
+    "services": {
+        "cloudsync_run": {
+            "name": "Uruchom cloud sync",
+            "description": "Uruchamia zadanie cloud sync (wskaż czujnik cloud sync)."
+        },
+        "cloudsync_abort": {
+            "name": "Przerwij cloud sync",
+            "description": "Przerywa uruchomione zadanie cloud sync (wskaż czujnik cloud sync)."
+        },
+        "rsync_run": {
+            "name": "Uruchom rsync",
+            "description": "Uruchamia zadanie rsync na żądanie (wskaż czujnik zadania rsync)."
+        },
+        "replication_run": {
+            "name": "Uruchom replikację",
+            "description": "Uruchamia zadanie replikacji na żądanie (wskaż czujnik replikacji)."
+        },
+        "snapshottask_run": {
+            "name": "Uruchom zadanie migawek",
+            "description": "Uruchamia teraz okresowe zadanie migawek (wskaż czujnik zadania migawek). Uwaga: jeśli schemat nazewnictwa zadania ma rozdzielczość tylko do minuty (np. auto-%Y-%m-%d_%H-%M), dwukrotne uruchomienie w tej samej minucie nie powiedzie się w TrueNAS, ponieważ nazwa migawki już istnieje."
+        },
+        "dataset_snapshot": {
+            "name": "Utwórz migawkę datasetu",
+            "description": "Tworzy migawkę ZFS wskazanego datasetu na żądanie. Migawka jest wykonywana natychmiast i otrzymuje nazwę „custom-” z dołączonym znacznikiem czasu, niezależnie od okresowych zadań migawek (wskaż czujnik datasetu)."
+        },
+        "system_reboot": {
+            "name": "Uruchom ponownie TrueNAS",
+            "description": "Uruchamia ponownie system TrueNAS (wskaż czujnik czasu pracy)."
+        },
+        "system_shutdown": {
+            "name": "Wyłącz TrueNAS",
+            "description": "Wyłącza system TrueNAS (wskaż czujnik czasu pracy)."
+        },
+        "system_refresh": {
+            "name": "Odśwież dane TrueNAS",
+            "description": "Wymusza natychmiastowe ponowne odpytanie TrueNAS, aby automatyzacje mogły działać na aktualnych danych bez czekania na następne odpytanie (wskaż czujnik czasu pracy)."
+        },
+        "service_start": {
+            "name": "Uruchom usługę",
+            "description": "Uruchamia usługę TrueNAS (wskaż czujnik binarny usługi)."
+        },
+        "service_stop": {
+            "name": "Zatrzymaj usługę",
+            "description": "Zatrzymuje usługę TrueNAS (wskaż czujnik binarny usługi)."
+        },
+        "service_restart": {
+            "name": "Uruchom ponownie usługę",
+            "description": "Uruchamia ponownie usługę TrueNAS (wskaż czujnik binarny usługi)."
+        },
+        "service_reload": {
+            "name": "Przeładuj usługę",
+            "description": "Przeładowuje usługę TrueNAS (wskaż czujnik binarny usługi)."
+        },
+        "vm_start": {
+            "name": "Uruchom maszynę wirtualną",
+            "description": "Uruchamia maszynę wirtualną (wskaż czujnik binarny maszyny wirtualnej).",
+            "fields": {
+                "overcommit": {
+                    "name": "Nadprzydział pamięci",
+                    "description": "Pozwala uruchomić maszynę wirtualną nawet przy niewystarczającej ilości wolnej pamięci."
+                }
+            }
+        },
+        "vm_stop": {
+            "name": "Zatrzymaj maszynę wirtualną",
+            "description": "Zatrzymuje maszynę wirtualną (wskaż czujnik binarny maszyny wirtualnej).",
+            "fields": {
+                "force": {
+                    "name": "Wymuś",
+                    "description": "Wymusza natychmiastowe wyłączenie zasilania zamiast łagodnego zamknięcia przez ACPI."
+                }
+            }
+        },
+        "vm_restart": {
+            "name": "Uruchom ponownie maszynę wirtualną",
+            "description": "Uruchamia ponownie maszynę wirtualną (wskaż czujnik binarny maszyny wirtualnej)."
+        },
+        "container_start": {
+            "name": "Uruchom kontener",
+            "description": "Uruchamia kontener (instancję Incus; wskaż czujnik binarny kontenera)."
+        },
+        "container_stop": {
+            "name": "Zatrzymaj kontener",
+            "description": "Zatrzymuje kontener (instancję Incus; wskaż czujnik binarny kontenera)."
+        },
+        "container_restart": {
+            "name": "Uruchom ponownie kontener",
+            "description": "Uruchamia ponownie kontener (instancję Incus; wskaż czujnik binarny kontenera)."
+        },
+        "app_start": {
+            "name": "Uruchom aplikację",
+            "description": "Uruchamia aplikację (wskaż czujnik binarny aplikacji)."
+        },
+        "app_stop": {
+            "name": "Zatrzymaj aplikację",
+            "description": "Zatrzymuje aplikację (wskaż czujnik binarny aplikacji)."
+        },
+        "dataset_lock": {
+            "name": "Zablokuj dataset",
+            "description": "Blokuje zaszyfrowany dataset (wskaż czujnik datasetu).",
+            "fields": {
+                "force_umount": {
+                    "name": "Wymuś odmontowanie",
+                    "description": "Wymusza odmontowanie datasetu przed zablokowaniem."
+                }
+            }
+        },
+        "dataset_unlock": {
+            "name": "Odblokuj dataset",
+            "description": "Odblokowuje zaszyfrowany dataset (wskaż czujnik datasetu). Jeśli hasło zostanie pominięte, użyte zostanie hasło zapisane przez passphrase_set (lub w przepływie zmiany konfiguracji). Zgłasza błąd, gdy żadne z nich nie jest dostępne.",
+            "fields": {
+                "passphrase": {
+                    "name": "Hasło",
+                    "description": "Hasło do tego datasetu. Pozostaw puste, aby użyć zapisanego hasła. Uwaga: podana tutaj wartość pojawi się raz w logach debugowania i śladach automatyzacji."
+                },
+                "recursive": {
+                    "name": "Rekurencyjnie",
+                    "description": "Stosuje klucz lub hasło do wszystkich zaszyfrowanych datasetów potomnych."
+                },
+                "force": {
+                    "name": "Wymuś",
+                    "description": "Wymusza odblokowanie, nawet jeśli ścieżka montowania już istnieje i nie jest pusta."
+                }
+            }
+        },
+        "passphrase_set": {
+            "name": "Zapisz hasło datasetu",
+            "description": "Zapisuje hasło wskazanego datasetu we wpisie konfiguracji, dzięki czemu akcję dataset_unlock można wywoływać bez każdorazowego podawania hasła. Hasło jest przechowywane w postaci jawnej obok klucza API w magazynie konfiguracji Home Assistanta. Uwaga: wartość hasła pojawia się raz w logach debugowania podczas wywołania tej akcji.",
+            "fields": {
+                "passphrase": {
+                    "name": "Hasło",
+                    "description": "Hasło do zapisania dla tego datasetu."
+                }
+            }
+        },
+        "passphrase_remove": {
+            "name": "Usuń zapisane hasło datasetu",
+            "description": "Usuwa zapisane hasło datasetu na podstawie jego pełnej ścieżki. Działa zarówno dla aktywnych datasetów, jak i osieroconych wpisów powstałych w wyniku literówki. Po wywołaniu tej akcji dataset_unlock ponownie będzie wymagać pola hasła dla tego datasetu.",
+            "fields": {
+                "dataset_path": {
+                    "name": "Ścieżka datasetu",
+                    "description": "Pełna ścieżka datasetu w zapisanej postaci, np. tank/encrypted lub Backup/PP-Test. Musi odpowiadać kluczowi użytemu podczas zapisywania hasła."
+                },
+                "config_entry": {
+                    "name": "Instancja TrueNAS",
+                    "description": "Instancja TrueNAS (opcjonalnie, domyślnie jedyna/pierwsza instancja)."
+                }
+            }
+        },
+        "passphrase_list": {
+            "name": "Wyświetl zapisane hasła datasetów",
+            "description": "Zwraca nazwy datasetów, dla których zapisano hasło. Same hasła nigdy nie są zwracane w odpowiedzi.",
+            "fields": {
+                "config_entry": {
+                    "name": "Instancja TrueNAS",
+                    "description": "Instancja TrueNAS (opcjonalnie, domyślnie jedyna/pierwsza instancja)."
+                }
+            }
+        },
+        "alert_dismiss": {
+            "name": "Odrzuć alert",
+            "description": "Odrzuca alert TrueNAS na podstawie UUID.",
+            "fields": {
+                "config_entry": {
+                    "name": "Instancja TrueNAS",
+                    "description": "Instancja TrueNAS (opcjonalnie, domyślnie jedyna/pierwsza instancja)."
+                },
+                "uuid": {
+                    "name": "UUID alertu",
+                    "description": "UUID alertu do odrzucenia (widoczny w odpowiedzi alert_list)."
+                }
+            }
+        },
+        "alert_restore": {
+            "name": "Przywróć alert",
+            "description": "Przywraca (cofa odrzucenie) alert TrueNAS na podstawie UUID.",
+            "fields": {
+                "config_entry": {
+                    "name": "Instancja TrueNAS",
+                    "description": "Instancja TrueNAS (opcjonalnie, domyślnie jedyna/pierwsza instancja)."
+                },
+                "uuid": {
+                    "name": "UUID alertu",
+                    "description": "UUID wcześniej odrzuconego alertu do przywrócenia."
+                }
+            }
+        },
+        "alert_list": {
+            "name": "Wyświetl alerty",
+            "description": "Wyświetla wszystkie alerty TrueNAS wraz z UUID i sformatowanymi komunikatami.",
+            "fields": {
+                "config_entry": {
+                    "name": "Instancja TrueNAS",
+                    "description": "Instancja TrueNAS (opcjonalnie, domyślnie jedyna/pierwsza instancja)."
+                },
+                "properties": {
+                    "name": "Właściwości do uwzględnienia",
+                    "description": "Lista właściwości rozdzielona przecinkami (np. „uuid,formatted,level”). Użyj „*”, aby uwzględnić wszystkie właściwości."
+                }
+            }
+        }
+    }
+}
