@@ -401,11 +401,19 @@ async def test_private_query_returns_errname_per_call(
     connected_api._client.call.side_effect = TrueNASCallError(
         "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
     )
-    assert await connected_api._query("smb.status") == (None, "EACCES")
+    assert await connected_api._query("smb.status") == (
+        None,
+        "[EACCES] Not authorized",
+        "EACCES",
+    )
 
     connected_api._client.connected = False
     connected_api._client.connect.side_effect = TrueNASConnectionRefusedError("down")
-    assert await connected_api._query("system.info") == (None, "")
+    assert await connected_api._query("system.info") == (
+        None,
+        ERR_CONNECTION_REFUSED,
+        "",
+    )
     assert connected_api.error == ERR_CONNECTION_REFUSED
 
 
@@ -413,14 +421,14 @@ async def test_private_query_success_returns_empty_errname(
     connected_api: TrueNASAPI,
 ) -> None:
     connected_api._client.call.return_value = {"ok": True}
-    assert await connected_api._query("system.info") == ({"ok": True}, "")
+    assert await connected_api._query("system.info") == ({"ok": True}, "", "")
 
 
 async def test_private_query_non_call_error_returns_empty_errname(
     connected_api: TrueNASAPI,
 ) -> None:
     connected_api._client.call.side_effect = TrueNASCallTimeoutError("slow")
-    assert await connected_api._query("system.info") == (None, "")
+    assert await connected_api._query("system.info") == (None, ERR_TIMEOUT, "")
     assert connected_api.error == ERR_TIMEOUT
 
 
@@ -428,7 +436,7 @@ async def test_private_query_call_error_without_errname_returns_empty_string(
     connected_api: TrueNASAPI,
 ) -> None:
     connected_api._client.call.side_effect = TrueNASCallError("boom", reason="x")
-    assert await connected_api._query("system.info") == (None, "")
+    assert await connected_api._query("system.info") == (None, "x", "")
 
 
 async def test_connection_test_not_fooled_by_concurrent_eacces(
@@ -437,10 +445,12 @@ async def test_connection_test_not_fooled_by_concurrent_eacces(
     """An EACCES of a query overlapping system.info must not be reported as
     the connection test's permission error when system.info fails otherwise.
     """
+    started = asyncio.Event()
     release = asyncio.Event()
 
     async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
         if service == "system.info":
+            started.set()
             await release.wait()
             raise TrueNASCallTimeoutError("slow")
         raise TrueNASCallError(
@@ -452,10 +462,36 @@ async def test_connection_test_not_fooled_by_concurrent_eacces(
 
     connected_api._client.call.side_effect = fake_call
     test_task = asyncio.create_task(connected_api.connection_test())
-    await asyncio.sleep(0)
+    await started.wait()
     assert await connected_api.query("smb.status") is None
     release.set()
     assert await test_task == (False, ERR_TIMEOUT)
+    assert connected_api.error == ERR_TIMEOUT
+
+
+async def test_connection_test_not_fooled_by_concurrent_call_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A call error of a query overlapping system.info must not replace the
+    connection test's own malformed-result error.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
+        if service == "system.info":
+            started.set()
+            await release.wait()
+            return {"version": "25.04"}
+        raise TrueNASCallError("boom", reason="unrelated failure")
+
+    connected_api._client.call.side_effect = fake_call
+    test_task = asyncio.create_task(connected_api.connection_test())
+    await started.wait()
+    assert await connected_api.query("smb.status") is None
+    release.set()
+    assert await test_task == (False, ERR_MALFORMED_RESULT)
+    assert connected_api.error == ERR_MALFORMED_RESULT
 
 
 # ---------------------------

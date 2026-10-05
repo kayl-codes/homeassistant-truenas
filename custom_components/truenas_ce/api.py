@@ -2,7 +2,7 @@
 
 import asyncio
 from logging import DEBUG, ERROR, getLogger
-from typing import Any
+from typing import Any, NamedTuple
 
 from aiotruenas import TrueNASClient
 from aiotruenas.exceptions import (
@@ -50,6 +50,20 @@ _LOGGER = getLogger(__name__)
 # Full payloads can be huge (e.g. pool.query with topology or app.query), so
 # they are summarized and truncated to keep debug logs readable.
 _LOG_PAYLOAD_LIMIT = 5000
+
+
+class _CallResult(NamedTuple):
+    """Outcome of a single ``_query`` call.
+
+    ``error`` and ``errname`` belong to this call only (both "" on
+    success), unlike ``TrueNASAPI.error``, which concurrent queries on the
+    shared instance overwrite.
+    """
+
+    data: Any
+    error: str
+    errname: str
+
 
 # aiotruenas exception -> ERR_* mapping (see const.py). Order matters: more
 # specific subclasses must be checked before their base classes, so this is
@@ -254,14 +268,14 @@ class TrueNASAPI:
         if not await self.connect():
             return self.connected(), self._error
 
-        result, errname = await self._query("system.info")
+        result, error, errname = await self._query("system.info")
         if not isinstance(result, dict) or not result.get("hostname"):
             if errname == "EACCES":
                 # Login worked, but the key's user lacks a role that may read
                 # system.info -- say so instead of the raw TrueNAS reason,
                 # which the config flow could only show as "unknown".
-                self._error = ERR_PERMISSION_DENIED
-            self._error = self._error or ERR_MALFORMED_RESULT
+                error = ERR_PERMISSION_DENIED
+            self._error = error or ERR_MALFORMED_RESULT
             return False, self._error
 
         return True, ""
@@ -282,8 +296,7 @@ class TrueNASAPI:
         the job to finish and returns its result (or ``None`` on failure)
         instead of the bare job id.
         """
-        data, _errname = await self._query(service, params, job=job)
-        return data
+        return (await self._query(service, params, job=job)).data
 
     async def _query(
         self,
@@ -291,15 +304,18 @@ class TrueNASAPI:
         params: dict[str, Any] | list[Any] | None = None,
         *,
         job: bool = False,
-    ) -> tuple[Any, str]:
-        """Run ``query`` and also return the failed call's errname.
+    ) -> _CallResult:
+        """Run ``query`` and also return this call's error and errname.
 
-        The errname (e.g. "EACCES", "" on success or non-call errors) is
-        returned rather than stored on the instance, so concurrent queries
-        on the shared API can never overwrite it for connection_test.
+        Both are returned rather than only stored on the instance, so
+        concurrent queries on the shared API can never overwrite them for
+        connection_test. The errname is e.g. "EACCES" for a failed call and
+        "" on success or non-call errors.
         """
         if not self.connected() and not await self.connect():
-            return None, ""
+            # connect() set self._error right before returning, with no await
+            # in between, so no other query can have overwritten it yet.
+            return _CallResult(None, self._error, "")
 
         self._error = ""
         _LOGGER.debug("TrueNAS %s query: %s, %s", self._host, service, params)
@@ -312,7 +328,7 @@ class TrueNASAPI:
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
             _log_call_error(self._host, service, exc)
-            return None, exc.errname or ""
+            return _CallResult(None, self._error, exc.errname or "")
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
             _LOGGER.warning(
@@ -321,7 +337,7 @@ class TrueNASAPI:
                 service,
                 exc,
             )
-            return None, ""
+            return _CallResult(None, self._error, "")
 
         if _LOGGER.isEnabledFor(DEBUG):
             _LOGGER.debug(
@@ -331,7 +347,7 @@ class TrueNASAPI:
                 _summarize_payload(data),
             )
 
-        return data, ""
+        return _CallResult(data, "", "")
 
     # ---------------------------
     #   subscribe_events
