@@ -11,12 +11,14 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 
-from custom_components.truenas_ce import config_flow
+from custom_components.truenas_ce import config_flow, const
 from custom_components.truenas_ce.config_flow import (
     TrueNASConfigFlow,
     _base_schema,
@@ -28,6 +30,8 @@ from custom_components.truenas_ce.const import (
     ERR_CERT_VERIFY_FAILED,
     ERR_CONNECTION_REFUSED,
     ERR_INVALID_KEY,
+    ERR_LOST_LOGIN,
+    ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
     ERR_TIMEOUT,
     LEGACY_DOMAIN,
@@ -120,6 +124,44 @@ def test_map_error_to_ha_known_error_passthrough() -> None:
     assert _map_error_to_ha(ERR_INVALID_KEY) == ERR_INVALID_KEY
     assert _map_error_to_ha(ERR_CERT_VERIFY_FAILED) == ERR_CERT_VERIFY_FAILED
     assert _map_error_to_ha(ERR_TIMEOUT) == ERR_TIMEOUT
+    assert _map_error_to_ha(ERR_LOST_LOGIN) == ERR_LOST_LOGIN
+    assert _map_error_to_ha(ERR_LOST_QUERY) == ERR_LOST_QUERY
+
+
+# Codes that never reach _map_error_to_ha as an API error: ERR_UNKNOWN is the
+# API's own catch-all (deliberately mapped to "unknown"), ERR_API_KEY_REQUIRED
+# is set directly by the config flow on the API-key field.
+_NOT_MAPPED_ERR_CODES = {const.ERR_UNKNOWN, const.ERR_API_KEY_REQUIRED}
+
+
+def _config_error_strings(relative_path: str) -> dict[str, str]:
+    path = Path(const.__file__).parent / relative_path
+    return json.loads(path.read_text(encoding="utf-8"))["config"]["error"]
+
+
+@pytest.mark.parametrize("strings_file", ["strings.json", "translations/en.json"])
+def test_every_api_err_code_is_mapped_and_translated(strings_file: str) -> None:
+    """Guard against a new ERR_* code silently degrading to "unknown".
+
+    ERR_TIMEOUT (#128) and ERR_LOST_LOGIN/ERR_LOST_QUERY were each added to
+    const.py without being added to _map_error_to_ha, so the config flow
+    showed "Unknown error occurred." instead of the real cause. en.json is
+    checked as well because a custom integration loads translations/*.json
+    at runtime, not strings.json.
+    """
+    error_strings = _config_error_strings(strings_file)
+    codes = {
+        value
+        for name, value in vars(const).items()
+        if name.startswith("ERR_") and isinstance(value, str)
+    }
+    assert codes
+    assert _map_error_to_ha(const.ERR_UNKNOWN) == "unknown"
+    assert "unknown" in error_strings
+    for code in sorted(codes - {const.ERR_UNKNOWN}):
+        assert code in error_strings, code
+        if code not in _NOT_MAPPED_ERR_CODES:
+            assert _map_error_to_ha(code) == code, code
 
 
 def test_map_error_to_ha_unknown_error_falls_back() -> None:

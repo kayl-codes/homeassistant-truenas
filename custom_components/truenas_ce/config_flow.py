@@ -55,6 +55,8 @@ from .const import (
     ERR_HTTP_USED,
     ERR_INVALID_HOSTNAME,
     ERR_INVALID_KEY,
+    ERR_LOST_LOGIN,
+    ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
     ERR_PROXY_INTERCEPTED,
     ERR_TIMEOUT,
@@ -274,6 +276,8 @@ def _map_error_to_ha(errorcode: str) -> str:
         ERR_API_NOT_FOUND,
         ERR_MALFORMED_RESULT,
         ERR_TIMEOUT,
+        ERR_LOST_LOGIN,
+        ERR_LOST_QUERY,
     }
     return errorcode if errorcode in valid_errors else "unknown"
 

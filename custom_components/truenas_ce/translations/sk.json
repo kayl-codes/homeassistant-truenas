@@ -71,6 +71,8 @@
             "handshake_timeout": "Pripojenie zlyhalo, počas čakania na odpoveď na podanie ruky došlo k časovému oneskoreniu.",
             "api_not_found": "Pripojenie zlyhalo, API sa nenašlo.",
             "timeout": "Pripojenie zlyhalo, vypršal časový limit volania API.",
+            "connection_lost_mid_login": "Pripojenie zlyhalo, TrueNAS ukončil spojenie počas prihlasovania.",
+            "connection_lost_mid_query": "Pripojenie zlyhalo, TrueNAS ukončil spojenie počas volania API.",
             "cannot_connect": "Nepodarilo sa pripojiť k hostiteľovi (TCP port zatvorený alebo časový limit).",
             "malformed_result": "Odpoveď API je chybná.",
             "certificate_verify_failed": "Overenie certifikátu zlyhalo.",
