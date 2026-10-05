@@ -9,6 +9,8 @@ network I/O happens.
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -392,21 +394,68 @@ async def test_connection_test_ignores_stale_eacces_from_earlier_query(
     assert error == ERR_MALFORMED_RESULT
 
 
-async def test_query_failed_reconnect_clears_stale_eacces(
+async def test_private_query_returns_errname_per_call(
     connected_api: TrueNASAPI,
 ) -> None:
-    """A query that cannot reconnect must not keep an earlier call's EACCES."""
+    """Each _query call reports only its own errname."""
     connected_api._client.call.side_effect = TrueNASCallError(
         "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
     )
-    assert await connected_api.query("smb.status") is None
-    assert connected_api._call_errname == "EACCES"
+    assert await connected_api._query("smb.status") == (None, "EACCES")
 
     connected_api._client.connected = False
     connected_api._client.connect.side_effect = TrueNASConnectionRefusedError("down")
-    assert await connected_api.query("system.info") is None
-    assert connected_api._call_errname == ""
+    assert await connected_api._query("system.info") == (None, "")
     assert connected_api.error == ERR_CONNECTION_REFUSED
+
+
+async def test_private_query_success_returns_empty_errname(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.return_value = {"ok": True}
+    assert await connected_api._query("system.info") == ({"ok": True}, "")
+
+
+async def test_private_query_non_call_error_returns_empty_errname(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallTimeoutError("slow")
+    assert await connected_api._query("system.info") == (None, "")
+    assert connected_api.error == ERR_TIMEOUT
+
+
+async def test_private_query_call_error_without_errname_returns_empty_string(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="x")
+    assert await connected_api._query("system.info") == (None, "")
+
+
+async def test_connection_test_not_fooled_by_concurrent_eacces(
+    connected_api: TrueNASAPI,
+) -> None:
+    """An EACCES of a query overlapping system.info must not be reported as
+    the connection test's permission error when system.info fails otherwise.
+    """
+    release = asyncio.Event()
+
+    async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
+        if service == "system.info":
+            await release.wait()
+            raise TrueNASCallTimeoutError("slow")
+        raise TrueNASCallError(
+            "Not authorized",
+            code=13,
+            errname="EACCES",
+            reason="[EACCES] Not authorized",
+        )
+
+    connected_api._client.call.side_effect = fake_call
+    test_task = asyncio.create_task(connected_api.connection_test())
+    await asyncio.sleep(0)
+    assert await connected_api.query("smb.status") is None
+    release.set()
+    assert await test_task == (False, ERR_TIMEOUT)
 
 
 # ---------------------------
@@ -423,8 +472,10 @@ async def test_query_returns_data_on_success(connected_api: TrueNASAPI) -> None:
 
 
 async def test_query_job_waits_for_job_result(connected_api: TrueNASAPI) -> None:
-    connected_api._client.call.return_value = None
-    assert await connected_api.query("container.stop", [1], job=True) is None
+    connected_api._client.call.return_value = {"state": "SUCCESS"}
+    assert await connected_api.query("container.stop", [1], job=True) == {
+        "state": "SUCCESS"
+    }
     connected_api._client.call.assert_awaited_once_with("container.stop", [1], job=True)
 
 

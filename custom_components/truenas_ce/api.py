@@ -176,9 +176,6 @@ class TrueNASAPI:
         self._host = host
         self._scheme = scheme
         self._error = ""
-        # errname of the last failed call (e.g. "EACCES"), so connection_test
-        # can tell a key without the needed role from other call errors.
-        self._call_errname = ""
         self._closed = False
         self._client = TrueNASClient(
             host,
@@ -257,9 +254,9 @@ class TrueNASAPI:
         if not await self.connect():
             return self.connected(), self._error
 
-        result = await self.query("system.info")
+        result, errname = await self._query("system.info")
         if not isinstance(result, dict) or not result.get("hostname"):
-            if self._call_errname == "EACCES":
+            if errname == "EACCES":
                 # Login worked, but the key's user lacks a role that may read
                 # system.info -- say so instead of the raw TrueNAS reason,
                 # which the config flow could only show as "unknown".
@@ -285,11 +282,24 @@ class TrueNASAPI:
         the job to finish and returns its result (or ``None`` on failure)
         instead of the bare job id.
         """
-        # Reset before connecting, so a failed reconnect never leaves the
-        # errname of an earlier call behind for connection_test to misread.
-        self._call_errname = ""
+        data, _errname = await self._query(service, params, job=job)
+        return data
+
+    async def _query(
+        self,
+        service: str,
+        params: dict[str, Any] | list[Any] | None = None,
+        *,
+        job: bool = False,
+    ) -> tuple[Any, str]:
+        """Run ``query`` and also return the failed call's errname.
+
+        The errname (e.g. "EACCES", "" on success or non-call errors) is
+        returned rather than stored on the instance, so concurrent queries
+        on the shared API can never overwrite it for connection_test.
+        """
         if not self.connected() and not await self.connect():
-            return None
+            return None, ""
 
         self._error = ""
         _LOGGER.debug("TrueNAS %s query: %s, %s", self._host, service, params)
@@ -301,9 +311,8 @@ class TrueNASAPI:
                 data = await self._client.call(service, params)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
-            self._call_errname = exc.errname or ""
             _log_call_error(self._host, service, exc)
-            return None
+            return None, exc.errname or ""
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
             _LOGGER.warning(
@@ -312,7 +321,7 @@ class TrueNASAPI:
                 service,
                 exc,
             )
-            return None
+            return None, ""
 
         if _LOGGER.isEnabledFor(DEBUG):
             _LOGGER.debug(
@@ -322,7 +331,7 @@ class TrueNASAPI:
                 _summarize_payload(data),
             )
 
-        return data
+        return data, ""
 
     # ---------------------------
     #   subscribe_events
