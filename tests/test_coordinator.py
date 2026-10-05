@@ -15,6 +15,7 @@ used for ``TrueNASConfigFlow``.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -77,8 +78,8 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
-    coord._version_major = 0
-    coord._version_minor = 0
+    coord._version = None
+    coord._version_parse_warned = False
     coord._poisoned_certificate_commons = set()
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._job_failing = set()
@@ -245,18 +246,89 @@ def test_parse_version_extracts_major_minor() -> None:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {"version": "TrueNAS-SCALE-25.04.1"}}
     coord._parse_version()
-    assert coord._version_major == 25
-    assert coord._version_minor == 4
+    assert coord._version == (25, 4)
 
 
-def test_parse_version_leaves_unset_on_no_match() -> None:
+@pytest.mark.parametrize("version", ["not-a-version-string", "unknown", "", None])
+def test_parse_version_unparseable_stays_unknown_and_warns_once(
+    version: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
     coord = _bare_coordinator()
-    coord.ds = {"system_info": {"version": "not-a-version-string"}}
-    coord._version_major = 0
-    coord._version_minor = 0
-    coord._parse_version()
-    assert coord._version_major == 0
-    assert coord._version_minor == 0
+    coord.ds = {"system_info": {"version": version}}
+    with caplog.at_level(logging.WARNING):
+        coord._parse_version()
+        coord._parse_version()
+    assert coord._version is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "assuming the newest API for update" in warnings[0].getMessage()
+
+
+def test_parse_version_keeps_last_known_on_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    coord = _bare_coordinator()
+    coord._version = (25, 10)
+    coord.ds = {"system_info": {"version": "garbage"}}
+    with caplog.at_level(logging.WARNING):
+        coord._parse_version()
+    assert coord._version == (25, 10)
+    assert "keeping the last known version 25.10" in caplog.text
+    # The last known version keeps driving the gates -- no fail-forward.
+    assert coord.supports_update_run() is True
+    assert coord.supports_container_api() is False
+    assert coord.supports_service_control() is False
+
+
+def test_parse_version_success_rearms_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "garbage"}}
+    with caplog.at_level(logging.INFO):
+        coord._parse_version()
+        coord.ds = {"system_info": {"version": "26.0.1"}}
+        coord._parse_version()
+        assert coord._version == (26, 0)
+        coord.ds = {"system_info": {"version": "garbage"}}
+        coord._parse_version()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert "keeping the last known version 26.0" in warnings[1].getMessage()
+    assert "TrueNAS version detection recovered: 26.0" in caplog.text
+    assert coord._version == (26, 0)
+
+
+def test_parse_version_success_without_prior_failure_logs_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {"version": "25.10.1"}}
+    with caplog.at_level(logging.INFO):
+        coord._parse_version()
+    assert coord._version == (25, 10)
+    assert "recovered" not in caplog.text
+
+
+def test_version_gates_when_version_unknown() -> None:
+    coord = _bare_coordinator()
+    coord._version = None
+    assert coord.supports_update_run() is True
+    assert coord.supports_service_control() is True
+    # Containers follow aiotruenas' own legacy fallback for an unknown version.
+    assert coord.supports_container_api() is False
+
+
+def test_supports_update_run_from_25_10() -> None:
+    coord = _bare_coordinator()
+    coord._version = (25, 4)
+    assert coord.supports_update_run() is False
+    coord._version = (25, 10)
+    assert coord.supports_update_run() is True
+    coord._version = (26, 0)
+    assert coord.supports_update_run() is True
+    coord._version = (24, 10)
+    assert coord.supports_update_run() is False
 
 
 # ---------------------------
@@ -2000,6 +2072,9 @@ async def test_init_seeds_connection_failing_from_hass_data() -> None:
 
     assert coord._connection_failing is True
     assert coord._connection_failing_error == "ERR_LOST_QUERY"
+    # A fresh coordinator starts with an unknown version, not a fake (0, 0).
+    assert coord._version is None
+    assert coord._version_parse_warned is False
 
 
 def test_clear_persisted_connection_failing_removes_entry() -> None:
@@ -2687,8 +2762,30 @@ async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
 
     assert coord.ds["system_info"]["hostname"] == "nas1"
     assert coord.ds["system_info"]["update_version"] == "TrueNAS-SCALE-25.04.1"
-    assert coord._version_major == 25
+    assert coord._version == (25, 4)
     coord._handle_update_job.assert_awaited_once()
+
+
+async def test_get_systeminfo_keeps_last_known_version_on_missing_version(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"system_info": {}, "interface": {}}
+    coord._version = (25, 10)
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.state = MagicMock()
+    coord.state.get_systeminfo = AsyncMock(
+        return_value={"version": "unknown", "hostname": "nas1"}
+    )
+    coord._handle_update_job = AsyncMock()
+
+    with caplog.at_level(logging.WARNING):
+        await coord.get_systeminfo()
+
+    assert coord._version == (25, 10)
+    assert coord.supports_container_api() is False
+    assert "keeping the last known version 25.10" in caplog.text
 
 
 async def test_get_systeminfo_carries_forward_update_fields() -> None:
@@ -3584,17 +3681,17 @@ async def test_refresh_container_delegates_to_state() -> None:
 
 def test_supports_container_api_from_26() -> None:
     coord = _bare_coordinator()
-    coord._version_major, coord._version_minor = 25, 10
+    coord._version = (25, 10)
     assert coord.supports_container_api() is False
-    coord._version_major, coord._version_minor = 26, 0
+    coord._version = (26, 0)
     assert coord.supports_container_api() is True
 
 
 def test_supports_service_control_from_26() -> None:
     coord = _bare_coordinator()
-    coord._version_major, coord._version_minor = 25, 10
+    coord._version = (25, 10)
     assert coord.supports_service_control() is False
-    coord._version_major, coord._version_minor = 26, 0
+    coord._version = (26, 0)
     assert coord.supports_service_control() is True
 
 
@@ -3616,7 +3713,7 @@ async def test_get_container_ensures_push_subscription_legacy_topic() -> None:
     coord.ds = {"container": {}}
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
-    coord._version_major, coord._version_minor = 25, 10
+    coord._version = (25, 10)
     coord.hass = _hass_with_background_tasks()
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
@@ -3636,7 +3733,7 @@ async def test_get_container_ensures_push_subscription_v26_topic() -> None:
     coord.ds = {"container": {}}
     coord.config_entry = MagicMock()
     coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
-    coord._version_major, coord._version_minor = 26, 0
+    coord._version = (26, 0)
     coord.hass = _hass_with_background_tasks()
     coord.api = MagicMock()
     coord.api.connected = MagicMock(return_value=True)
@@ -3651,10 +3748,29 @@ async def test_get_container_ensures_push_subscription_v26_topic() -> None:
     await coord._container_push.consumer.stop()
 
 
+async def test_get_container_unknown_version_uses_legacy_topic() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"container": {}}
+    coord.config_entry = MagicMock()
+    coord.config_entry.options = {CONF_MONITORED_GROUPS: [MONITOR_GROUP_CONTAINERS]}
+    coord._version = None
+    coord.hass = _hass_with_background_tasks()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord.state = MagicMock()
+    coord.state.get_container = AsyncMock(return_value={})
+    coord.api.subscribe_events = AsyncMock(return_value=("sub-1", asyncio.Queue()))
+
+    await coord.get_container()
+
+    coord.api.subscribe_events.assert_awaited_once_with("virt.instance.query")
+    await coord._container_push.consumer.stop()
+
+
 async def test_on_container_push_refreshes_and_notifies() -> None:
     coord = _bare_coordinator()
     coord.ds = {"container": {}}
-    coord._version_major, coord._version_minor = 25, 10
+    coord._version = (25, 10)
     coord.state = MagicMock()
     coord.state.get_container = AsyncMock(return_value={"c1": {"running": True}})
     coord.async_set_updated_data = MagicMock()
