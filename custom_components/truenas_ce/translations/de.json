@@ -73,6 +73,7 @@
             "timeout": "Verbindung fehlgeschlagen, der API-Aufruf hat das Zeitlimit überschritten.",
             "connection_lost_mid_login": "Verbindung fehlgeschlagen, TrueNAS hat die Verbindung während der Anmeldung geschlossen.",
             "connection_lost_mid_query": "Verbindung fehlgeschlagen, TrueNAS hat die Verbindung während eines API-Aufrufs geschlossen.",
+            "permission_denied": "Anmeldung erfolgreich, aber der Benutzer des API-Schlüssels darf die Systeminformationen nicht lesen. Weise diesem Benutzer in TrueNAS mindestens das Privileg „Read-Only Administrator“ zu.",
             "cannot_connect": "Verbindung zum Host fehlgeschlagen (TCP-Port geschlossen oder Zeitüberschreitung).",
             "malformed_result": "Die API-Antwort ist fehlerhaft.",
             "certificate_verify_failed": "Zertifikatsprüfung fehlgeschlagen.",

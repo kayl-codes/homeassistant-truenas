@@ -73,6 +73,7 @@
             "timeout": "Pripojenie zlyhalo, vypršal časový limit volania API.",
             "connection_lost_mid_login": "Pripojenie zlyhalo, TrueNAS ukončil spojenie počas prihlasovania.",
             "connection_lost_mid_query": "Pripojenie zlyhalo, TrueNAS ukončil spojenie počas volania API.",
+            "permission_denied": "Prihlásenie bolo úspešné, ale používateľ kľúča API nemá oprávnenie čítať informácie o systéme. Priraďte tomuto používateľovi v TrueNAS aspoň oprávnenie Read-Only Administrator.",
             "cannot_connect": "Nepodarilo sa pripojiť k hostiteľovi (TCP port zatvorený alebo časový limit).",
             "malformed_result": "Odpoveď API je chybná.",
             "certificate_verify_failed": "Overenie certifikátu zlyhalo.",

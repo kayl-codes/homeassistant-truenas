@@ -58,6 +58,7 @@ from .const import (
     ERR_LOST_LOGIN,
     ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
+    ERR_PERMISSION_DENIED,
     ERR_PROXY_INTERCEPTED,
     ERR_TIMEOUT,
     ERR_TLS_NOT_SUPPORTED,
@@ -278,6 +279,7 @@ def _map_error_to_ha(errorcode: str) -> str:
         ERR_TIMEOUT,
         ERR_LOST_LOGIN,
         ERR_LOST_QUERY,
+        ERR_PERMISSION_DENIED,
     }
     return errorcode if errorcode in valid_errors else "unknown"
 
