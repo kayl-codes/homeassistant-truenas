@@ -37,6 +37,7 @@ from custom_components.truenas_ce.const import (
     ERR_LOST_LOGIN,
     ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
+    ERR_PERMISSION_DENIED,
     ERR_TIMEOUT,
     ERR_UNKNOWN,
     ERR_UNKNOWN_HOSTNAME,
@@ -345,6 +346,67 @@ async def test_connection_test_fails_when_hostname_missing(
     ok, error = await connected_api.connection_test()
     assert ok is False
     assert error == ERR_MALFORMED_RESULT
+
+
+async def test_connection_test_eacces_maps_to_permission_denied(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A key whose user lacks a role for system.info gets a specific error,
+
+    not the raw TrueNAS reason that the config flow can only show as
+    "unknown".
+    """
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
+    )
+    ok, error = await connected_api.connection_test()
+    assert ok is False
+    assert error == ERR_PERMISSION_DENIED
+    assert connected_api.error == ERR_PERMISSION_DENIED
+
+
+async def test_connection_test_other_call_error_keeps_reason(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "boom", code=22, errname="EINVAL", reason="bad params"
+    )
+    ok, error = await connected_api.connection_test()
+    assert ok is False
+    assert error == "bad params"
+
+
+async def test_connection_test_ignores_stale_eacces_from_earlier_query(
+    connected_api: TrueNASAPI,
+) -> None:
+    """An EACCES from an earlier query must not leak into a later test result."""
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
+    )
+    assert await connected_api.query("smb.status") is None
+
+    connected_api._client.call.side_effect = None
+    connected_api._client.call.return_value = {"version": "25.04"}
+    ok, error = await connected_api.connection_test()
+    assert ok is False
+    assert error == ERR_MALFORMED_RESULT
+
+
+async def test_query_failed_reconnect_clears_stale_eacces(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A query that cannot reconnect must not keep an earlier call's EACCES."""
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "Not authorized", code=13, errname="EACCES", reason="[EACCES] Not authorized"
+    )
+    assert await connected_api.query("smb.status") is None
+    assert connected_api._call_errname == "EACCES"
+
+    connected_api._client.connected = False
+    connected_api._client.connect.side_effect = TrueNASConnectionRefusedError("down")
+    assert await connected_api.query("system.info") is None
+    assert connected_api._call_errname == ""
+    assert connected_api.error == ERR_CONNECTION_REFUSED
 
 
 # ---------------------------

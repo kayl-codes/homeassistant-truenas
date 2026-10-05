@@ -34,6 +34,7 @@ from .const import (
     ERR_LOST_LOGIN,
     ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
+    ERR_PERMISSION_DENIED,
     ERR_PROXY_INTERCEPTED,
     ERR_TIMEOUT,
     ERR_TLS_NOT_SUPPORTED,
@@ -175,6 +176,9 @@ class TrueNASAPI:
         self._host = host
         self._scheme = scheme
         self._error = ""
+        # errname of the last failed call (e.g. "EACCES"), so connection_test
+        # can tell a key without the needed role from other call errors.
+        self._call_errname = ""
         self._closed = False
         self._client = TrueNASClient(
             host,
@@ -255,6 +259,11 @@ class TrueNASAPI:
 
         result = await self.query("system.info")
         if not isinstance(result, dict) or not result.get("hostname"):
+            if self._call_errname == "EACCES":
+                # Login worked, but the key's user lacks a role that may read
+                # system.info -- say so instead of the raw TrueNAS reason,
+                # which the config flow could only show as "unknown".
+                self._error = ERR_PERMISSION_DENIED
             self._error = self._error or ERR_MALFORMED_RESULT
             return False, self._error
 
@@ -276,6 +285,9 @@ class TrueNASAPI:
         the job to finish and returns its result (or ``None`` on failure)
         instead of the bare job id.
         """
+        # Reset before connecting, so a failed reconnect never leaves the
+        # errname of an earlier call behind for connection_test to misread.
+        self._call_errname = ""
         if not self.connected() and not await self.connect():
             return None
 
@@ -289,6 +301,7 @@ class TrueNASAPI:
                 data = await self._client.call(service, params)
         except TrueNASCallError as exc:
             self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            self._call_errname = exc.errname or ""
             _log_call_error(self._host, service, exc)
             return None
         except TrueNASError as exc:

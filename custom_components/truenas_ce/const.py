@@ -60,6 +60,7 @@ ERR_TIMEOUT = "timeout"
 ERR_MALFORMED_RESULT = "malformed_result"
 ERR_LOST_LOGIN = "connection_lost_mid_login"
 ERR_LOST_QUERY = "connection_lost_mid_query"
+ERR_PERMISSION_DENIED = "permission_denied"
 ERR_UNKNOWN = "unknown_error"
 
 # need for ha ip dns validation, to avoid false positives

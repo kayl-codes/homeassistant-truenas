@@ -33,6 +33,7 @@ from custom_components.truenas_ce.const import (
     ERR_LOST_LOGIN,
     ERR_LOST_QUERY,
     ERR_MALFORMED_RESULT,
+    ERR_PERMISSION_DENIED,
     ERR_TIMEOUT,
     LEGACY_DOMAIN,
 )
@@ -126,6 +127,7 @@ def test_map_error_to_ha_known_error_passthrough() -> None:
     assert _map_error_to_ha(ERR_TIMEOUT) == ERR_TIMEOUT
     assert _map_error_to_ha(ERR_LOST_LOGIN) == ERR_LOST_LOGIN
     assert _map_error_to_ha(ERR_LOST_QUERY) == ERR_LOST_QUERY
+    assert _map_error_to_ha(ERR_PERMISSION_DENIED) == ERR_PERMISSION_DENIED
 
 
 # Codes that never reach _map_error_to_ha as an API error: ERR_UNKNOWN is the

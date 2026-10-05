@@ -73,6 +73,7 @@
             "timeout": "Conexión fallida, se agotó el tiempo de espera de la llamada a la API.",
             "connection_lost_mid_login": "Conexión fallida, TrueNAS cerró la conexión durante el inicio de sesión.",
             "connection_lost_mid_query": "Conexión fallida, TrueNAS cerró la conexión durante una llamada a la API.",
+            "permission_denied": "Inicio de sesión correcto, pero el usuario de la clave API no tiene permiso para leer la información del sistema. Asigna a ese usuario al menos el privilegio Read-Only Administrator en TrueNAS.",
             "cannot_connect": "No se pudo conectar al host (puerto TCP cerrado o tiempo de espera agotado).",
             "malformed_result": "La respuesta de la API está mal formada.",
             "certificate_verify_failed": "Falló la verificación del certificado.",
