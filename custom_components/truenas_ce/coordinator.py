@@ -514,8 +514,12 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.datasets_hass_device_id = None
         self.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
 
-        self._version_major: int = 0
-        self._version_minor: int = 0
+        # (major, minor) TrueNAS version from system.info; None while unknown
+        # (never parsed successfully). See _parse_version/_version_at_least.
+        self._version: tuple[int, int] | None = None
+        # Whether the current unparseable-version streak was already warned
+        # about, so a persistently malformed string logs once, not every poll.
+        self._version_parse_warned: bool = False
 
         # Common names that have ever been shared by more than one certificate
         # in a poll -- see ``_assign_certificate_identities`` for why this
@@ -1289,8 +1293,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _parse_version(self) -> None:
         """Parse major/minor version numbers from the reported version string.
 
-        Prevents a "0.0.0" display and avoids misrepresenting the system version
-        on malformed or missing input.
+        On a missing, empty or unparseable string the last successfully parsed
+        version is kept (it cannot change without a reboot, after which the
+        next poll re-parses it) and a WARNING is logged once per failure
+        streak. If no version was ever parsed it stays unknown (``None``) --
+        never a fake ``(0, 0)`` that would silently select the legacy API.
         """
         version_str = str(self.ds["system_info"].get("version", "") or "")
         clean_version = version_str.replace("TrueNAS-", "").replace("SCALE-", "")
@@ -1298,12 +1305,45 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Bounded quantifiers ({1,9}) avoid unbounded backtracking (Sonar S5852);
         # version components never have that many digits.
         if match := re.search(r"(\d{1,9})\.(\d{1,9})", clean_version):
-            self._version_major = int(match[1])
-            self._version_minor = int(match[2])
-        elif clean_version:
-            _LOGGER.debug(
-                "Failed to parse TrueNAS version from string: %s", version_str
+            self._version = (int(match[1]), int(match[2]))
+            if self._version_parse_warned:
+                self._version_parse_warned = False
+                _LOGGER.info(
+                    "TrueNAS version detection recovered: %s.%s", *self._version
+                )
+            return
+
+        if not self._version_parse_warned:
+            self._version_parse_warned = True
+            _LOGGER.warning(
+                "Could not determine the TrueNAS version from %r; %s",
+                version_str,
+                (
+                    f"keeping the last known version {self._version[0]}."
+                    f"{self._version[1]}"
+                    if self._version is not None
+                    else "assuming the newest API for update and service"
+                    " control, legacy API for containers"
+                ),
             )
+
+    # ---------------------------
+    #   _version_at_least
+    # ---------------------------
+    def _version_at_least(
+        self, minimum: tuple[int, int], *, if_unknown: bool = True
+    ) -> bool:
+        """Return True if the TrueNAS version is at least ``minimum``.
+
+        An unknown version returns ``if_unknown``. By default that fails
+        forward to the newest API: TrueNAS 25.10/26 are the actively
+        maintained releases, and _parse_version has already warned, so a
+        wrong guess surfaces as a visible API error instead of silently
+        picking methods TrueNAS 26 removed.
+        """
+        if self._version is None:
+            return if_unknown
+        return self._version >= minimum
 
     # ---------------------------
     #   supports_update_run
@@ -1315,7 +1355,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         writes update *settings*, while installing an update (with the
         optional reboot) moved to the new "update.run" method.
         """
-        return (self._version_major, self._version_minor) >= (25, 10)
+        return self._version_at_least((25, 10))
 
     # ---------------------------
     #   supports_container_api
@@ -1326,8 +1366,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         TrueNAS 26.0 dropped the Incus-based ``virt.*`` API; LXC containers
         are now managed through ``container.query`` / ``container.start`` /
         ``container.stop`` (libvirt), with a different entry shape.
+
+        Unlike the other gates, an unknown version selects the legacy API:
+        aiotruenas' ``TrueNASState.get_container()`` falls back to
+        ``virt.instance.query`` in that case, and the push topic and the
+        container actions must match the API the container data came from.
         """
-        return (self._version_major, self._version_minor) >= (26, 0)
+        return self._version_at_least((26, 0), if_unknown=False)
 
     # ---------------------------
     #   supports_service_control
@@ -1339,7 +1384,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         "service.restart"/"service.reload" methods entirely, replacing them
         with a single "service.control"(VERB, service) method.
         """
-        return (self._version_major, self._version_minor) >= (26, 0)
+        return self._version_at_least((26, 0))
 
     # ---------------------------
     #   get_updatecheck
