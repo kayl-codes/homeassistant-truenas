@@ -71,6 +71,8 @@
             "handshake_timeout": "Connection failed, timed out while waiting for handshake response.",
             "api_not_found": "Connection failed, API not found.",
             "timeout": "Connection failed, the API call timed out.",
+            "connection_lost_mid_login": "Connection failed, TrueNAS closed the connection during login.",
+            "connection_lost_mid_query": "Connection failed, TrueNAS closed the connection during an API call.",
             "cannot_connect": "Failed to connect to host (TCP port closed or timeout).",
             "malformed_result": "API response is malformed.",
             "certificate_verify_failed": "Certificate verification failed.",

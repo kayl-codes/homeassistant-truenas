@@ -71,6 +71,8 @@
             "handshake_timeout": "Verbindung fehlgeschlagen, Zeitüberschreitung beim Warten auf die Handshake-Antwort.",
             "api_not_found": "Verbindung fehlgeschlagen, API nicht gefunden.",
             "timeout": "Verbindung fehlgeschlagen, der API-Aufruf hat das Zeitlimit überschritten.",
+            "connection_lost_mid_login": "Verbindung fehlgeschlagen, TrueNAS hat die Verbindung während der Anmeldung geschlossen.",
+            "connection_lost_mid_query": "Verbindung fehlgeschlagen, TrueNAS hat die Verbindung während eines API-Aufrufs geschlossen.",
             "cannot_connect": "Verbindung zum Host fehlgeschlagen (TCP-Port geschlossen oder Zeitüberschreitung).",
             "malformed_result": "Die API-Antwort ist fehlerhaft.",
             "certificate_verify_failed": "Zertifikatsprüfung fehlgeschlagen.",

@@ -71,6 +71,8 @@
             "handshake_timeout": "Połączenie nie powiodło się, przekroczono limit czasu oczekiwania na odpowiedź handshake.",
             "api_not_found": "Połączenie nie powiodło się, nie znaleziono API.",
             "timeout": "Połączenie nie powiodło się, przekroczono limit czasu wywołania API.",
+            "connection_lost_mid_login": "Połączenie nie powiodło się, TrueNAS zamknął połączenie podczas logowania.",
+            "connection_lost_mid_query": "Połączenie nie powiodło się, TrueNAS zamknął połączenie podczas wywołania API.",
             "cannot_connect": "Nie udało się połączyć z hostem (port TCP zamknięty lub przekroczono limit czasu).",
             "malformed_result": "Odpowiedź API jest nieprawidłowa.",
             "certificate_verify_failed": "Weryfikacja certyfikatu nie powiodła się.",
