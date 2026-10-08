@@ -12,6 +12,21 @@ files = ["custom_components/truenas_ce"]
 strict = true
 warn_unreachable = true
 
+[[tool.mypy.overrides]]
+# Home Assistant 2026.10+ aliases `voluptuous` to probatio at startup
+# (probatio.compat.install_as_voluptuous) and types its APIs with probatio
+# classes, while mypy still resolves `import voluptuous` to the real package.
+# Treat voluptuous as untyped so the same code checks against old and new HA.
+module = ["voluptuous", "voluptuous.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# HA 2026.10 moved BinarySensorDeviceClass to binary_sensor/const.py and only
+# re-exports it implicitly; importing it from the package still works at runtime
+# on every supported HA release, whereas the const module is missing pre-2026.10.
+module = ["homeassistant.components.binary_sensor"]
+implicit_reexport = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
