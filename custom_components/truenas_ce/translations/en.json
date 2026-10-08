@@ -303,6 +303,9 @@
             "pool_allocated": {
                 "name": "Allocated"
             },
+            "pool_usage": {
+                "name": "Usage"
+            },
             "pool_errors": {
                 "name": "Errors"
             },

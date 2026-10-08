@@ -78,6 +78,9 @@
       "pool_allocated": {
         "default": "mdi:database-settings"
       },
+      "pool_usage": {
+        "default": "mdi:gauge"
+      },
       "pool_errors": {
         "default": "mdi:alert-circle-outline"
       },

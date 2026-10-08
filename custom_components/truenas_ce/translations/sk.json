@@ -303,6 +303,9 @@
             "pool_allocated": {
                 "name": "Alokované"
             },
+            "pool_usage": {
+                "name": "Využitie"
+            },
             "pool_errors": {
                 "name": "Chyby"
             },
