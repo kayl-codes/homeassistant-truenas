@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiotruenas import TrueNASState
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
@@ -57,6 +58,7 @@ from custom_components.truenas_ce.coordinator import (
     _is_truenas_sensor_id,
     _PushSourceState,
 )
+from custom_components.truenas_ce.sensor_types import DEVICE_ATTRIBUTES_ALERTS
 
 
 def _bare_coordinator() -> TrueNASCoordinator:
@@ -2075,6 +2077,34 @@ async def test_init_seeds_connection_failing_from_hass_data() -> None:
     # A fresh coordinator starts with an unknown version, not a fake (0, 0).
     assert coord._version is None
     assert coord._version_parse_warned is False
+
+
+async def test_initial_alerts_defaults_match_aiotruenas_keys() -> None:
+    """The hand-kept ds["alerts"] defaults must not drift from aiotruenas.
+
+    extra_state_attributes silently skips missing keys, so a renamed/new key
+    in aiotruenas (or a typo in DEVICE_ATTRIBUTES_ALERTS) would otherwise just
+    drop an attribute without any error.
+    """
+    entry = _config_entry_stub()
+    entry.options = {}
+    entry.data = {**entry.data, CONF_NAME: "TrueNAS", CONF_VERIFY_SSL: True}
+    hass = SimpleNamespace(data={})
+    with (
+        patch.object(
+            coordinator_module.DataUpdateCoordinator, "__init__", return_value=None
+        ),
+        patch.object(coordinator_module, "TrueNASAPI"),
+        patch.object(coordinator_module, "TrueNASState"),
+    ):
+        coord = TrueNASCoordinator(hass, entry)
+
+    client = MagicMock()
+    client.call = AsyncMock(return_value=[])
+    real_alerts = await TrueNASState(client).get_alerts()
+
+    assert set(coord.ds["alerts"]) == set(real_alerts)
+    assert set(DEVICE_ATTRIBUTES_ALERTS) <= set(real_alerts)
 
 
 def test_clear_persisted_connection_failing_removes_entry() -> None:

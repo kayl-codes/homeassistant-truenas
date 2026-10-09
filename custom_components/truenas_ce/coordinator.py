@@ -492,9 +492,17 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "alerts": {
                 "count": 0,
                 "messages": [],
+                "uuids": [],
+                "levels": [],
+                "highest_level": None,
+                "emergency": 0,
+                "alert": 0,
                 "critical": 0,
+                "error": 0,
                 "warning": 0,
+                "notice": 0,
                 "info": 0,
+                "unknown": 0,
                 "disk_issues": False,
             },
         }
