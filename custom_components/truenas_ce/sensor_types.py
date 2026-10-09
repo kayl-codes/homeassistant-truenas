@@ -182,10 +182,17 @@ DEVICE_ATTRIBUTES_SNAPSHOTTASK = (
 )
 
 DEVICE_ATTRIBUTES_ALERTS = (
+    "highest_level",
     "messages",
+    "levels",
+    "emergency",
+    "alert",
     "critical",
+    "error",
     "warning",
+    "notice",
     "info",
+    "unknown",
     "uuids",
 )
 

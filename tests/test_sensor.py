@@ -455,6 +455,44 @@ async def test_uptime_refresh_calls_coordinator_refresh() -> None:
 # ---------------------------
 #   TrueNASAlertSensor
 # ---------------------------
+def test_alert_sensor_exposes_levels_as_attributes() -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == "alerts")
+    alerts = {
+        "count": 3,
+        "messages": ["m1", "m2", "m3"],
+        "uuids": ["u1", "u2", "u3"],
+        "levels": ["ERROR", "INFO", "EMERGENCY"],
+        "highest_level": "EMERGENCY",
+        "emergency": 1,
+        "alert": 0,
+        "critical": 0,
+        "error": 1,
+        "warning": 0,
+        "notice": 0,
+        "info": 1,
+        "unknown": 0,
+        "disk_issues": False,
+    }
+    sensor = TrueNASAlertSensor(make_coordinator(data={"alerts": alerts}), desc, None)
+    attrs = sensor.extra_state_attributes
+    assert sensor.native_value == 3
+    assert attrs["highest_level"] == "EMERGENCY"
+    assert attrs["levels"] == ["ERROR", "INFO", "EMERGENCY"]
+    for counter in (
+        "emergency",
+        "alert",
+        "critical",
+        "error",
+        "warning",
+        "notice",
+        "info",
+        "unknown",
+    ):
+        assert attrs[counter] == alerts[counter]
+    assert attrs["uuids"] == ["u1", "u2", "u3"]
+    assert "disk_issues" not in attrs
+
+
 async def test_alert_dismiss_without_uuid_raises() -> None:
     sensor = _make_sensor(TrueNASAlertSensor, {})
     with pytest.raises(ServiceValidationError) as exc_info:
