@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
+
+if TYPE_CHECKING:
+    # Typing-only: RepairsFlow's steps return RepairsFlowResult (HA 2026.10
+    # stubs reject the generic FlowResult). Kept out of the runtime imports so
+    # the annotation can never affect loading on the oldest supported release.
+    from homeassistant.components.repairs import RepairsFlowResult
 
 from .const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
@@ -49,7 +54,7 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Show the fix/ignore menu listing the affected statistic ids.
 
         Metadata-only orphans (no data points left) get their own wording: they
@@ -79,7 +84,7 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
 
     async def async_step_fix(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Delete the orphaned statistics."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         coordinator = get_truenas_coordinator(entry)
@@ -89,7 +94,7 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
 
     async def async_step_ignore(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Suppress the issue for this config entry."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is not None:
@@ -156,7 +161,7 @@ class MigrationRollbackRepairFlow(RepairsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Show the rollback/dismiss menu with the adopted-entity count."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         count = len(entry.data.get(MIGRATION_RECORDS, [])) if entry else 0
@@ -168,7 +173,7 @@ class MigrationRollbackRepairFlow(RepairsFlow):
 
     async def async_step_rollback(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Hand the adopted entities (and history) back to the legacy entry."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is not None:
@@ -184,7 +189,7 @@ class MigrationRollbackRepairFlow(RepairsFlow):
 
     async def async_step_ignore(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         """Keep TrueNAS CE and close the dialog.
 
         Only the issue is removed (no permanent suppression): pressing the
