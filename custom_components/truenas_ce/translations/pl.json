@@ -303,6 +303,9 @@
             "pool_allocated": {
                 "name": "Zajęte"
             },
+            "pool_usage": {
+                "name": "Użycie"
+            },
             "pool_errors": {
                 "name": "Błędy"
             },

@@ -303,6 +303,9 @@
             "pool_allocated": {
                 "name": "Alocado"
             },
+            "pool_usage": {
+                "name": "Uso"
+            },
             "pool_errors": {
                 "name": "Erros"
             },

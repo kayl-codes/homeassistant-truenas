@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _fakes import make_config_entry, make_coordinator
-from homeassistant.components.sensor import SensorExtraStoredData
-from homeassistant.const import UnitOfInformation
+from homeassistant.components.sensor import SensorExtraStoredData, SensorStateClass
+from homeassistant.const import PERCENTAGE, UnitOfInformation
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.truenas_ce import sensor as sensor_mod
@@ -34,7 +34,10 @@ from custom_components.truenas_ce.sensor import (
     _parse_app_network_uid,
     _resolve_app_network_data,
 )
-from custom_components.truenas_ce.sensor_types import TrueNASSensorEntityDescription
+from custom_components.truenas_ce.sensor_types import (
+    SENSOR_TYPES,
+    TrueNASSensorEntityDescription,
+)
 
 _PLAIN_DESC = TrueNASSensorEntityDescription(
     key="k", name="N", data_path="disk", data_attribute="value"
@@ -259,6 +262,21 @@ def test_discover_app_stats_eagerly_creates_standard_sensors_before_first_event(
 def test_native_value_returns_data_attribute() -> None:
     sensor = _make_sensor(TrueNASSensor, {"value": 42})
     assert sensor.native_value == 42
+
+
+def test_pool_usage_sensor_reports_usage_percentage() -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == "pool_usage")
+    sensor = _make_sensor(
+        TrueNASSensor,
+        {"guid": "g1", "name": "tank", "usage": 37, "available": 63, "total": 100},
+        path="pool",
+        desc=desc,
+    )
+    assert desc.func == "TrueNASSensor"
+    assert desc.data_reference == "guid"
+    assert sensor.native_value == 37
+    assert sensor.native_unit_of_measurement == PERCENTAGE
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
 
 
 def test_native_unit_of_measurement_plain() -> None:
