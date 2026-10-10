@@ -41,6 +41,11 @@ def test_all_locales_in_parity_with_en(repo_root: Path, vt: ModuleType) -> None:
         assert errors == [], f"{name} is out of parity with en.json: {errors}"
 
 
+def _same_json_value(left: object, right: object) -> bool:
+    """Compare JSON leaves by type too, since Python treats True == 1."""
+    return type(left) is type(right) and left == right
+
+
 def _strings_vs_en_diff(
     strings: dict[str, object], english: dict[str, object]
 ) -> list[str]:
@@ -50,7 +55,7 @@ def _strings_vs_en_diff(
     errors += [
         f"value differs: {key}: strings.json={strings[key]!r}, en.json={english[key]!r}"
         for key in sorted(strings.keys() & english)
-        if strings[key] != english[key]
+        if not _same_json_value(strings[key], english[key])
     ]
     return errors
 
@@ -75,12 +80,13 @@ def test_en_json_matches_strings_json(repo_root: Path, vt: ModuleType) -> None:
 def test_strings_vs_en_diff_reports_key_paths() -> None:
     """The strings.json/en.json diff must name every differing key path."""
     title = "config.step.user.title"
-    strings = {title: "Setup", "config.abort.gone": "Gone"}
-    english = {title: "Set up", "options.extra": "Extra"}
+    strings = {title: "Setup", "config.abort.gone": "Gone", "x.flag": True}
+    english = {title: "Set up", "options.extra": "Extra", "x.flag": 1}
     assert _strings_vs_en_diff(strings, english) == [
         "missing in en.json: config.abort.gone",
         "only in en.json: options.extra",
         f"value differs: {title}: strings.json='Setup', en.json='Set up'",
+        "value differs: x.flag: strings.json=True, en.json=1",
     ]
 
 
