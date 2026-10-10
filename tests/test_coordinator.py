@@ -2355,8 +2355,70 @@ async def test_async_update_data_runs_jobs_when_connected() -> None:
     coord.get_systeminfo.assert_awaited_once()
     coord.get_interface.assert_awaited_once()
     coord.get_pool.assert_awaited_once()
+    coord.get_app_stats.assert_awaited_once()
     coord.get_updatecheck.assert_awaited_once()
     assert result is coord.ds
+
+
+async def test_async_update_data_survives_get_app_stats_failure() -> None:
+    """get_app_stats now runs after the gather, on its own: a failure there
+    must still be tracked for is_data_path_failing("app_stats") without
+    skipping the steps that follow it or failing the whole refresh.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+    coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    _stub_all_jobs(coord)
+    coord.get_app_stats.side_effect = coordinator_module.UpdateFailed("boom")
+    coord.ds = {"system_info": {"hostname": "truenas"}}
+
+    result = await coord._async_update_data()  # must not raise
+
+    assert result is coord.ds
+    assert "get_app_stats" in coord._job_failing
+    coord.get_updatecheck.assert_awaited_once()
+    coord.async_detect_orphaned_statistics.assert_awaited_once()
+
+
+async def test_async_update_data_runs_get_app_stats_after_get_app() -> None:
+    """get_app_stats skips the app.stats subscription while ds["app"] is
+    empty, so it must run after get_app() has populated it -- otherwise the
+    first refresh after a restart never subscribes and the app network
+    sensors stay unavailable for an extra poll interval.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+    coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    _stub_all_jobs(coord)
+    coord.ds = {"system_info": {"hostname": "truenas"}, "app": {}}
+
+    async def _fake_get_app() -> None:
+        # Yield first so a get_app_stats sharing the same gather would run
+        # before ds["app"] is filled, as it did in production.
+        await asyncio.sleep(0)
+        coord.ds["app"] = {"plex": {"name": "plex"}}
+
+    seen_apps: list[dict[str, object]] = []
+
+    async def _fake_get_app_stats() -> None:
+        seen_apps.append(dict(coord.ds["app"]))
+
+    coord.get_app = AsyncMock(side_effect=_fake_get_app)
+    coord.get_app.__name__ = "get_app"
+    coord.get_app_stats = AsyncMock(side_effect=_fake_get_app_stats)
+    coord.get_app_stats.__name__ = "get_app_stats"
+
+    await coord._async_update_data()
+
+    assert seen_apps == [{"plex": {"name": "plex"}}]
 
 
 async def test_async_update_data_skips_jobs_when_disconnected() -> None:
@@ -2372,6 +2434,7 @@ async def test_async_update_data_skips_jobs_when_disconnected() -> None:
         await coord._async_update_data()
 
     coord.get_systeminfo.assert_not_awaited()
+    coord.get_app_stats.assert_not_awaited()
 
 
 async def test_async_update_data_swallows_job_exceptions() -> None:
