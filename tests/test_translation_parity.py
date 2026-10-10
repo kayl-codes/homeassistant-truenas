@@ -23,9 +23,12 @@ _KEY_REFERENCE_MARKER = "[%key:"
 _EN_JSON = "en.json"
 
 
+def _load(translations_dir: Path, name: str) -> dict[str, object]:
+    return json.loads((translations_dir / name).read_text(encoding="utf-8"))
+
+
 def _flatten(translations_dir: Path, vt: ModuleType, name: str) -> dict[str, object]:
-    text = (translations_dir / name).read_text(encoding="utf-8")
-    return vt._flatten(json.loads(text))
+    return vt._flatten(_load(translations_dir, name))
 
 
 def test_all_locales_in_parity_with_en(repo_root: Path, vt: ModuleType) -> None:
@@ -41,9 +44,17 @@ def test_all_locales_in_parity_with_en(repo_root: Path, vt: ModuleType) -> None:
         assert errors == [], f"{name} is out of parity with en.json: {errors}"
 
 
+def _canonical(value: object) -> str:
+    """Serialize JSON canonically, so True/1 and dotted/nested keys differ.
+
+    Python treats ``True == 1`` (also inside lists), and flattening maps a
+    literal ``"a.b"`` key and a nested ``{"a": {"b": ...}}`` to the same path.
+    """
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
 def _same_json_value(left: object, right: object) -> bool:
-    """Compare JSON leaves by type too, since Python treats True == 1."""
-    return type(left) is type(right) and left == right
+    return _canonical(left) == _canonical(right)
 
 
 def _strings_vs_en_diff(
@@ -67,6 +78,10 @@ def test_en_json_matches_strings_json(repo_root: Path, vt: ModuleType) -> None:
     english = _flatten(integration_dir / "translations", vt, _EN_JSON)
     errors = _strings_vs_en_diff(strings, english)
     assert errors == [], "en.json drifted from strings.json:\n" + "\n".join(errors)
+    assert _same_json_value(
+        _load(integration_dir, "strings.json"),
+        _load(integration_dir / "translations", _EN_JSON),
+    ), "en.json nests keys differently from strings.json (dotted key vs object)"
     unresolved = sorted(
         key
         for key, value in english.items()
@@ -80,14 +95,31 @@ def test_en_json_matches_strings_json(repo_root: Path, vt: ModuleType) -> None:
 def test_strings_vs_en_diff_reports_key_paths() -> None:
     """The strings.json/en.json diff must name every differing key path."""
     title = "config.step.user.title"
-    strings = {title: "Setup", "config.abort.gone": "Gone", "x.flag": True}
-    english = {title: "Set up", "options.extra": "Extra", "x.flag": 1}
+    strings = {
+        title: "Setup",
+        "config.abort.gone": "Gone",
+        "x.flag": True,
+        "x.list": [True],
+    }
+    english = {
+        title: "Set up",
+        "options.extra": "Extra",
+        "x.flag": 1,
+        "x.list": [1],
+    }
     assert _strings_vs_en_diff(strings, english) == [
         "missing in en.json: config.abort.gone",
         "only in en.json: options.extra",
         f"value differs: {title}: strings.json='Setup', en.json='Set up'",
         "value differs: x.flag: strings.json=True, en.json=1",
+        "value differs: x.list: strings.json=[True], en.json=[1]",
     ]
+
+
+def test_canonical_json_distinguishes_dotted_and_nested_keys() -> None:
+    """A literal dotted key must not compare equal to the nested object."""
+    assert not _same_json_value({"a.b": "x"}, {"a": {"b": "x"}})
+    assert _same_json_value({"a": {"b": "x"}, "c": 1}, {"c": 1, "a": {"b": "x"}})
 
 
 def test_validator_detects_drift(vt: ModuleType) -> None:
