@@ -15,7 +15,14 @@ from custom_components.truenas_ce import sensor_types
 _PATH = Path(sensor_types.__file__)
 _COMPAT_NAME = "custom_components.truenas_ce._sensor_types_compat"
 
+# ``UnitOfRatio`` only exists on HA >= 2026.7; the test dependency allows older
+# cores, where only the fallback test applies.
+_HAS_UNIT_OF_RATIO = hasattr(ha_const, "UnitOfRatio")
 
+
+@pytest.mark.skipif(
+    not _HAS_UNIT_OF_RATIO, reason="UnitOfRatio needs Home Assistant >= 2026.7"
+)
 def test_percentage_unit_uses_unit_of_ratio_when_available() -> None:
     assert sensor_types.UNIT_PERCENTAGE is ha_const.UnitOfRatio.PERCENTAGE
 
@@ -27,7 +34,7 @@ def test_percentage_unit_falls_back_before_unit_of_ratio(
     use the plain "%" unit (loaded as a separate copy, so the real module and
     its description classes stay untouched)."""
     expected_keys = _percent_keys(sensor_types.SENSOR_TYPES)
-    monkeypatch.delattr(ha_const, "UnitOfRatio")
+    monkeypatch.delattr(ha_const, "UnitOfRatio", raising=False)
     spec = importlib.util.spec_from_file_location(_COMPAT_NAME, _PATH)
     assert spec is not None
     assert spec.loader is not None
