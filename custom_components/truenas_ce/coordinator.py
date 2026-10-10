@@ -950,7 +950,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.get_snapshottask,
             self.get_scrub,
             self.get_app,
-            self.get_app_stats,
             self.get_cronjob,
             self.get_alerts,
             self.get_certificates,
@@ -1004,6 +1003,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # reordering the job list for this migration step.
             if self.api.connected():
                 await self._run_job(self.get_pool)
+
+            # get_app_stats only subscribes to app.stats once ds["app"] is
+            # populated, so it must run after get_app(). Inside the gather it
+            # saw an empty ds["app"] on the first refresh and skipped the
+            # subscription, leaving the app network sensors unavailable for
+            # an extra poll interval after every restart.
+            await self._run_job(self.get_app_stats)
 
         now = datetime.now(UTC).replace(microsecond=0)
         delta = now - self.last_updatecheck_update
@@ -2432,17 +2438,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # jobs via their own connected() guards. is_connection_error is
             # call-local (decided by get_subscription_events() itself, not
             # re-derived here from self.api.connected() -- that shared state
-            # can be flipped by a concurrent sibling job for reasons that
+            # can be flipped by another caller of this API instance (e.g. an
+            # entity action) for reasons that
             # have nothing to do with THIS call's own error, which would
             # misclassify an unrelated application-level failure, e.g. a
             # permission error, as a connection issue and silently drop it).
             return None
         # get_subscription_events() returns [] on both "no new events" and
         # "the read itself failed"; its own returned error (not
-        # self.api.error -- get_app_stats runs concurrently with ~19 other
-        # jobs sharing this TrueNASAPI instance inside asyncio.gather, so
-        # that shared attribute can be overwritten by a sibling job's own
-        # call before this one returns) is what lets a genuine failure
+        # self.api.error -- that attribute is shared by every caller of this
+        # TrueNASAPI instance, e.g. entity actions running alongside the
+        # poll, so it can be overwritten by another call before this one
+        # returns) is what lets a genuine failure
         # surface here instead of being read as a routine empty poll.
         raise UpdateFailed(
             f"Failed to read app.stats subscription events from TrueNAS"
