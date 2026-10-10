@@ -17,10 +17,18 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfFrequency,
     UnitOfInformation,
-    UnitOfRatio,
     UnitOfTemperature,
     UnitOfTime,
 )
+
+try:
+    from homeassistant.const import UnitOfRatio
+except ImportError:  # HA < 2026.7
+    # Same "%" value as the old PERCENTAGE constant, which 2026.7 deprecates.
+    # Drop this fallback once the minimum HA version is >= 2026.7.0.
+    UNIT_PERCENTAGE: str = "%"
+else:
+    UNIT_PERCENTAGE = UnitOfRatio.PERCENTAGE
 
 from .const import (
     LINK_STATE_DOWN,
@@ -333,7 +341,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="system_cpu_usage",
         translation_key="system_cpu_usage",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -348,7 +356,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="system_memory_usage",
         translation_key="system_memory_usage",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -501,7 +509,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="pool_usage",
         translation_key="pool_usage",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=None,
@@ -531,7 +539,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="pool_fragmentation",
         translation_key="pool_fragmentation",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -693,7 +701,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="ups_charge",
         translation_key="ups_charge",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=None,
@@ -721,7 +729,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="ups_load",
         translation_key="ups_load",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=None,
@@ -836,7 +844,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_data_hit_percent",
         translation_key="arc_data_hit_percent",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -850,7 +858,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_metadata_hit_percent",
         translation_key="arc_metadata_hit_percent",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -864,7 +872,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="arc_l2_hit_percent",
         translation_key="arc_l2_hit_percent",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -878,7 +886,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="app_stats_cpu",
         translation_key="app_stats_cpu",
-        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        native_unit_of_measurement=UNIT_PERCENTAGE,
         suggested_display_precision=2,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,

@@ -205,6 +205,20 @@ def _rename_device_identifiers(
     dev_reg.async_remove_device(device_entry.id)
 
 
+def _is_shared_device(device_entry: dr.DeviceEntry) -> bool:
+    """Whether more than one config entry shares this device record.
+
+    Since HA 2026.8 a device belongs to exactly one config entry
+    (``config_entry_id``), so it can never be shared; the old
+    ``config_entries`` set is deprecated from 2026.10 (breaks in 2027.10).
+    Before 2026.8 that set is the only way to tell, so fall back to it there.
+    Drop the fallback once the minimum HA version is >= 2026.8.0.
+    """
+    if hasattr(device_entry, "config_entry_id"):
+        return False
+    return len(device_entry.config_entries) > 1
+
+
 def migrate_legacy_device_identifier(
     hass: HomeAssistant, config_entry_id: str, identity: str, hostname: str
 ) -> None:
@@ -289,7 +303,7 @@ def migrate_entry_identity_namespace(
     for device_entry in dr.async_entries_for_config_entry(
         dev_reg, config_entry.entry_id
     ):
-        if len(device_entry.config_entries) > 1:
+        if _is_shared_device(device_entry):
             # Two entries that previously shared this display name (and e.g.
             # a same-named pool) collided onto the same old, name-based
             # device record. Renaming it in place for one entry would just

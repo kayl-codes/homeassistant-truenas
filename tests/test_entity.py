@@ -20,6 +20,7 @@ from custom_components.truenas_ce.entity import (
     _extract_composite_ref,
     _find_entry_device,
     _get_composite_container,
+    _is_shared_device,
     _is_uid_excluded,
     _legacy_format_unique_id,
     _lowercased_unique_id,
@@ -1053,3 +1054,28 @@ def test_find_entry_device_falls_back_on_pre_2026_8_registry(
 
     assert _find_entry_device(dev_reg, _IDS, "entry1") is found
     dev_reg.async_get_device.assert_called_once_with(identifiers=_IDS)
+
+
+# ---------------------------
+#   _is_shared_device
+# ---------------------------
+def test_is_shared_device_never_shared_on_single_entry_registry() -> None:
+    """HA >= 2026.8: a device has one ``config_entry_id``, so it cannot be
+    shared -- and the deprecated ``config_entries`` must not be read."""
+    device = MagicMock(spec=["config_entry_id"])
+    device.config_entry_id = "entry1"
+
+    assert _is_shared_device(device) is False
+
+
+@pytest.mark.parametrize(
+    ("config_entries", "expected"),
+    [({"entry1"}, False), ({"entry1", "entry2"}, True)],
+)
+def test_is_shared_device_falls_back_on_pre_2026_8_registry(
+    config_entries: set[str], expected: bool
+) -> None:
+    """HA < 2026.8 has no ``config_entry_id``: count ``config_entries``."""
+    device = SimpleNamespace(id="dev1", config_entries=config_entries)
+
+    assert _is_shared_device(device) is expected

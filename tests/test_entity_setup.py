@@ -57,6 +57,21 @@ from custom_components.truenas_ce.sensor_types import (
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
+# Entry-scoped device lookup (and per-entry identifier uniqueness) only exists
+# on HA >= 2026.8; older cores -- incl. the one CI's pinned
+# pytest-homeassistant-custom-component installs -- keep global identifiers and
+# must go through the deprecated-but-only lookup.
+_HAS_ENTRY_SCOPED_LOOKUP = hasattr(dr.DeviceRegistry, "async_get_devices")
+_requires_entry_scoped_lookup = pytest.mark.skipif(
+    not _HAS_ENTRY_SCOPED_LOOKUP,
+    reason="per-entry device identifiers need Home Assistant >= 2026.8",
+)
+_requires_shared_devices = pytest.mark.skipif(
+    _HAS_ENTRY_SCOPED_LOOKUP,
+    reason="devices are shared between entries only before Home Assistant 2026.8",
+)
+
+
 # ---------------------------
 #   migrate_entry_identity_namespace
 # ---------------------------
@@ -115,6 +130,7 @@ async def test_migrate_entry_identity_namespace_noop_when_identity_unchanged(
     assert migrated_entity.unique_id == "truenas-uptime"
 
 
+@_requires_shared_devices
 async def test_migrate_entry_identity_namespace_skips_shared_device(
     hass: HomeAssistant,
 ) -> None:
@@ -145,6 +161,41 @@ async def test_migrate_entry_identity_namespace_skips_shared_device(
     untouched_device = dev_reg.async_get(shared_device.id)
     assert untouched_device is not None
     assert untouched_device.identifiers == {(DOMAIN, "TrueNAS_tank")}
+
+
+@_requires_entry_scoped_lookup
+async def test_migrate_entry_identity_namespace_renames_per_entry_device(
+    hass: HomeAssistant,
+) -> None:
+    """Since HA 2026.8 each entry owns its own device record even for the same
+    old identifier, so nothing is shared: this entry's device is renamed in
+    place and the other entry's device stays untouched."""
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-aaa"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "TrueNAS", CONF_SYSTEM_ID: "system-bbb"}
+    )
+    entry_b.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    own_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_a.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+    other_device = dev_reg.async_get_or_create(
+        config_entry_id=entry_b.entry_id, identifiers={(DOMAIN, "TrueNAS_tank")}
+    )
+    assert own_device.id != other_device.id
+
+    migrate_entry_identity_namespace(hass, entry_a)
+
+    migrated_device = dev_reg.async_get(own_device.id)
+    assert migrated_device is not None
+    assert migrated_device.identifiers == {(DOMAIN, "system-aaa_tank")}
+    other = dev_reg.async_get(other_device.id)
+    assert other is not None
+    assert other.identifiers == {(DOMAIN, "TrueNAS_tank")}
 
 
 # ---------------------------
@@ -202,17 +253,6 @@ async def test_migrate_legacy_device_identifier_noop_when_no_legacy_record(
     untouched_device = dev_reg.async_get(device.id)
     assert untouched_device is not None
     assert untouched_device.identifiers == {(DOMAIN, "system-guid-123")}
-
-
-# Entry-scoped device lookup (and per-entry identifier uniqueness) only exists
-# on HA >= 2026.8; older cores -- incl. the one CI's pinned
-# pytest-homeassistant-custom-component installs -- keep global identifiers and
-# must go through the deprecated-but-only lookup.
-_HAS_ENTRY_SCOPED_LOOKUP = hasattr(dr.DeviceRegistry, "async_get_devices")
-_requires_entry_scoped_lookup = pytest.mark.skipif(
-    not _HAS_ENTRY_SCOPED_LOOKUP,
-    reason="per-entry device identifiers need Home Assistant >= 2026.8",
-)
 
 
 def _forbid_deprecated_device_lookup() -> AbstractContextManager[Any]:
