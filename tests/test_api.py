@@ -271,16 +271,17 @@ def test_scrub_text_stays_linear_on_long_input(chunk: str) -> None:
 
 def test_redact_scrubs_free_text_string_values() -> None:
     data = {"job": {"error": "rclone: secret_access_key=SAK-SAMPLE denied"}}
-    assert "SAK-SAMPLE" not in repr(_redact(data))
+    assert _redact(data) == {
+        "job": {"error": "rclone: secret_access_key=**REDACTED** denied"}
+    }
 
 
 def test_scrub_strings_walks_values_and_keeps_keys() -> None:
     data = {"password=x": ["token=T-SAMPLE", ("api_key=K-SAMPLE", 3)], "n": None}
-    result = api_module.scrub_strings(data)
-    assert "SAMPLE" not in repr(result)
-    assert list(result) == ["password=x", "n"]
-    assert result["n"] is None
-    assert isinstance(result["password=x"][1], tuple)
+    assert api_module.scrub_strings(data) == {
+        "password=x": ["token=**REDACTED**", ("api_key=**REDACTED**", 3)],
+        "n": None,
+    }
 
 
 def test_redact_does_not_mutate_input() -> None:
