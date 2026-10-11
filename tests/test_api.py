@@ -128,6 +128,55 @@ def test_redact_masks_nested_sensitive_keys() -> None:
     ]
 
 
+def test_redact_masks_cloud_and_ssh_credentials() -> None:
+    """Credential fields from the TrueNAS 25.10 schema are masked in raw payloads.
+
+    Shapes follow ``cloudsync.query`` (``credentials/provider``) and
+    ``replication.query`` (``ssh_credentials/attributes``).
+    """
+    cloudsync = {
+        "id": 1,
+        "description": "offsite",
+        "credentials": {
+            "id": 3,
+            "name": "s3",
+            "provider": {
+                "type": "S3",
+                "access_key_id": "AKID-SAMPLE",
+                "secret_access_key": "SAK-SAMPLE",
+                "endpoint": "",
+            },
+        },
+    }
+    oauth = {"type": "DROPBOX", "client_secret": "CS-SAMPLE", "token": "TOK-SAMPLE"}
+    replication = {
+        "id": 2,
+        "encryption_key": "EK-SAMPLE",
+        "ssh_credentials": {
+            "id": 4,
+            "type": "SSH_KEY_PAIR",
+            "attributes": {"private_key": "PK-SAMPLE", "public_key": "ssh-ed25519"},
+        },
+    }
+    swift = {
+        "type": "OPENSTACK_SWIFT",
+        "auth_token": "AT-SAMPLE",
+        "application_credential_secret": "ACS-SAMPLE",
+    }
+    misc = [
+        {"type": "WEBDAV", "pass": "PW-SAMPLE"},
+        {"type": "GOOGLE_CLOUD_STORAGE", "service_account_credentials": "SA-SAMPLE"},
+    ]
+
+    text = repr(_redact([cloudsync, oauth, replication, swift, misc]))
+
+    assert "SAMPLE" not in text
+    # Non-secret fields stay readable for debugging.
+    assert "offsite" in text
+    assert "ssh-ed25519" in text
+    assert "DROPBOX" in text
+
+
 def test_redact_keeps_empty_values_and_scalars() -> None:
     assert _redact({"password": "", "passphrase": None}) == {
         "password": "",

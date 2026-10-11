@@ -2495,8 +2495,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         app_name = self._get_app_identifier(app)
         if not isinstance(app_name, str) or not app_name:
             _LOGGER.debug(
-                "Skipping app.stats entry with missing/invalid app_name: %r",
-                app,
+                "Skipping app.stats entry with missing/invalid app_name: %s",
+                _summarize_payload(app),
             )
             return
 
