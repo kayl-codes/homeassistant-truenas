@@ -136,6 +136,13 @@ def test_redact_keeps_empty_values_and_scalars() -> None:
     assert _redact("privatekey") == "privatekey"
 
 
+def test_redact_walks_tuples() -> None:
+    assert _redact(({"password": "pw"}, "plain")) == (
+        {"password": api_module._REDACTED},
+        "plain",
+    )
+
+
 def test_redact_does_not_mutate_input() -> None:
     data = {"password": "pw"}
     _redact(data)
@@ -143,8 +150,8 @@ def test_redact_does_not_mutate_input() -> None:
 
 
 def test_summarize_payload_redacts_sensitive_values() -> None:
-    result = _summarize_payload([{"privatekey": "-----BEGIN PRIVATE KEY-----"}])
-    assert "BEGIN PRIVATE KEY" not in result
+    result = _summarize_payload([{"privatekey": "KEY-MATERIAL"}])
+    assert "KEY-MATERIAL" not in result
     assert api_module._REDACTED in result
 
 

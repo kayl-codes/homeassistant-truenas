@@ -91,13 +91,15 @@ _EXCEPTION_ERR_MAP: tuple[tuple[type[TrueNASError], str], ...] = (
 def _redact(data: Any) -> Any:
     """Return a copy of ``data`` with every ``TO_REDACT`` key masked.
 
-    Mirrors Home Assistant's ``async_redact_data`` (dicts and lists are walked
-    recursively, empty values are kept) without importing Home Assistant, so
+    Mirrors Home Assistant's ``async_redact_data`` (dicts, lists and tuples are
+    walked recursively, empty values are kept) without importing Home Assistant, so
     this module stays HA-independent. Used before logging API params and
     payloads, which can carry secrets such as certificate private keys.
     """
     if isinstance(data, list):
         return [_redact(item) for item in data]
+    if isinstance(data, tuple):
+        return tuple(_redact(item) for item in data)
     if not isinstance(data, dict):
         return data
     return {
