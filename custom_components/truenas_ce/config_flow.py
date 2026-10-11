@@ -26,7 +26,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .api import TrueNASAPI
+from .api import SECRET_SCRUB_FILTER, TrueNASAPI
 from .const import (
     ALLOWED_DATA_UNITS,
     BEHAVIOR_REMOVE_INACTIVE_NIC,
@@ -82,6 +82,7 @@ from .coordinator import get_truenas_coordinator
 from .helper import sanitize_host
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Shared selector for the API key field, reused by every schema (initial setup,
 # reconfigure, reauth) so all three stay visually/behaviorally in sync.

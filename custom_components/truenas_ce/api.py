@@ -2,7 +2,7 @@
 
 import asyncio
 import re
-from logging import DEBUG, ERROR, getLogger
+from logging import DEBUG, ERROR, Filter, LogRecord, getLogger
 from typing import Any, NamedTuple
 
 from aiotruenas import TrueNASClient
@@ -64,6 +64,8 @@ _LOG_PAYLOAD_LIMIT = 5000
 # name -- TrueNAS validation errors (``cloudsync_create.credentials: Field
 # required``) would lose their reason, while the credentials themselves sit
 # under ``TO_REDACT`` keys. Quantifiers are bounded to keep matching linear.
+# A quoted value that is never closed (e.g. cut off by the payload length
+# limit) is masked up to the end of the text.
 _SENSITIVE_NAME_PATTERN = (
     r"[A-Za-z0-9_-]{0,64}"
     r"(?:passw(?:or)?d|passphrase|secret|token|api[_-]?key|access[_-]?key"
@@ -72,7 +74,7 @@ _SENSITIVE_NAME_PATTERN = (
 )
 _SENSITIVE_VALUE_PATTERN = (
     r"(?:bearer|basic)\s+[^\s\"',;&]+"
-    r"|\"[^\"]*\"|'[^']*'"
+    r"|\"(?:[^\"\\]|\\.)*(?:\"|\\?$)|'(?:[^'\\]|\\.)*(?:'|\\?$)"
     r"|[^\s\"',;&]+"
 )
 _KEY_VALUE_SECRET_RE = re.compile(
@@ -148,43 +150,66 @@ def scrub_text(text: str) -> str:
 def scrub_strings(data: Any) -> Any:
     """Return a copy of ``data`` with :func:`scrub_text` applied to every string.
 
-    Walks dicts (values only), lists and tuples recursively; used on top of
-    Home Assistant's key-based ``async_redact_data`` for diagnostics.
+    Walks dicts (values only), lists and tuples recursively and scrubs
+    exceptions found inside them in place (see :func:`scrub_exception`); used
+    on top of Home Assistant's key-based ``async_redact_data`` for diagnostics.
     """
+    return _scrub_value(data, set())
+
+
+def _scrub_value(data: Any, seen: set[int]) -> Any:
+    """Recursive worker of :func:`scrub_strings`; ``seen`` breaks exception loops."""
     if isinstance(data, str):
         return scrub_text(data)
+    if isinstance(data, BaseException):
+        return _scrub_exception_chain(data, seen)
     if isinstance(data, list):
-        return [scrub_strings(item) for item in data]
+        return [_scrub_value(item, seen) for item in data]
     if isinstance(data, tuple):
-        return tuple(scrub_strings(item) for item in data)
+        return tuple(_scrub_value(item, seen) for item in data)
     if isinstance(data, dict):
-        return {key: scrub_strings(value) for key, value in data.items()}
+        return {key: _scrub_value(value, seen) for key, value in data.items()}
     return data
 
 
 def scrub_exception(exc: BaseException) -> BaseException:
-    """Mask secrets in the message of ``exc`` and its cause/context chain.
+    """Mask secrets in ``exc`` and every exception linked to it.
 
     Rewrites ``args`` (plus a call error's ``reason`` and an OSError's
-    ``strerror``/``filename``) in place, so both the logged message and a
-    logged traceback -- which re-renders ``str(exc)`` at format time -- stay
-    clean. Only secrets are removed, so mutating an exception that is also
-    referenced elsewhere is harmless.
+    ``strerror``/``filename``) in place, following ``__cause__``,
+    ``__context__``, an exception group's members and exceptions nested in
+    ``args``, so both the logged message and a logged traceback -- which
+    re-renders ``str(exc)`` at format time -- stay clean. Only secrets are
+    removed, so mutating an exception that is also referenced elsewhere is
+    harmless.
     """
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
+    return _scrub_exception_chain(exc, set())
+
+
+def _scrub_exception_chain(exc: BaseException, seen: set[int]) -> BaseException:
+    """Scrub ``exc`` and its linked exceptions, skipping ids already in ``seen``."""
+    pending: list[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
         seen.add(id(current))
-        _scrub_exception_text(current)
-        current = current.__cause__ or current.__context__
+        _scrub_exception_text(current, seen)
+        pending.extend(_linked_exceptions(current))
     return exc
 
 
-def _scrub_exception_text(exc: BaseException) -> None:
+def _linked_exceptions(exc: BaseException) -> list[BaseException]:
+    """Return the exceptions a traceback of ``exc`` would also render."""
+    linked = [e for e in (exc.__cause__, exc.__context__) if e is not None]
+    if isinstance(exc, BaseExceptionGroup):
+        linked.extend(exc.exceptions)
+    return linked
+
+
+def _scrub_exception_text(exc: BaseException, seen: set[int]) -> None:
     """Scrub the text-bearing fields of a single exception in place."""
-    exc.args = tuple(
-        scrub_text(arg) if isinstance(arg, str) else arg for arg in exc.args
-    )
+    exc.args = _scrub_value(exc.args, seen)
     if isinstance(exc, TrueNASCallError) and exc.reason:
         exc.reason = scrub_text(exc.reason)
     if isinstance(exc, OSError):
@@ -192,6 +217,48 @@ def _scrub_exception_text(exc: BaseException) -> None:
             value = getattr(exc, attr, None)
             if isinstance(value, str):
                 setattr(exc, attr, scrub_text(value))
+
+
+class SecretScrubFilter(Filter):
+    """Logger filter that masks free-text secrets in every record it sees.
+
+    Attached to each module logger of this integration (enforced by a test),
+    so a broad ``except Exception`` handler that logs an exception -- as a
+    ``%s`` argument, as the message itself or via
+    ``_LOGGER.exception``/``exc_info`` -- cannot leak a secret from its message
+    or traceback chain. Only the arguments are scrubbed, never the format
+    string, so placeholders stay intact (a pre-formatted f-string message is
+    therefore not covered).
+    """
+
+    def filter(self, record: LogRecord) -> bool:
+        """Scrub the record's arguments and exception in place; never drop it."""
+        try:
+            self._scrub_record(record)
+        except Exception as err:  # logging must never fail here
+            # Fail closed: withhold the arguments rather than log them unscrubbed.
+            record.msg = "Log message withheld: secret scrubbing failed (%s)"
+            record.args = (type(err).__name__,)
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+    @staticmethod
+    def _scrub_record(record: LogRecord) -> None:
+        if isinstance(record.msg, BaseException):
+            scrub_exception(record.msg)
+        if record.args:
+            record.args = scrub_strings(record.args)
+        if isinstance(record.exc_info, tuple) and record.exc_info[1] is not None:
+            scrub_exception(record.exc_info[1])
+
+
+SECRET_SCRUB_FILTER = SecretScrubFilter()
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
+# apiparser and event_push stay free of package-relative imports (their tests
+# load them standalone), so their loggers get the shared filter from here.
+for _standalone_module in ("apiparser", "event_push"):
+    getLogger(f"{__package__}.{_standalone_module}").addFilter(SECRET_SCRUB_FILTER)
 
 
 def _call_error_text(exc: TrueNASCallError) -> str:

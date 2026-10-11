@@ -20,6 +20,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
+from .api import SECRET_SCRUB_FILTER
 from .binary_sensor_types import SENSOR_TYPES as BINARY_SENSOR_TYPES
 from .const import (
     BEHAVIOR_REMOVE_INACTIVE_NIC,
@@ -80,6 +81,7 @@ from .switch_types import SENSOR_TYPES as SWITCH_SENSOR_TYPES
 from .update_types import SENSOR_TYPES as UPDATE_SENSOR_TYPES
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # This integration is config-entry only; it has no configuration.yaml schema.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)

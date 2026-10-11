@@ -31,7 +31,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
-from .api import TrueNASAPI, _summarize_payload, scrub_exception
+from .api import SECRET_SCRUB_FILTER, TrueNASAPI, _summarize_payload, scrub_exception
 from .apiparser import ApiValueSpec, parse_api
 from .const import (
     APP_UPDATE_JOB_ACTIVE_STATES,
@@ -63,6 +63,7 @@ from .const import (
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # How long note_expected_disconnect()'s dedup pre-arming stays valid; see
 # TrueNASCoordinator._expected_disconnect_reason.

@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .api import SECRET_SCRUB_FILTER
 from .entity import TrueNASEntity
 from .entity import async_add_entities as setup_entities
 from .switch_types import (  # noqa: F401
@@ -19,6 +20,7 @@ from .switch_types import (  # noqa: F401
 )
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Updates are centralized in the coordinator; entity actions may run unlimited.
 PARALLEL_UPDATES = 0

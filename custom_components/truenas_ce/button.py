@@ -13,6 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .api import SECRET_SCRUB_FILTER
 from .button_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
@@ -38,6 +39,7 @@ from .entity import (
 )
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Updates are centralized in the coordinator; entity actions may run unlimited.
 PARALLEL_UPDATES = 0
