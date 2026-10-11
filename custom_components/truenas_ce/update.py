@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .api import SECRET_SCRUB_FILTER
 from .const import (
     APP_UPDATE_JOB_ACTIVE_STATES,
     APP_UPDATE_JOB_POLL_INTERVAL,
@@ -33,6 +34,7 @@ from .update_types import (  # noqa: F401
 )
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 DEVICE_UPDATE = "device_update"
 
 _APP_RUNNING = "RUNNING"

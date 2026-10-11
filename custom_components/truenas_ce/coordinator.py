@@ -31,7 +31,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
-from .api import TrueNASAPI, _summarize_payload
+from .api import SECRET_SCRUB_FILTER, TrueNASAPI, _summarize_payload, scrub_exception
 from .apiparser import ApiValueSpec, parse_api
 from .const import (
     APP_UPDATE_JOB_ACTIVE_STATES,
@@ -63,6 +63,7 @@ from .const import (
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # How long note_expected_disconnect()'s dedup pre-arming stays valid; see
 # TrueNASCoordinator._expected_disconnect_reason.
@@ -891,9 +892,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await job()
         except Exception as err:
             if name in self._job_failing:
-                _LOGGER.debug("TrueNAS job %s still failing: %s", name, err)
+                _LOGGER.debug(
+                    "TrueNAS job %s still failing: %s", name, scrub_exception(err)
+                )
             else:
-                _LOGGER.exception("Error running TrueNAS job %s: %s", name, err)
+                _LOGGER.exception(
+                    "Error running TrueNAS job %s: %s", name, scrub_exception(err)
+                )
                 self._job_failing.add(name)
             return False
         else:
@@ -1700,7 +1705,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             sub_id, queue = await self.api.subscribe_events(event)
         except Exception as err:
-            _LOGGER.exception("Failed to establish %s subscription: %s", label, err)
+            _LOGGER.exception(
+                "Failed to establish %s subscription: %s", label, scrub_exception(err)
+            )
             return
 
         if not sub_id or queue is None:
@@ -1812,7 +1819,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             sub_id, queue = await self.api.subscribe_events(self._ALERTS_EVENT)
         except Exception as err:
-            _LOGGER.exception("Failed to establish alerts subscription: %s", err)
+            _LOGGER.exception(
+                "Failed to establish alerts subscription: %s", scrub_exception(err)
+            )
             return
 
         if not sub_id or queue is None:

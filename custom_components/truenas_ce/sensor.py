@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util.dt import utc_from_timestamp
 
+from .api import SECRET_SCRUB_FILTER
 from .const import (
     API_CLOUDSYNC_SYNC,
     API_REPLICATION_RUN,
@@ -47,6 +48,7 @@ from .sensor_types import (  # noqa: F401
 )
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 _UNKNOWN_DATASET = "<unknown>"
 
 # app_stats descriptions for these keys are composite (one entity per app+interface)

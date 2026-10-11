@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     # the annotation can never affect loading on the oldest supported release.
     from homeassistant.components.repairs import RepairsFlowResult
 
+from .api import SECRET_SCRUB_FILTER
 from .const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
     DOMAIN,
@@ -28,6 +29,7 @@ from .coordinator import get_truenas_coordinator
 from .migration import async_rollback_to_legacy
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Upper bound on ids rendered into the repair dialog. A chain of renames can
 # leave dozens behind; the remainder is summarised so the dialog stays readable

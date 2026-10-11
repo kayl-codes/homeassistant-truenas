@@ -37,6 +37,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .api import SECRET_SCRUB_FILTER
 from .const import (
     DOMAIN,
     LEGACY_DOMAIN,
@@ -51,6 +52,7 @@ from .entity import resolve_entry_identity
 from .helper import sanitize_host
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Public migration guide, linked from the post-migration success notification.
 _GUIDE_URL = (

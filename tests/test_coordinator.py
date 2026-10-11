@@ -2224,6 +2224,24 @@ async def test_run_job_logs_error_once_then_debug_then_recovers(
         assert "get_directoryservices" not in coord._job_failing
 
 
+async def test_run_job_scrubs_secrets_from_logged_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Neither the ERROR line + traceback nor the repeat DEBUG line leak a secret."""
+    coord = _bare_coordinator()
+    job = AsyncMock(side_effect=RuntimeError("failed with password=PW-SAMPLE"))
+    job.__name__ = "get_cloudsync"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        assert await coord._run_job(job) is False
+        job.side_effect = RuntimeError("again with password=PW-SAMPLE")
+        assert await coord._run_job(job) is False
+
+    assert any(r.exc_info for r in caplog.records)
+    assert "password=**REDACTED**" in caplog.text
+    assert "PW-SAMPLE" not in caplog.text
+
+
 # ---------------------------
 #   is_data_path_failing
 # ---------------------------

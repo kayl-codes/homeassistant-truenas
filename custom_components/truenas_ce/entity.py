@@ -23,7 +23,7 @@ from homeassistant.helpers.entity import Entity, EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .api import _summarize_payload
+from .api import SECRET_SCRUB_FILTER, _summarize_payload
 from .const import (
     ATTRIBUTION,
     BEHAVIOR_REMOVE_INACTIVE_NIC,
@@ -36,6 +36,7 @@ from .const import (
 from .coordinator import TrueNASCoordinator, get_truenas_coordinator
 
 _LOGGER = getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 _UNKNOWN_KEY = "<unknown>"
 

@@ -26,6 +26,26 @@ async def test_diagnostics_redacts_sensitive_fields_and_includes_data() -> None:
     assert result["data"]["system_info"]["version"] == "25.10.4"
 
 
+async def test_diagnostics_scrubs_secrets_in_free_text_values() -> None:
+    coordinator = make_coordinator(
+        data={
+            "cloudsync": {
+                "1": {
+                    "description": "offsite",
+                    "job_error": "rclone failed: secret_access_key=SAK-SAMPLE",
+                }
+            }
+        }
+    )
+    entry = SimpleNamespace(data={}, options={}, runtime_data=coordinator)
+
+    result = await async_get_config_entry_diagnostics(SimpleNamespace(), entry)
+
+    task = result["data"]["cloudsync"]["1"]
+    assert task["description"] == "offsite"
+    assert task["job_error"] == "rclone failed: secret_access_key=**REDACTED**"
+
+
 async def test_diagnostics_no_coordinator_returns_empty_data() -> None:
     entry = SimpleNamespace(data={}, options={}, runtime_data=None)
 
