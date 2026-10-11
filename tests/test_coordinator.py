@@ -2321,6 +2321,7 @@ async def test_run_job_warns_when_failure_turns_into_permission_denied(
         assert await coord._run_job(job) is False
 
     assert sum(r.levelname == "WARNING" for r in caplog.records) == 1
+    assert not any(r.levelname == "ERROR" or r.exc_info for r in caplog.records)
     assert coord._job_permission_denied == {"get_disk"}
 
 
@@ -2646,9 +2647,10 @@ async def test_async_update_data_reports_system_info_permission_denied() -> None
     coord.get_systeminfo.side_effect = TrueNASCallError("denied", errname="EACCES")
     coord.ds = {"system_info": {}}
 
-    with pytest.raises(coordinator_module.UpdateFailed, match="Read-Only Admin"):
+    with pytest.raises(coordinator_module.UpdateFailed) as excinfo:
         await coord._async_update_data()
 
+    assert str(excinfo.value) == coordinator_module._SYSTEM_INFO_PERMISSION_DENIED
     coord.get_interface.assert_not_awaited()
 
 
@@ -2665,9 +2667,13 @@ async def test_async_update_data_keeps_generic_hostname_error_without_eacces() -
     coord._job_permission_denied = {"get_systeminfo"}
     coord.ds = {"system_info": {}}
 
-    with pytest.raises(coordinator_module.UpdateFailed, match="Essential system"):
+    with pytest.raises(coordinator_module.UpdateFailed) as excinfo:
         await coord._async_update_data()
 
+    message = str(excinfo.value)
+    assert message.startswith("Essential system information (hostname)")
+    assert "EACCES" not in message
+    assert "privilege" not in message
     assert coord._job_permission_denied == set()
 
 
