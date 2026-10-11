@@ -146,8 +146,8 @@ def test_filter_scrubs_records_of_standalone_module_loggers(
     """``apiparser``/``event_push`` get the filter by name from ``api.py``."""
     logger = logging.getLogger(f"custom_components.truenas_ce.{module}")
     with caplog.at_level("WARNING", logger=logger.name):
-        logger.warning("detail %s", f"password={_SECRET}")
-    assert caplog.records[0].getMessage() == "detail password=**REDACTED**"
+        logger.warning("detail %s", f"token={_SECRET}")
+    assert caplog.records[0].getMessage() == "detail token=**REDACTED**"
 
 
 def test_filter_fails_closed_when_scrubbing_raises(
