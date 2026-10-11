@@ -42,9 +42,12 @@ from .const import (
     ERR_UNKNOWN_HOSTNAME,
     ERR_WS_NOT_SUPPORTED,
     ERROR_API_FORMAT,
+    TO_REDACT,
 )
 
 _LOGGER = getLogger(__name__)
+
+_REDACTED = "**REDACTED**"
 
 # Maximum number of characters of an API payload to include in debug logs.
 # Full payloads can be huge (e.g. pool.query with topology or app.query), so
@@ -85,8 +88,28 @@ _EXCEPTION_ERR_MAP: tuple[tuple[type[TrueNASError], str], ...] = (
 )
 
 
+def _redact(data: Any) -> Any:
+    """Return a copy of ``data`` with every ``TO_REDACT`` key masked.
+
+    Mirrors Home Assistant's ``async_redact_data`` (dicts and lists are walked
+    recursively, empty values are kept) without importing Home Assistant, so
+    this module stays HA-independent. Used before logging API params and
+    payloads, which can carry secrets such as certificate private keys.
+    """
+    if isinstance(data, list):
+        return [_redact(item) for item in data]
+    if not isinstance(data, dict):
+        return data
+    return {
+        key: _REDACTED
+        if key in TO_REDACT and value not in (None, "")
+        else _redact(value)
+        for key, value in data.items()
+    }
+
+
 def _summarize_payload(data: Any, limit: int = _LOG_PAYLOAD_LIMIT) -> str:
-    """Return a compact, length-bounded description of an API payload."""
+    """Return a compact, length-bounded, redacted description of an API payload."""
     if isinstance(data, list):
         shape = f"list[{len(data)}]"
     elif isinstance(data, dict):
@@ -94,7 +117,7 @@ def _summarize_payload(data: Any, limit: int = _LOG_PAYLOAD_LIMIT) -> str:
     else:
         shape = type(data).__name__
 
-    text = repr(data)
+    text = repr(_redact(data))
     if len(text) > limit:
         text = f"{text[:limit]}... (truncated, {len(text)} chars total)"
     return f"{shape} {text}"
@@ -318,7 +341,10 @@ class TrueNASAPI:
             return _CallResult(None, self._error, "")
 
         self._error = ""
-        _LOGGER.debug("TrueNAS %s query: %s, %s", self._host, service, params)
+        if _LOGGER.isEnabledFor(DEBUG):
+            _LOGGER.debug(
+                "TrueNAS %s query: %s, %s", self._host, service, _redact(params)
+            )
 
         try:
             if job:

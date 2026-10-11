@@ -30,6 +30,7 @@ from custom_components.truenas_ce import api as api_module
 from custom_components.truenas_ce.api import (
     TrueNASAPI,
     _classify_exception,
+    _redact,
     _summarize_payload,
 )
 from custom_components.truenas_ce.const import (
@@ -103,6 +104,48 @@ def test_summarize_payload_other_type_shape() -> None:
 
 def test_summarize_payload_none_shape() -> None:
     assert _summarize_payload(None) == "NoneType None"
+
+
+# ---------------------------
+#   _redact
+# ---------------------------
+def test_redact_masks_nested_sensitive_keys() -> None:
+    data = [
+        {
+            "name": "cert",
+            "privatekey": "-----BEGIN PRIVATE KEY-----",
+            "nested": {"api_key": "secret", "keep": 1},
+            "items": [{"password": "pw"}],
+        }
+    ]
+    assert _redact(data) == [
+        {
+            "name": "cert",
+            "privatekey": api_module._REDACTED,
+            "nested": {"api_key": api_module._REDACTED, "keep": 1},
+            "items": [{"password": api_module._REDACTED}],
+        }
+    ]
+
+
+def test_redact_keeps_empty_values_and_scalars() -> None:
+    assert _redact({"password": "", "passphrase": None}) == {
+        "password": "",
+        "passphrase": None,
+    }
+    assert _redact("privatekey") == "privatekey"
+
+
+def test_redact_does_not_mutate_input() -> None:
+    data = {"password": "pw"}
+    _redact(data)
+    assert data == {"password": "pw"}
+
+
+def test_summarize_payload_redacts_sensitive_values() -> None:
+    result = _summarize_payload([{"privatekey": "-----BEGIN PRIVATE KEY-----"}])
+    assert "BEGIN PRIVATE KEY" not in result
+    assert api_module._REDACTED in result
 
 
 def test_summarize_payload_truncates_long_text() -> None:
@@ -564,6 +607,21 @@ async def test_query_logs_summarized_payload_when_debug_enabled(
     assert "dict[1 keys]" in caplog.text
 
 
+async def test_query_debug_logs_redact_params_and_response(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Debug logs must not leak secrets from query params or responses."""
+    connected_api._client.call.return_value = [{"privatekey": "PRIVATE-KEY-DATA"}]
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        await connected_api.query(
+            "pool.dataset.unlock", ["tank", {"passphrase": "PASS-DATA"}]
+        )
+    assert "PRIVATE-KEY-DATA" not in caplog.text
+    assert "PASS-DATA" not in caplog.text
+    assert api_module._REDACTED in caplog.text
+
+
 async def test_query_permission_denied_logs_debug_not_error(
     connected_api: TrueNASAPI,
     caplog: pytest.LogCaptureFixture,
@@ -725,6 +783,20 @@ async def test_get_subscription_events_success(connected_api: TrueNASAPI) -> Non
     assert error == ""
     assert is_connection_error is False
     assert connected_api.error == ""
+
+
+async def test_get_subscription_events_debug_log_is_redacted(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Drained events are logged redacted, but returned unchanged."""
+    events = [{"id": 1, "fields": {"password": "EVENT-PW"}}]
+    connected_api._client.get_subscription_events = AsyncMock(return_value=events)
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        result, _, _ = await connected_api.get_subscription_events("sub-123")
+    assert result[0]["fields"]["password"] == "EVENT-PW"
+    assert "EVENT-PW" not in caplog.text
+    assert api_module._REDACTED in caplog.text
 
 
 async def test_get_subscription_events_empty_still_subscribed(
