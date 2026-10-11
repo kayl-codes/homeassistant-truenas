@@ -236,6 +236,8 @@ def test_redact_masks_script_and_command_fields_whole() -> None:
         ("MYSQL_PASSWORD='p w' run", "MYSQL_PASSWORD='**REDACTED**' run"),
         ("restic --password 'my pass' x", "restic --password '**REDACTED**' x"),
         ('tool --token "a b" -v', 'tool --token "**REDACTED**" -v'),
+        ("X-API-Key: k-123 sent", "X-API-Key: **REDACTED** sent"),
+        ("--private-key abc", "--private-key **REDACTED**"),
     ],
 )
 def test_scrub_text_masks_secrets_in_free_text(text: str, expected: str) -> None:
@@ -754,6 +756,13 @@ async def test_query_other_error_warning_is_scrubbed(
     )
     with caplog.at_level("DEBUG", logger=api_module.__name__):
         assert await connected_api.query("system.info") is None
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ]
+    assert len(warnings) == 1
+    assert "token=**REDACTED**" in warnings[0]
     assert "T-SAMPLE" not in caplog.text
 
 

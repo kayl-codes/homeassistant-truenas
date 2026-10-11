@@ -66,8 +66,8 @@ _LOG_PAYLOAD_LIMIT = 5000
 # under ``TO_REDACT`` keys. Quantifiers are bounded to keep matching linear.
 _SENSITIVE_NAME_PATTERN = (
     r"[A-Za-z0-9_-]{0,64}"
-    r"(?:passw(?:or)?d|passphrase|secret|token|api_?key|access_?key"
-    r"|private_?key|encryption_?key|authorization)"
+    r"(?:passw(?:or)?d|passphrase|secret|token|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key|encryption[_-]?key|authorization)"
     r"[A-Za-z0-9_-]{0,64}"
 )
 _SENSITIVE_VALUE_PATTERN = (
@@ -162,7 +162,7 @@ def scrub_strings(data: Any) -> Any:
     return data
 
 
-def _scrub_exception(exc: BaseException) -> BaseException:
+def scrub_exception(exc: BaseException) -> BaseException:
     """Mask secrets in the message of ``exc`` and its cause/context chain.
 
     Rewrites ``args`` (plus a call error's ``reason`` and an OSError's
@@ -196,7 +196,7 @@ def _scrub_exception_text(exc: BaseException) -> None:
 
 def _call_error_text(exc: TrueNASCallError) -> str:
     """Return the (scrubbed) error text stored in ``_error`` for a call error."""
-    _scrub_exception(exc)
+    scrub_exception(exc)
     return exc.reason or str(exc) or ERR_UNKNOWN
 
 
@@ -275,7 +275,7 @@ def _log_call_error(host: str, context: str, exc: TrueNASCallError) -> None:
         ERROR_API_FORMAT,
         host,
         context,
-        _scrub_exception(exc),
+        scrub_exception(exc),
         exc_info=None if permission_denied else exc,
     )
 
@@ -373,7 +373,7 @@ class TrueNASAPI:
                 DEBUG if quiet else ERROR,
                 "Error while communicating with host %s: %s",
                 self._host,
-                _scrub_exception(exc),
+                scrub_exception(exc),
                 exc_info=None if quiet else exc,
             )
             return False
@@ -478,7 +478,7 @@ class TrueNASAPI:
                 'TrueNAS %s unable to fetch data "%s" (%s)',
                 self._host,
                 service,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
             return _CallResult(None, self._error, "")
 
@@ -533,7 +533,7 @@ class TrueNASAPI:
                 'TrueNAS %s unable to subscribe to events "%s" (%s)',
                 self._host,
                 event,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
             return None, None
 
@@ -560,7 +560,7 @@ class TrueNASAPI:
                 "TrueNAS %s failed to unsubscribe %s: %s",
                 self._host,
                 subscription_id,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
@@ -568,7 +568,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to unsubscribe_events %s (%s)",
                 self._host,
                 subscription_id,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
 
     async def get_subscription_events(
@@ -657,7 +657,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to read subscription events %s (%s)",
                 self._host,
                 subscription_id,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
             return [], self._error, isinstance(exc, TrueNASConnectionError)
 
@@ -673,7 +673,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to check subscription status %s (%s)",
                 self._host,
                 subscription_id,
-                _scrub_exception(exc),
+                scrub_exception(exc),
             )
             return False
 
