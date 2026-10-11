@@ -10,6 +10,7 @@ network I/O happens.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -196,6 +197,88 @@ def test_redact_walks_tuples() -> None:
         {"password": api_module._REDACTED},
         "plain",
     )
+
+
+def test_redact_masks_script_and_command_fields_whole() -> None:
+    """Free-text shell code (cloudsync pre/post script, cronjob command)."""
+    data = {
+        "pre_script": "rclone sync --s3-secret-access-key X a b",
+        "post_script": "curl https://u:p@hook.local",
+        "command": "/root/backup.sh nightly",
+        "description": "nightly",
+    }
+    assert _redact(data) == {
+        "pre_script": api_module._REDACTED,
+        "post_script": api_module._REDACTED,
+        "command": api_module._REDACTED,
+        "description": "nightly",
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "AWS_SECRET_ACCESS_KEY=abc123 rclone",
+            "AWS_SECRET_ACCESS_KEY=**REDACTED** rclone",
+        ),
+        ("password: hunter2", "password: **REDACTED**"),
+        ('{"api_key": "k-123", "id": 1}', '{"api_key": "**REDACTED**", "id": 1}'),
+        (
+            "restic --password-file /x --token abc",
+            "restic --password-file **REDACTED** --token **REDACTED**",
+        ),
+        ("Authorization: Bearer eyJabc.def", "Authorization: **REDACTED**"),
+        (
+            "connect to https://admin:pw@nas.local/api failed",
+            "connect to https://**REDACTED**@nas.local/api failed",
+        ),
+        ("MYSQL_PASSWORD='p w' run", "MYSQL_PASSWORD='**REDACTED**' run"),
+        ("restic --password 'my pass' x", "restic --password '**REDACTED**' x"),
+        ('tool --token "a b" -v', 'tool --token "**REDACTED**" -v'),
+    ],
+)
+def test_scrub_text_masks_secrets_in_free_text(text: str, expected: str) -> None:
+    assert api_module.scrub_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Task failed: token expired",
+        "[EINVAL] cloud_sync.query: Invalid filter",
+        "https://nas.local/api/current",
+        "pool tank is ONLINE",
+        "--verbose --dry-run",
+        "[EINVAL] cloudsync_create.credentials: Field required",
+        "ssh://nas.local:22/ user@host",
+    ],
+)
+def test_scrub_text_keeps_plain_text(text: str) -> None:
+    assert api_module.scrub_text(text) == text
+
+
+@pytest.mark.parametrize("chunk", ["a-", "a", "a:", "a.", "-password"])
+def test_scrub_text_stays_linear_on_long_input(chunk: str) -> None:
+    """Long blobs (base64, paths) must not stall the event loop."""
+    text = chunk * 50_000
+    start = time.perf_counter()
+    api_module.scrub_text(text)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_redact_scrubs_free_text_string_values() -> None:
+    data = {"job": {"error": "rclone: secret_access_key=SAK-SAMPLE denied"}}
+    assert "SAK-SAMPLE" not in repr(_redact(data))
+
+
+def test_scrub_strings_walks_values_and_keeps_keys() -> None:
+    data = {"password=x": ["token=T-SAMPLE", ("api_key=K-SAMPLE", 3)], "n": None}
+    result = api_module.scrub_strings(data)
+    assert "SAMPLE" not in repr(result)
+    assert list(result) == ["password=x", "n"]
+    assert result["n"] is None
+    assert isinstance(result["password=x"][1], tuple)
 
 
 def test_redact_does_not_mutate_input() -> None:
@@ -626,6 +709,52 @@ async def test_query_call_error_uses_reason(connected_api: TrueNASAPI) -> None:
     )
     assert await connected_api.query("system.info") is None
     assert connected_api.error == "invalid params"
+
+
+async def test_query_call_error_scrubs_secrets_from_error_and_log(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Secrets echoed in an RPC error reason reach neither ``error`` nor the log.
+
+    The ERROR record carries a traceback, which re-renders ``str(exc)``; it
+    must be clean too.
+    """
+    connected_api._client.call.side_effect = TrueNASCallError(
+        "password=PW-SAMPLE rejected", reason="[EINVAL] password=PW-SAMPLE rejected"
+    )
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await connected_api.query("system.info") is None
+    assert connected_api.error == "[EINVAL] password=**REDACTED** rejected"
+    assert any(record.exc_info for record in caplog.records)
+    assert "PW-SAMPLE" not in caplog.text
+
+
+async def test_connect_failure_scrubs_secrets_in_exception_chain(
+    api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = TrueNASConnectionRefusedError("refused by wss://u:PW-SAMPLE@nas")
+    error.__cause__ = ConnectionRefusedError(
+        111, "refused by http://user:PW-SAMPLE@proxy:3128"
+    )
+    api._client.connect.side_effect = error
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await api.connect() is False
+    assert "PW-SAMPLE" not in caplog.text
+    assert "wss://**REDACTED**@nas" in caplog.text
+
+
+async def test_query_other_error_warning_is_scrubbed(
+    connected_api: TrueNASAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallTimeoutError(
+        "timeout calling with token=T-SAMPLE"
+    )
+    with caplog.at_level("DEBUG", logger=api_module.__name__):
+        assert await connected_api.query("system.info") is None
+    assert "T-SAMPLE" not in caplog.text
 
 
 async def test_query_call_error_falls_back_to_str_then_unknown(

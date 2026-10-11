@@ -1,6 +1,7 @@
 """TrueNAS API."""
 
 import asyncio
+import re
 from logging import DEBUG, ERROR, getLogger
 from typing import Any, NamedTuple
 
@@ -54,6 +55,42 @@ _REDACTED = "**REDACTED**"
 # they are summarized and truncated to keep debug logs readable.
 _LOG_PAYLOAD_LIMIT = 5000
 
+# Secrets embedded in free text -- string values such as a cloud sync task's
+# pre/post script or a job error, and exception messages -- are out of reach
+# of the key-based ``TO_REDACT`` masking. Mask the value of anything shaped
+# like ``<secret-ish name>=value`` / ``name: value`` / ``--name value`` and
+# the userinfo part of a URL. Known limits: an unquoted value is masked up to
+# the first whitespace/``,;&`` only, and ``credentials`` is deliberately not a
+# name -- TrueNAS validation errors (``cloudsync_create.credentials: Field
+# required``) would lose their reason, while the credentials themselves sit
+# under ``TO_REDACT`` keys. Quantifiers are bounded to keep matching linear.
+_SENSITIVE_NAME_PATTERN = (
+    r"[A-Za-z0-9_-]{0,64}"
+    r"(?:passw(?:or)?d|passphrase|secret|token|api_?key|access_?key"
+    r"|private_?key|encryption_?key|authorization)"
+    r"[A-Za-z0-9_-]{0,64}"
+)
+_SENSITIVE_VALUE_PATTERN = (
+    r"(?:bearer|basic)\s+[^\s\"',;&]+"
+    r"|\"[^\"]*\"|'[^']*'"
+    r"|[^\s\"',;&]+"
+)
+_KEY_VALUE_SECRET_RE = re.compile(
+    rf"(?P<lead>(?<![A-Za-z0-9_-]){_SENSITIVE_NAME_PATTERN}[\"']?\s*[:=]\s*)"
+    rf"(?P<value>{_SENSITIVE_VALUE_PATTERN})",
+    re.IGNORECASE,
+)
+_CLI_FLAG_SECRET_RE = re.compile(
+    rf"(?P<lead>(?<![A-Za-z0-9_-])--?{_SENSITIVE_NAME_PATTERN}\s+)"
+    rf"(?P<value>(?!-)(?:{_SENSITIVE_VALUE_PATTERN}))",
+    re.IGNORECASE,
+)
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?P<scheme>\b[a-z][a-z0-9+.-]{0,31}://)[^\s/@]+@", re.IGNORECASE
+)
+# OSError renders ``str()`` from these attributes, not from ``args``.
+_OSERROR_TEXT_ATTRS = ("strerror", "filename", "filename2")
+
 
 class _CallResult(NamedTuple):
     """Outcome of a single ``_query`` call.
@@ -88,14 +125,92 @@ _EXCEPTION_ERR_MAP: tuple[tuple[type[TrueNASError], str], ...] = (
 )
 
 
+def _mask_value(match: re.Match[str]) -> str:
+    """Keep the name/separator of a secret match, mask the value (and its quotes)."""
+    value = match["value"]
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return f"{match['lead']}{value[0]}{_REDACTED}{value[0]}"
+    return f"{match['lead']}{_REDACTED}"
+
+
+def scrub_text(text: str) -> str:
+    """Return ``text`` with secrets embedded in free text masked.
+
+    Complements the key-based ``TO_REDACT`` masking for values that are free
+    text, e.g. ``AWS_SECRET_ACCESS_KEY=...`` in a script, ``--password x`` in a
+    command line or ``https://user:pass@host`` in an error message.
+    """
+    text = _KEY_VALUE_SECRET_RE.sub(_mask_value, text)
+    text = _CLI_FLAG_SECRET_RE.sub(_mask_value, text)
+    return _URL_CREDENTIALS_RE.sub(rf"\g<scheme>{_REDACTED}@", text)
+
+
+def scrub_strings(data: Any) -> Any:
+    """Return a copy of ``data`` with :func:`scrub_text` applied to every string.
+
+    Walks dicts (values only), lists and tuples recursively; used on top of
+    Home Assistant's key-based ``async_redact_data`` for diagnostics.
+    """
+    if isinstance(data, str):
+        return scrub_text(data)
+    if isinstance(data, list):
+        return [scrub_strings(item) for item in data]
+    if isinstance(data, tuple):
+        return tuple(scrub_strings(item) for item in data)
+    if isinstance(data, dict):
+        return {key: scrub_strings(value) for key, value in data.items()}
+    return data
+
+
+def _scrub_exception(exc: BaseException) -> BaseException:
+    """Mask secrets in the message of ``exc`` and its cause/context chain.
+
+    Rewrites ``args`` (plus a call error's ``reason`` and an OSError's
+    ``strerror``/``filename``) in place, so both the logged message and a
+    logged traceback -- which re-renders ``str(exc)`` at format time -- stay
+    clean. Only secrets are removed, so mutating an exception that is also
+    referenced elsewhere is harmless.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        _scrub_exception_text(current)
+        current = current.__cause__ or current.__context__
+    return exc
+
+
+def _scrub_exception_text(exc: BaseException) -> None:
+    """Scrub the text-bearing fields of a single exception in place."""
+    exc.args = tuple(
+        scrub_text(arg) if isinstance(arg, str) else arg for arg in exc.args
+    )
+    if isinstance(exc, TrueNASCallError) and exc.reason:
+        exc.reason = scrub_text(exc.reason)
+    if isinstance(exc, OSError):
+        for attr in _OSERROR_TEXT_ATTRS:
+            value = getattr(exc, attr, None)
+            if isinstance(value, str):
+                setattr(exc, attr, scrub_text(value))
+
+
+def _call_error_text(exc: TrueNASCallError) -> str:
+    """Return the (scrubbed) error text stored in ``_error`` for a call error."""
+    _scrub_exception(exc)
+    return exc.reason or str(exc) or ERR_UNKNOWN
+
+
 def _redact(data: Any) -> Any:
     """Return a copy of ``data`` with every ``TO_REDACT`` key masked.
 
     Mirrors Home Assistant's ``async_redact_data`` (dicts, lists and tuples are
     walked recursively, empty values are kept) without importing Home Assistant, so
     this module stays HA-independent. Used before logging API params and
-    payloads, which can carry secrets such as certificate private keys.
+    payloads, which can carry secrets such as certificate private keys. String
+    values additionally go through :func:`scrub_text` for secrets in free text.
     """
+    if isinstance(data, str):
+        return scrub_text(data)
     if isinstance(data, list):
         return [_redact(item) for item in data]
     if isinstance(data, tuple):
@@ -160,7 +275,7 @@ def _log_call_error(host: str, context: str, exc: TrueNASCallError) -> None:
         ERROR_API_FORMAT,
         host,
         context,
-        exc,
+        _scrub_exception(exc),
         exc_info=None if permission_denied else exc,
     )
 
@@ -258,7 +373,7 @@ class TrueNASAPI:
                 DEBUG if quiet else ERROR,
                 "Error while communicating with host %s: %s",
                 self._host,
-                exc,
+                _scrub_exception(exc),
                 exc_info=None if quiet else exc,
             )
             return False
@@ -354,7 +469,7 @@ class TrueNASAPI:
             else:
                 data = await self._client.call(service, params)
         except TrueNASCallError as exc:
-            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            self._error = _call_error_text(exc)
             _log_call_error(self._host, service, exc)
             return _CallResult(None, self._error, exc.errname or "")
         except TrueNASError as exc:
@@ -363,7 +478,7 @@ class TrueNASAPI:
                 'TrueNAS %s unable to fetch data "%s" (%s)',
                 self._host,
                 service,
-                exc,
+                _scrub_exception(exc),
             )
             return _CallResult(None, self._error, "")
 
@@ -409,7 +524,7 @@ class TrueNASAPI:
         try:
             return await self._client.subscribe(event)
         except TrueNASCallError as exc:
-            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            self._error = _call_error_text(exc)
             _log_call_error(self._host, event, exc)
             return None, None
         except TrueNASError as exc:
@@ -418,7 +533,7 @@ class TrueNASAPI:
                 'TrueNAS %s unable to subscribe to events "%s" (%s)',
                 self._host,
                 event,
-                exc,
+                _scrub_exception(exc),
             )
             return None, None
 
@@ -445,7 +560,7 @@ class TrueNASAPI:
                 "TrueNAS %s failed to unsubscribe %s: %s",
                 self._host,
                 subscription_id,
-                exc,
+                _scrub_exception(exc),
             )
         except TrueNASError as exc:
             self._error = _classify_exception(exc, during_call=True)
@@ -453,7 +568,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to unsubscribe_events %s (%s)",
                 self._host,
                 subscription_id,
-                exc,
+                _scrub_exception(exc),
             )
 
     async def get_subscription_events(
@@ -533,7 +648,7 @@ class TrueNASAPI:
                 return [], self._error, True
             return [], "", False
         except TrueNASCallError as exc:
-            self._error = exc.reason or str(exc) or ERR_UNKNOWN
+            self._error = _call_error_text(exc)
             _log_call_error(self._host, subscription_id, exc)
             return [], self._error, False
         except TrueNASError as exc:
@@ -542,7 +657,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to read subscription events %s (%s)",
                 self._host,
                 subscription_id,
-                exc,
+                _scrub_exception(exc),
             )
             return [], self._error, isinstance(exc, TrueNASConnectionError)
 
@@ -558,7 +673,7 @@ class TrueNASAPI:
                 "TrueNAS %s unable to check subscription status %s (%s)",
                 self._host,
                 subscription_id,
-                exc,
+                _scrub_exception(exc),
             )
             return False
 

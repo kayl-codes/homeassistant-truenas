@@ -116,6 +116,12 @@ TO_REDACT = {
     "application_credential_secret",
     "private_key",
     "encryption_key",
+    # Free-text shell code (cloudsync.query ``pre_script``/``post_script``,
+    # cronjob.query ``command``) often embeds credentials; never displayed,
+    # so mask it whole in raw payload debug logs.
+    "pre_script",
+    "post_script",
+    "command",
 }
 
 # Config-entry data key for the per-dataset stored passphrases dict.
