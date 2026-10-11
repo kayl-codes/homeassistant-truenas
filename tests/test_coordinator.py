@@ -1425,6 +1425,23 @@ async def test_get_app_stats_ignores_non_dict_app_entries() -> None:
     assert coord.ds["app_stats"] == {}
 
 
+def test_upsert_app_stats_entry_redacts_skipped_entries_in_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Skipped app.stats entries are logged redacted, never verbatim."""
+    coord = _bare_coordinator()
+    coord.ds = {"app": {}, "app_stats": {}}
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.truenas_ce"):
+        coord._upsert_app_stats_entry([{"secret_access_key": "S3-SECRET-SAMPLE"}])
+        coord._upsert_app_stats_entry({"token": "TOKEN-SAMPLE"})
+
+    assert "Skipping non-dict app.stats entry" in caplog.text
+    assert "missing/invalid app_name" in caplog.text
+    assert "SAMPLE" not in caplog.text
+    assert coord.ds["app_stats"] == {}
+
+
 async def test_get_app_stats_normalizes_invalid_app_stats_to_none() -> None:
     """Invalid cpu_usage/memory/blkio_read values should be normalized to None."""
     coord = _bare_coordinator()
