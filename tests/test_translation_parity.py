@@ -4,7 +4,7 @@
   a custom integration loads ``translations/<lang>.json`` at runtime and never
   reads ``strings.json``, so a key added only to ``strings.json`` shows up as
   missing UI text. HA does not resolve ``[%key:...%]`` references for custom
-  integrations at runtime either, so ``en.json`` must not contain any.
+  integrations at runtime either, so no locale file may contain any.
 * Every other locale must stay in parity with ``en.json``.
 
 The locale checks mirror the ``.github/validate_translations.py`` CI check at
@@ -57,6 +57,19 @@ def _same_json_value(left: object, right: object) -> bool:
     return _canonical(left) == _canonical(right)
 
 
+def _key_references(value: object, path: str = "") -> list[str]:
+    """Return the path of every string (also inside lists) with a [%key:...%]."""
+    if isinstance(value, str):
+        return [path] if _KEY_REFERENCE_MARKER in value else []
+    if isinstance(value, dict):
+        items = [(f"{path}.{k}" if path else k, v) for k, v in value.items()]
+    elif isinstance(value, list):
+        items = [(f"{path}[{i}]", v) for i, v in enumerate(value)]
+    else:
+        return []
+    return [ref for sub_path, sub in items for ref in _key_references(sub, sub_path)]
+
+
 def _strings_vs_en_diff(
     strings: dict[str, object], english: dict[str, object]
 ) -> list[str]:
@@ -82,14 +95,26 @@ def test_en_json_matches_strings_json(repo_root: Path, vt: ModuleType) -> None:
         _load(integration_dir, "strings.json"),
         _load(integration_dir / "translations", _EN_JSON),
     ), "en.json nests keys differently from strings.json (dotted key vs object)"
-    unresolved = sorted(
-        key
-        for key, value in english.items()
-        if isinstance(value, str) and _KEY_REFERENCE_MARKER in value
-    )
-    assert unresolved == [], (
-        f"unresolved [%key:...%] references in en.json: {unresolved}"
-    )
+
+
+def test_no_locale_contains_key_references(repo_root: Path) -> None:
+    """HA does not resolve [%key:...%] for custom integrations in any locale."""
+    translations_dir = repo_root.joinpath(*_INTEGRATION_DIR, "translations")
+    names = [p.name for p in sorted(translations_dir.glob("*.json"))]
+    assert _EN_JSON in names, f"expected {_EN_JSON} in {translations_dir}"
+    unresolved = {
+        name: refs
+        for name in names
+        if (refs := _key_references(_load(translations_dir, name)))
+    }
+    assert unresolved == {}, f"unresolved [%key:...%] references: {unresolved}"
+
+
+def test_key_references_found_in_nested_strings_and_lists() -> None:
+    """The reference scan must reach strings nested in objects and lists."""
+    ref = "[%key:common::state::on%]"
+    data = {"a": {"b": ref, "c": "plain"}, "l": ["x", ref], "n": 1}
+    assert _key_references(data) == ["a.b", "l[1]"]
 
 
 def test_strings_vs_en_diff_reports_key_paths() -> None:
