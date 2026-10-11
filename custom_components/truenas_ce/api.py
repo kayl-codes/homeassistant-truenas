@@ -92,6 +92,8 @@ _URL_CREDENTIALS_RE = re.compile(
 )
 # OSError renders ``str()`` from these attributes, not from ``args``.
 _OSERROR_TEXT_ATTRS = ("strerror", "filename", "filename2")
+_CYCLE_PLACEHOLDER = "..."
+_MAX_SCRUB_DEPTH = 32
 
 
 class _CallResult(NamedTuple):
@@ -157,19 +159,42 @@ def scrub_strings(data: Any) -> Any:
     return _scrub_value(data, set())
 
 
-def _scrub_value(data: Any, seen: set[int]) -> Any:
-    """Recursive worker of :func:`scrub_strings`; ``seen`` breaks exception loops."""
+def _scrub_value(data: Any, seen: set[int], depth: int = 0) -> Any:
+    """Recursive worker of :func:`scrub_strings`.
+
+    ``seen`` holds the ids of exceptions already scrubbed and of the
+    containers currently being walked, so reference cycles end in a ``...``
+    placeholder (like ``repr``) instead of a ``RecursionError``. Containers
+    nested deeper than ``_MAX_SCRUB_DEPTH`` are replaced by the placeholder
+    too (fail closed), so a direct ``scrub_exception`` call never raises.
+    """
     if isinstance(data, str):
         return scrub_text(data)
+    if isinstance(data, bytes | bytearray):
+        return _scrub_bytes(data)
     if isinstance(data, BaseException):
         return _scrub_exception_chain(data, seen)
-    if isinstance(data, list):
-        return [_scrub_value(item, seen) for item in data]
-    if isinstance(data, tuple):
-        return tuple(_scrub_value(item, seen) for item in data)
-    if isinstance(data, dict):
-        return {key: _scrub_value(value, seen) for key, value in data.items()}
-    return data
+    if not isinstance(data, list | tuple | dict):
+        return data
+    if id(data) in seen or depth >= _MAX_SCRUB_DEPTH:
+        return _CYCLE_PLACEHOLDER
+    seen.add(id(data))
+    try:
+        if isinstance(data, dict):
+            return {
+                key: _scrub_value(value, seen, depth + 1) for key, value in data.items()
+            }
+        items = [_scrub_value(item, seen, depth + 1) for item in data]
+        return items if isinstance(data, list) else tuple(items)
+    finally:
+        seen.discard(id(data))
+
+
+def _scrub_bytes(data: bytes | bytearray) -> bytes | bytearray | str:
+    """Return ``data`` unchanged, or its scrubbed text if it held a secret."""
+    text = data.decode(errors="replace")
+    scrubbed = scrub_text(text)
+    return data if scrubbed == text else scrubbed
 
 
 def scrub_exception(exc: BaseException) -> BaseException:
@@ -215,8 +240,8 @@ def _scrub_exception_text(exc: BaseException, seen: set[int]) -> None:
     if isinstance(exc, OSError):
         for attr in _OSERROR_TEXT_ATTRS:
             value = getattr(exc, attr, None)
-            if isinstance(value, str):
-                setattr(exc, attr, scrub_text(value))
+            if isinstance(value, str | bytes | bytearray):
+                setattr(exc, attr, _scrub_value(value, seen))
 
 
 class SecretScrubFilter(Filter):
