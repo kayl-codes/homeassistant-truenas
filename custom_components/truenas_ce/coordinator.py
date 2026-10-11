@@ -898,6 +898,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         failing (deduped via ``self._job_failing``) and an INFO line once it
         recovers, rather than a traceback on every 60s poll for a
         persistently-failing job -- mirrors ``_log_systemstats_staleness``.
+        A permission error (``TrueNASCallError`` with errname ``EACCES``) is
+        a configuration issue instead: it logs one WARNING without a
+        traceback -- also when an already-failing job's cause turns into
+        EACCES -- and is tracked in ``self._job_permission_denied``.
         Returns True if the job completed without raising, False otherwise,
         so callers with their own success-gated bookkeeping (e.g. the
         update-check throttle) can tell the two apart.
