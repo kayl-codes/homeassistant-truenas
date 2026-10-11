@@ -272,12 +272,14 @@ def _apply_source_entries(
     for entry in source:
         if not isinstance(entry, dict):
             malformed_count += 1
+            # Log only the type: the raw entry may carry credentials, and
+            # api.py's redaction helpers can't be imported here.
             _LOGGER.debug(
                 "Skipping malformed (non-dict) source entry for key=%r/"
-                "key_search=%r: %r",
+                "key_search=%r: %s",
                 key,
                 key_search,
-                entry,
+                type(entry).__name__,
             )
             continue
         any_valid_entry = True

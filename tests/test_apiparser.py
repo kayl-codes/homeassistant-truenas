@@ -7,6 +7,7 @@ HA Core integration submission.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from types import ModuleType
 
@@ -360,6 +361,20 @@ def test_parse_api_malformed_entry_skipped_before_only_skip_filters(
         skip=[{"name": "value", "value": "drop"}],
     )
     assert result == {"name": "keep"}
+
+
+def test_parse_api_malformed_entry_logs_type_not_content(
+    ap: ModuleType, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A skipped non-dict entry is logged by type only, never verbatim, so a
+    malformed row carrying a credential can't leak into the debug log."""
+    source = [["secret_access_key", "S3-SECRET-SAMPLE"], {"id": "1", "name": "a"}]
+    with caplog.at_level(logging.DEBUG, logger=ap._LOGGER.name):
+        result = ap.parse_api(source=source, key="id", vals=[{"name": "name"}])
+    assert result == {"1": {"name": "a"}}
+    assert "Skipping malformed (non-dict) source entry" in caplog.text
+    assert ": list" in caplog.text
+    assert "SAMPLE" not in caplog.text
 
 
 def test_parse_api_keyless_source_does_not_prune(ap: ModuleType) -> None:
