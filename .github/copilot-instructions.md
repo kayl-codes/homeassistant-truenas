@@ -14,7 +14,7 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 ## Defensive API handling
 
 - [ ] **Never assume a response shape.** `TrueNASAPI.query()` returns `None` when a call fails with an `aiotruenas` `TrueNASError` (other exceptions propagate: inside a coordinator poll job, `_run_job` logs them; direct callers such as `async_run_task`, service handlers and entity actions get them unhandled). Callers must check `None`/types (`isinstance`) before indexing or iterating a result.
-  - Pass a possibly-`None` result **directly** to `parse_api`: `None` means "query failed" and keeps the previous snapshot, while an empty list/dict means "nothing left" and prunes it. Substituting `[]`/`{}` for `None` before `parse_api` turns a transient failure into removed entities.
+  - Pass a possibly-`None` result **directly** to `parse_api`. For keyed data (`key`/`key_search`), `None` means "query failed" and keeps the previous snapshot, while an empty list means "nothing left" and prunes it, so substituting `[]`/`{}` for `None` turns a transient failure into removed entities. Keyless calls never prune: both `None` and an empty source only fill missing defaults into the existing values.
 - [ ] **New monitored fields go through `parse_api` specs** (`vals` / `ensure_vals` in `apiparser.py`: `/` paths, `type`, `default`, `convert`), not ad-hoc post-processing in the coordinator.
 - [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics stay redacted. `TO_REDACT` does **not** cover the debug logging in `api.py` (query params and summarized responses are logged as-is), so never add a log line that prints secrets.
 
@@ -26,7 +26,7 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 
 ## GitHub Actions
 
-- [ ] **Actions are pinned to full commit SHAs** with a `# vX.Y.Z` comment (SonarQube S7637).
+- [ ] **External actions are pinned to full commit SHAs** with a `# vX.Y.Z` comment (SonarQube S7637); repository-local `uses: ./...` actions are exempt.
   Exception: `home-assistant/actions/hassfest@master` and `hacs/action@main` intentionally track their branch so validation never goes stale.
-- [ ] **Every workflow/job has a least-privilege `permissions:` block** (start from `contents: read`).
+- [ ] **Every workflow has least-privilege `permissions:`** (start from `contents: read`), set at workflow level (inherited by all jobs) or per job; a job without its own block is fine when the workflow-level one is already minimal.
 - [ ] **Secrets are passed via `env:`**, not expanded inline in `run:` (S7636).
