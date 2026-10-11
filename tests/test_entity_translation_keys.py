@@ -125,8 +125,12 @@ def _field(relative: str) -> str:
 
 
 def _has_entry(relative: str, platform: str, key: str | None) -> bool:
+    """True if the entry's name/default icon is a non-blank string."""
     entry = _load_entity_section(relative).get(platform, {}).get(key)
-    return isinstance(entry, dict) and _field(relative) in entry
+    if not isinstance(entry, dict):
+        return False
+    value = entry.get(_field(relative))
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _check(
@@ -182,3 +186,21 @@ def test_class_translation_key_resolves(relative: str, platform: str, key: str) 
     assert _has_entry(relative, platform, key), (
         f"entity.{platform}.{key}.{_field(relative)} missing in {relative}"
     )
+
+
+@pytest.mark.parametrize("value", ["", "   ", None, 1, ["x"]])
+def test_has_entry_rejects_blank_or_non_string_values(
+    monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    """A present but unusable name/icon must not count as an entry."""
+    section = {_SENSOR: {"k": {"name": value, "default": value}}}
+    monkeypatch.setattr(f"{__name__}._load_entity_section", lambda _relative: section)
+    assert not _has_entry(_STRINGS, _SENSOR, "k")
+    assert not _has_entry(_ICONS, _SENSOR, "k")
+
+
+def test_has_entry_accepts_non_blank_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    section = {_SENSOR: {"k": {"name": "Name", "default": "mdi:nas"}}}
+    monkeypatch.setattr(f"{__name__}._load_entity_section", lambda _relative: section)
+    assert _has_entry(_STRINGS, _SENSOR, "k")
+    assert _has_entry(_ICONS, _SENSOR, "k")
