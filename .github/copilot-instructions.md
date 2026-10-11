@@ -13,14 +13,15 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 
 ## Defensive API handling
 
-- [ ] **Never assume a response shape.** `TrueNASAPI.query()` returns `None` on any error; callers must check `None`/types (`isinstance`) and fall back to defaults before indexing or passing data to `parse_api`.
+- [ ] **Never assume a response shape.** `TrueNASAPI.query()` returns `None` when a call fails with an `aiotruenas` `TrueNASError` (other exceptions propagate and are logged by the coordinator's per-job wrapper). Callers must check `None`/types (`isinstance`) before indexing or iterating a result.
+  - Pass a possibly-`None` result **directly** to `parse_api`: `None` means "query failed" and keeps the previous snapshot, while an empty list/dict means "nothing left" and prunes it. Substituting `[]`/`{}` for `None` before `parse_api` turns a transient failure into removed entities.
 - [ ] **New monitored fields go through `parse_api` specs** (`vals` / `ensure_vals` in `apiparser.py`: `/` paths, `type`, `default`, `convert`), not ad-hoc post-processing in the coordinator.
-- [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics/debug logs stay redacted.
+- [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics stay redacted. `TO_REDACT` does **not** cover the debug logging in `api.py` (query params and summarized responses are logged as-is), so never add a log line that prints secrets.
 
 ## Services and UI strings
 
 - [ ] **Actions are declared in `services.yaml`** (Home Assistant reads it for names/fields); never add an `actions.yaml`.
-- [ ] **UI strings change in `strings.json` and `translations/en.json` together** - the integration loads `translations/*.json` at runtime, and `tests/test_translation_parity.py::test_en_json_matches_strings_json` requires identical keys and values (no `[%key:...%]` references in `en.json`).
+- [ ] **UI strings change in `strings.json` and `translations/en.json` together** - the integration loads `translations/*.json` at runtime, and `tests/test_translation_parity.py::test_en_json_matches_strings_json` requires identical keys and values; `test_no_locale_contains_key_references` rejects `[%key:...%]` references in every locale (HA does not resolve them for custom integrations).
 - [ ] **Locale files stay key-compatible with `en.json`**: `.github/validate_translations.py` (CI) fails on missing/extra keys or differing `{placeholder}` sets in any `translations/<lang>.json`.
 
 ## GitHub Actions
