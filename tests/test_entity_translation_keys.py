@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from custom_components.truenas_ce import sensor_types
+from custom_components.truenas_ce.const import PLATFORMS
 
 _PACKAGE_DIR = Path(sensor_types.__file__).parent
 _PACKAGE = "custom_components.truenas_ce"
@@ -38,7 +39,8 @@ _ICONS = "icons.json"
 _SENSOR = "sensor"
 _BINARY_SENSOR = "binary_sensor"
 _UPDATE = "update"
-_PLATFORMS = {_SENSOR, _BINARY_SENSOR, "button", "switch", _UPDATE}
+# Every platform the integration forwards must contribute descriptions.
+_PLATFORMS = {platform.value for platform in PLATFORMS}
 
 # Reasons shared by several allowlist entries.
 _DATA_NAMED = (
