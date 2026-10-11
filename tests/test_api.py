@@ -148,7 +148,13 @@ def test_redact_masks_cloud_and_ssh_credentials() -> None:
             },
         },
     }
-    oauth = {"type": "DROPBOX", "client_secret": "CS-SAMPLE", "token": "TOK-SAMPLE"}
+    oauth = {
+        "type": "DROPBOX",
+        "client_secret": "CS-SAMPLE",
+        "token": "TOK-SAMPLE",
+        "access_token": "ACC-SAMPLE",
+        "refresh_token": "REF-SAMPLE",
+    }
     replication = {
         "id": 2,
         "encryption_key": "EK-SAMPLE",

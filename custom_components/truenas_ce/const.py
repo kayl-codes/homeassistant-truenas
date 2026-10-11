@@ -106,6 +106,10 @@ TO_REDACT = {
     "secret_access_key",
     "client_secret",
     "token",
+    # OAuth providers nest these inside the ``token`` JSON string today;
+    # listed in case a provider or a later schema exposes them as keys.
+    "access_token",
+    "refresh_token",
     "auth_token",
     "pass",
     "service_account_credentials",
