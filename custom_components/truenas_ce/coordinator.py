@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from aiotruenas import TrueNASState
+from aiotruenas.exceptions import TrueNASCallError
 from homeassistant.components.recorder.statistics import (
     get_last_statistics,
     list_statistic_ids,
@@ -72,6 +73,15 @@ _EXPECTED_DISCONNECT_GRACE = timedelta(minutes=15)
 # hass.data[DOMAIN] key for the cross-instance _connection_failing marker; see
 # TrueNASCoordinator._set_connection_failing.
 _DATA_CONNECTION_FAILING = "connection_failing_by_entry"
+
+# Shown when system.info itself is denied (EACCES) -- typically an API key
+# whose user lost its TrueNAS role after setup. The config flow catches the
+# same condition at setup time (see TrueNASAPI.connection_test).
+_SYSTEM_INFO_PERMISSION_DENIED = (
+    "The TrueNAS API key's user is not allowed to read system information"
+    " (EACCES). Give that user at least the Read-Only Administrator privilege"
+    " in TrueNAS"
+)
 
 
 def _connection_fingerprint(config_entry: ConfigEntry) -> str:
@@ -546,6 +556,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # every 60s poll -- see issue #134.
         self._job_failing: set[str] = set()
 
+        # Subset of _job_failing whose latest failure was a permission error
+        # (EACCES), so callers can report a lost role instead of a generic
+        # failure -- see _run_job and the system.info hostname check.
+        self._job_permission_denied: set[str] = set()
+
         # The ERR_* code of the last failed _async_ensure_connected attempt,
         # deduped so a persistently unreachable host (e.g. deliberately
         # powered off via truenas_ce.system_shutdown) logs one ERROR instead
@@ -891,7 +906,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             await job()
         except Exception as err:
-            if name in self._job_failing:
+            permission_denied = (
+                isinstance(err, TrueNASCallError) and err.errname == "EACCES"
+            )
+            if permission_denied and name not in self._job_permission_denied:
+                # A missing TrueNAS privilege is a configuration issue, not an
+                # integration bug: say so plainly instead of a traceback --
+                # also when the job was already failing for another reason.
+                _LOGGER.warning(
+                    "TrueNAS job %s failed: the API key's user lacks the TrueNAS"
+                    " privilege for this call (%s). Check that user's roles in"
+                    " TrueNAS",
+                    name,
+                    scrub_exception(err),
+                )
+                self._job_failing.add(name)
+            elif name in self._job_failing:
                 _LOGGER.debug(
                     "TrueNAS job %s still failing: %s", name, scrub_exception(err)
                 )
@@ -900,11 +930,16 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Error running TrueNAS job %s: %s", name, scrub_exception(err)
                 )
                 self._job_failing.add(name)
+            if permission_denied:
+                self._job_permission_denied.add(name)
+            else:
+                self._job_permission_denied.discard(name)
             return False
         else:
             if name in self._job_failing:
                 _LOGGER.info("TrueNAS job %s recovered", name)
                 self._job_failing.discard(name)
+            self._job_permission_denied.discard(name)
             return True
 
     # ---------------------------
@@ -993,6 +1028,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # default.
             hostname = self.ds["system_info"].get("hostname", "unknown")
             if not isinstance(hostname, str) or not hostname or hostname == "unknown":
+                if "get_systeminfo" in self._job_permission_denied:
+                    raise UpdateFailed(_SYSTEM_INFO_PERMISSION_DENIED)
                 raise UpdateFailed(
                     "Essential system information (hostname) was missing, empty,"
                     " or invalid in the response from TrueNAS"

@@ -81,7 +81,7 @@
             "permission_denied": "Login succeeded, but the API key's user is not allowed to read system information. Give that user at least the Read-Only Administrator privilege in TrueNAS.",
             "cannot_connect": "Failed to connect to host (TCP port closed or timeout).",
             "malformed_result": "API response is malformed.",
-            "unknown": "Unknown error occurred.",
+            "unknown": "Unknown error occurred. Check the Home Assistant log for details.",
             "unknown_dataset": "Unknown dataset path(s): {datasets}. Verify the spelling and try again.",
             "passphrase_malformed_line": "Malformed passphrase entry (missing '#') on line: {line}. Each line must be in the format: DatasetName#Passphrase.",
             "passphrase_empty_value": "Empty passphrase is not allowed. Offending line: {line}. Each line must be in the format: DatasetName#Passphrase.",

@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiotruenas import TrueNASState
+from aiotruenas.exceptions import TrueNASCallError
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
@@ -85,6 +86,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._poisoned_certificate_commons = set()
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._job_failing = set()
+    coord._job_permission_denied = set()
     coord._connection_failing = False
     coord._connection_failing_error = None
     coord._connection_failing_reason = None
@@ -2242,6 +2244,86 @@ async def test_run_job_scrubs_secrets_from_logged_exception(
     assert "PW-SAMPLE" not in caplog.text
 
 
+async def test_run_job_permission_denied_logs_warning_and_is_tracked(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An EACCES call error logs one WARNING without a traceback and is tracked
+    in _job_permission_denied until the job fails otherwise or recovers.
+    """
+    coord = _bare_coordinator()
+    job = AsyncMock(
+        side_effect=TrueNASCallError("denied", errname="EACCES", reason="Not allowed")
+    )
+    job.__name__ = "get_systeminfo"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        assert await coord._run_job(job) is False
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "get_systeminfo" in warnings[0].message
+    assert "privilege" in warnings[0].message
+    assert not any(r.levelname == "ERROR" or r.exc_info for r in caplog.records)
+    assert coord._job_failing == {"get_systeminfo"}
+    assert coord._job_permission_denied == {"get_systeminfo"}
+
+    job.side_effect = TrueNASCallError("boom", errname="EINVAL")
+    assert await coord._run_job(job) is False
+    assert coord._job_permission_denied == set()
+
+    job.side_effect = TrueNASCallError("denied", errname="EACCES")
+    assert await coord._run_job(job) is False
+    assert coord._job_permission_denied == {"get_systeminfo"}
+
+    job.side_effect = None
+    assert await coord._run_job(job) is True
+    assert coord._job_failing == set()
+    assert coord._job_permission_denied == set()
+
+
+async def test_run_job_permission_denied_warning_is_deduped_and_scrubbed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A persistent EACCES warns once (then DEBUG), without leaking secrets."""
+    coord = _bare_coordinator()
+    job = AsyncMock(
+        side_effect=TrueNASCallError("denied password=PW-SAMPLE", errname="EACCES")
+    )
+    job.__name__ = "get_disk"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        for _ in range(3):
+            assert await coord._run_job(job) is False
+
+    assert sum(r.levelname == "WARNING" for r in caplog.records) == 1
+    assert sum("still failing" in r.message for r in caplog.records) == 2
+    assert "PW-SAMPLE" not in caplog.text
+    assert coord._job_permission_denied == {"get_disk"}
+
+
+async def test_run_job_warns_when_failure_turns_into_permission_denied(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A job already failing for another reason still warns once its cause
+    becomes EACCES, instead of hiding the new cause in a DEBUG line.
+    """
+    coord = _bare_coordinator()
+    job = AsyncMock(side_effect=TrueNASCallError("boom", errname="EINVAL"))
+    job.__name__ = "get_disk"
+
+    with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
+        assert await coord._run_job(job) is False
+        assert any(r.levelname == "ERROR" and r.exc_info for r in caplog.records)
+        assert coord._job_permission_denied == set()
+
+        caplog.clear()
+        job.side_effect = TrueNASCallError("denied", errname="EACCES")
+        assert await coord._run_job(job) is False
+
+    assert sum(r.levelname == "WARNING" for r in caplog.records) == 1
+    assert coord._job_permission_denied == {"get_disk"}
+
+
 # ---------------------------
 #   is_data_path_failing
 # ---------------------------
@@ -2550,6 +2632,43 @@ async def test_async_update_data_raises_when_hostname_is_none_or_empty() -> None
         coord.get_systeminfo.assert_awaited_once()
         coord.get_interface.assert_not_awaited()
         coord.get_pool.assert_not_awaited()
+
+
+async def test_async_update_data_reports_system_info_permission_denied() -> None:
+    """A system.info EACCES (e.g. the key's user lost its role after setup)
+    fails the refresh with an actionable message, not the generic one.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    _stub_all_jobs(coord)
+    coord.get_systeminfo.side_effect = TrueNASCallError("denied", errname="EACCES")
+    coord.ds = {"system_info": {}}
+
+    with pytest.raises(coordinator_module.UpdateFailed, match="Read-Only Admin"):
+        await coord._async_update_data()
+
+    coord.get_interface.assert_not_awaited()
+
+
+async def test_async_update_data_keeps_generic_hostname_error_without_eacces() -> None:
+    """A stale permission flag is cleared once get_systeminfo succeeds, so an
+    empty hostname then reports the generic error, not the permission one.
+    """
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    _stub_all_jobs(coord)
+    coord._job_failing = {"get_systeminfo"}
+    coord._job_permission_denied = {"get_systeminfo"}
+    coord.ds = {"system_info": {}}
+
+    with pytest.raises(coordinator_module.UpdateFailed, match="Essential system"):
+        await coord._async_update_data()
+
+    assert coord._job_permission_denied == set()
 
 
 # ---------------------------
