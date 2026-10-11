@@ -246,6 +246,48 @@ def test_scrub_exception_scrubs_bytearray_oserror_filename2() -> None:
     assert exc.filename2 == "/b/secret=**REDACTED**"
 
 
+def test_scrub_exception_masks_values_under_sensitive_keys() -> None:
+    exc = RuntimeError("failed", {"password": _SAMPLE, "name": "pool1"})
+    scrub_exception(exc)
+    assert exc.args[1] == {"password": "**REDACTED**", "name": "pool1"}
+
+
+def test_filter_masks_values_under_sensitive_keys(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logger = api_module._LOGGER
+    with caplog.at_level("WARNING", logger=logger.name):
+        logger.warning("params %s", [{"api_key": _SAMPLE, "pre_script": ""}])
+    assert caplog.records[0].getMessage() == (
+        "params [{'api_key': '**REDACTED**', 'pre_script': ''}]"
+    )
+
+
+def test_filter_masks_sensitive_keys_in_direct_dict_arg(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logger = api_module._LOGGER
+    with caplog.at_level("WARNING", logger=logger.name):
+        logger.warning("params %s, %s", {"password": _SAMPLE}, ("ok",))
+    assert caplog.records[0].getMessage() == (
+        "params {'password': '**REDACTED**'}, ('ok',)"
+    )
+
+
+def test_redact_masks_non_string_values_and_survives_odd_payloads() -> None:
+    looped: dict[str, object] = {"password": {"nested": _SAMPLE}}
+    looped["self"] = looped
+    payload = {
+        "loop": looped,
+        "raw": f"token={_SAMPLE}".encode(),
+        "err": RuntimeError(f"password={_SAMPLE}"),
+    }
+    redacted = api_module._redact(payload)
+    assert redacted["loop"] == {"password": "**REDACTED**", "self": "..."}
+    assert redacted["raw"] == "token=**REDACTED**"
+    assert _SAMPLE not in repr(redacted)
+
+
 def test_scrub_exception_keeps_plain_bytes_filename() -> None:
     exc = FileNotFoundError(2, "No such file", b"/mnt/data/file")
     scrub_exception(exc)

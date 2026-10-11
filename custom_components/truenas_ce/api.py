@@ -150,11 +150,13 @@ def scrub_text(text: str) -> str:
 
 
 def scrub_strings(data: Any) -> Any:
-    """Return a copy of ``data`` with :func:`scrub_text` applied to every string.
+    """Return a copy of ``data`` with every secret masked.
 
-    Walks dicts (values only), lists and tuples recursively and scrubs
-    exceptions found inside them in place (see :func:`scrub_exception`); used
-    on top of Home Assistant's key-based ``async_redact_data`` for diagnostics.
+    Walks dicts, lists and tuples recursively: values under ``TO_REDACT`` keys
+    are masked whole, every other string goes through :func:`scrub_text` and
+    exceptions found inside are scrubbed in place (see
+    :func:`scrub_exception`). Keys are kept. Used for log arguments, exception
+    args and on top of Home Assistant's ``async_redact_data`` for diagnostics.
     """
     return _scrub_value(data, set())
 
@@ -182,7 +184,10 @@ def _scrub_value(data: Any, seen: set[int], depth: int = 0) -> Any:
     try:
         if isinstance(data, dict):
             return {
-                key: _scrub_value(value, seen, depth + 1) for key, value in data.items()
+                key: _REDACTED
+                if key in TO_REDACT and value not in (None, "")
+                else _scrub_value(value, seen, depth + 1)
+                for key, value in data.items()
             }
         items = [_scrub_value(item, seen, depth + 1) for item in data]
         return items if isinstance(data, list) else tuple(items)
@@ -301,20 +306,7 @@ def _redact(data: Any) -> Any:
     payloads, which can carry secrets such as certificate private keys. String
     values additionally go through :func:`scrub_text` for secrets in free text.
     """
-    if isinstance(data, str):
-        return scrub_text(data)
-    if isinstance(data, list):
-        return [_redact(item) for item in data]
-    if isinstance(data, tuple):
-        return tuple(_redact(item) for item in data)
-    if not isinstance(data, dict):
-        return data
-    return {
-        key: _REDACTED
-        if key in TO_REDACT and value not in (None, "")
-        else _redact(value)
-        for key, value in data.items()
-    }
+    return scrub_strings(data)
 
 
 def _summarize_payload(data: Any, limit: int = _LOG_PAYLOAD_LIMIT) -> str:
