@@ -24,6 +24,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from homeassistant.helpers.typing import UNDEFINED
 
 from custom_components.truenas_ce import sensor_types
 from custom_components.truenas_ce.const import PLATFORMS
@@ -178,6 +179,36 @@ def test_allowlist_entries_reference_existing_descriptions(
 ) -> None:
     unknown = sorted(set(allowlist) - _KNOWN_KEYS)
     assert not unknown, f"allowlist entries for removed descriptions: {unknown}"
+
+
+def _names_without_translation(_platform: str, desc: Any) -> bool:
+    # An explicit name ("" or None) means HA never reads the translated name.
+    return desc.name is not UNDEFINED
+
+
+def _icons_without_translation(platform: str, desc: Any) -> bool:
+    # The device class, or the update platform itself, supplies the icon.
+    return platform == _UPDATE or getattr(desc, "device_class", None) is not None
+
+
+@pytest.mark.parametrize(
+    ("allowlist", "still_justified"),
+    [
+        (_NAME_ALLOWLIST, _names_without_translation),
+        (_ICON_ALLOWLIST, _icons_without_translation),
+    ],
+    ids=["name", "icon"],
+)
+def test_allowlist_entries_still_justified(
+    allowlist: dict[tuple[str, str], str], still_justified: Any
+) -> None:
+    """An allowlisted description must still get its name/icon elsewhere."""
+    unjustified = sorted(
+        (platform, desc.key)
+        for platform, desc in _DESCRIPTIONS
+        if (platform, desc.key) in allowlist and not still_justified(platform, desc)
+    )
+    assert not unjustified, f"allowlist reason no longer holds for: {unjustified}"
 
 
 @pytest.mark.parametrize("relative", [_STRINGS, _EN, _ICONS])
