@@ -2490,13 +2490,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _upsert_app_stats_entry(self, app: object) -> None:
         """Validate and store one app.stats entry."""
         if not isinstance(app, dict):
-            _LOGGER.debug("Skipping non-dict app.stats entry: %r", app)
+            _LOGGER.debug(
+                "Skipping non-dict app.stats entry: %s", _summarize_payload(app)
+            )
             return
         app_name = self._get_app_identifier(app)
         if not isinstance(app_name, str) or not app_name:
             _LOGGER.debug(
-                "Skipping app.stats entry with missing/invalid app_name: %r",
-                app,
+                "Skipping app.stats entry with missing/invalid app_name: %s",
+                _summarize_payload(app),
             )
             return
 
