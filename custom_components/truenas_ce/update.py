@@ -238,6 +238,8 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         self._attr_supported_features = (
             UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
         )
+        # While > 0, install flows own their jobs (see _watch_adopted_upgrade).
+        self._installs_in_flight = 0
 
     async def async_added_to_hass(self) -> None:
         """Watch an upgrade the coordinator adopted before this entity existed."""
@@ -257,11 +259,13 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         The coordinator re-adopts running upgrade jobs after an HA restart or
         entry reload and marks them in ``update_adopted_jobid``. The marker is
         consumed here, so the job is watched once even if the entity is
-        re-added, and an install started from HA is never mistaken for one.
-        The app is never restarted: its state before the upgrade is unknown.
+        re-added, and an install started from HA is never mistaken for one:
+        while it runs, the marker is left for the install flow, which drops it
+        for its own job. The app is never restarted: its state before the
+        upgrade is unknown.
         """
         job_id = self._data.get("update_adopted_jobid")
-        if not job_id:
+        if not job_id or self._installs_in_flight:
             return
         self._data["update_adopted_jobid"] = 0
         self.coordinator.config_entry.async_create_background_task(
@@ -307,6 +311,16 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 },
             )
 
+        self._installs_in_flight += 1
+        try:
+            await self._async_install_upgrade()
+        finally:
+            self._installs_in_flight -= 1
+            # An upgrade adopted meanwhile that is not ours is watched now.
+            self._watch_adopted_upgrade()
+
+    async def _async_install_upgrade(self) -> None:
+        """Start the upgrade job and act on its outcome."""
         job_id = await self.coordinator.api.query("app.upgrade", [self._data["id"]])
         if job_id is None:
             raise HomeAssistantError(
@@ -319,6 +333,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 },
             )
 
+        if self._data.get("update_adopted_jobid") == job_id:
+            # A poll adopted our own job before we stored its id.
+            self._data["update_adopted_jobid"] = 0
         self._data["update_jobid"] = job_id
         self._data["update_state"] = "RUNNING"
         self._data["update_progress"] = 0

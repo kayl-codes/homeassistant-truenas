@@ -835,6 +835,76 @@ async def test_upgrade_adopted_on_a_later_poll_is_watched_once() -> None:
     create_task.call_args.args[1].close()
 
 
+def _install_adopting_job(adopted_jobid: int) -> tuple[TrueNASAppUpdate, AsyncMock]:
+    """Install of job 99 during which a poll adopts ``adopted_jobid``."""
+    update = _install_ready_update([{"state": "SUCCESS"}])
+    _capture_background_task(update)
+    watch = AsyncMock()
+    update._async_watch_late_upgrade = watch
+
+    async def _upgrade(method: str, params: object = None) -> int:
+        assert method == "app.upgrade"
+        update._data["update_adopted_jobid"] = adopted_jobid
+        with patch(
+            "custom_components.truenas_ce.update.TrueNASEntity."
+            "_handle_coordinator_update"
+        ):
+            update._handle_coordinator_update()
+        watch.assert_not_called()  # the install flow owns the app meanwhile
+        return 99
+
+    update.coordinator.api.query = AsyncMock(side_effect=_upgrade)
+    return update, watch
+
+
+async def test_failed_install_start_still_watches_job_adopted_meanwhile() -> None:
+    """An install that cannot start releases the app for the adopted job."""
+    update, watch = _install_adopting_job(42)
+    upgrade = update.coordinator.api.query.side_effect
+
+    async def _upgrade_fails(method: str, params: object = None) -> None:
+        await upgrade(method, params)
+
+    update.coordinator.api.query.side_effect = _upgrade_fails
+
+    with pytest.raises(HomeAssistantError) as err:
+        await update.async_install(version=None, backup=False)
+
+    assert err.value.translation_key == "app_update_failed"
+    assert update._installs_in_flight == 0
+    watch.assert_called_once_with(42, restart=False)
+    update.coordinator.config_entry.async_create_background_task.call_args.args[
+        1
+    ].close()
+
+
+async def test_install_keeps_its_own_job_when_a_poll_adopts_it(
+    notifications: MagicMock,
+) -> None:
+    """A poll adopting the job of a running install starts no second watch."""
+    update, watch = _install_adopting_job(99)
+
+    await update.async_install(version=None, backup=False)
+
+    watch.assert_not_called()
+    assert update._data["update_adopted_jobid"] == 0
+    assert update._installs_in_flight == 0
+    notifications.async_dismiss.assert_called_once()
+
+
+async def test_install_watches_other_job_adopted_meanwhile_afterwards() -> None:
+    """Another upgrade adopted during an install is watched once it is done."""
+    update, watch = _install_adopting_job(42)
+
+    await update.async_install(version=None, backup=False)
+
+    watch.assert_called_once_with(42, restart=False)
+    assert update._data["update_adopted_jobid"] == 0
+    update.coordinator.config_entry.async_create_background_task.call_args.args[
+        1
+    ].close()
+
+
 async def test_entity_without_adopted_upgrade_starts_no_watch() -> None:
     """An install started from HA (no adoption marker) gets no extra watch."""
     update = _install_ready_update([])
