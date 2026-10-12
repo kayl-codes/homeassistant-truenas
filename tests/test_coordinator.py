@@ -78,6 +78,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._vm_push = _PushSourceState()
     coord._container_push = _PushSourceState()
     coord._app_push = _PushSourceState()
+    coord._app_upgrade_jobs_adopted = False
     coord.orphaned_statistics = []
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     coord.host = "truenas.local"
@@ -4698,11 +4699,163 @@ async def test_refresh_app_update_jobs_polls_every_tracked_app() -> None:
             "app3": {"update_jobid": 6},
         }
     }
+    coord._adopt_running_app_upgrade_jobs = AsyncMock()
     coord.async_refresh_app_update_job = AsyncMock()
     await coord._refresh_app_update_jobs()
     assert sorted(
         c.args[0] for c in coord.async_refresh_app_update_job.await_args_list
     ) == ["app1", "app3"]
+
+
+_APP_UPGRADE_JOBS_FILTER = [
+    [["method", "=", "app.upgrade"], ["state", "in", ["RUNNING", "WAITING"]]]
+]
+
+
+def _upgrade_job(job_id: int, app: object, state: str = "RUNNING") -> dict:
+    return {"id": job_id, "method": "app.upgrade", "state": state, "arguments": [app]}
+
+
+async def test_adopt_running_app_upgrade_jobs_tracks_jobs_after_restart(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An upgrade that outlived an HA restart is tracked again (#166 leftover)."""
+    coord = _bare_coordinator()
+    coord.ds = {
+        "app": {
+            "app1": {"update_jobid": 0, "update_state": "unknown"},
+            "app2": {"update_jobid": 0, "update_state": "unknown"},
+            "app3": {"update_jobid": 4, "update_state": "RUNNING"},
+        }
+    }
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[
+            _upgrade_job(11, "app1"),
+            _upgrade_job(12, "app2", state="WAITING"),
+            _upgrade_job(13, "app3"),  # already tracked: keep job 4
+            _upgrade_job(14, "gone"),  # app no longer exists
+            _upgrade_job(15, "app2", state="SUCCESS"),
+            {**_upgrade_job(16, "app2"), "method": "app.stop"},
+            _upgrade_job(17, None),
+            {"id": 18, "method": "app.upgrade", "state": "RUNNING"},
+            "not a job",
+        ]
+    )
+    caplog.set_level(logging.DEBUG, logger="custom_components.truenas_ce")
+
+    await coord._adopt_running_app_upgrade_jobs()
+
+    coord.api.query.assert_awaited_once_with(
+        "core.get_jobs", params=_APP_UPGRADE_JOBS_FILTER
+    )
+    assert coord._app_upgrade_jobs_adopted is True
+    apps = coord.ds["app"]
+    assert apps["app1"] == {
+        "update_jobid": 11,
+        "update_adopted_jobid": 11,
+        "update_state": "RUNNING",
+    }
+    assert apps["app2"] == {
+        "update_jobid": 12,
+        "update_adopted_jobid": 12,
+        "update_state": "WAITING",
+    }
+    assert apps["app3"] == {"update_jobid": 4, "update_state": "RUNNING"}
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.DEBUG,
+            "Tracking upgrade job 11 for app app1 on truenas.local that was "
+            "already running",
+        ),
+        (
+            logging.DEBUG,
+            "Tracking upgrade job 12 for app app2 on truenas.local that was "
+            "already running",
+        ),
+    ]
+
+
+async def test_adopt_running_app_upgrade_jobs_retries_after_api_error() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 0}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=None)
+
+    await coord._adopt_running_app_upgrade_jobs()
+
+    assert coord._app_upgrade_jobs_adopted is False
+    assert coord.ds["app"]["app1"]["update_jobid"] == 0
+
+
+async def test_refresh_app_update_jobs_adopts_running_jobs_once() -> None:
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 0}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(return_value=[])
+    coord.async_refresh_app_update_job = AsyncMock()
+
+    await coord._refresh_app_update_jobs()
+    await coord._refresh_app_update_jobs()
+
+    coord.api.query.assert_awaited_once_with(
+        "core.get_jobs", params=_APP_UPGRADE_JOBS_FILTER
+    )
+
+
+async def test_refresh_app_update_job_skips_job_finished_by_concurrent_pass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Entity loop and coordinator poll may query the same job concurrently;
+    only the pass that still tracks it records the end, so a failure is
+    logged once (#166 leftover)."""
+    coord = _bare_coordinator()
+    vals = {"update_jobid": 5, "update_state": "RUNNING", "update_progress": 40}
+    coord.ds = {"app": {"app1": vals}}
+    failed = {"id": 5, "state": "FAILED", "error": "pull failed"}
+
+    async def _query(method: str, params: object = None) -> list:
+        # The other pass finished the job while this query was in flight.
+        vals["update_jobid"] = 0
+        vals["update_state"] = "FAILED"
+        return [failed]
+
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(side_effect=_query)
+
+    assert await coord.async_refresh_app_update_job("app1") is failed
+    assert vals == {"update_jobid": 0, "update_state": "FAILED", "update_progress": 40}
+    assert caplog.records == []
+
+
+async def test_refresh_app_update_job_records_end_on_replaced_app_dict(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A poll that replaced ``ds["app"]`` mid-query must get the final state."""
+    coord = _bare_coordinator()
+    stale = {"update_jobid": 5, "update_state": "RUNNING"}
+    fresh = {"update_jobid": 5, "update_state": "RUNNING"}
+    coord.ds = {"app": {"app1": stale}}
+
+    async def _query(method: str, params: object = None) -> list:
+        coord.ds["app"] = {"app1": fresh}
+        return [{"id": 5, "state": "FAILED", "error": "pull failed"}]
+
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(side_effect=_query)
+
+    await coord.async_refresh_app_update_job("app1")
+
+    assert fresh["update_jobid"] == 0
+    assert fresh["update_state"] == "FAILED"
+    assert stale == {"update_jobid": 5, "update_state": "RUNNING"}
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.ERROR,
+            "Upgrade job 5 for app app1 on truenas.local finished with state "
+            "FAILED: pull failed",
+        )
+    ]
 
 
 # ---------------------------

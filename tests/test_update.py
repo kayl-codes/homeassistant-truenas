@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -629,11 +630,24 @@ async def test_untracked_job_lookup_error_keeps_recorded_failure(
 
 
 async def test_late_upgrade_failure_is_reported_after_timeout(
-    notifications: MagicMock,
+    notifications: MagicMock, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A job that fails after the install call gave up must still be handled."""
     update = _failing_update({"state": "STOPPED"})
     await _run_late_watch(update, "FAILED")
+
+    host = update.coordinator.host
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            f"App a1 on {host} is STOPPED after its upgrade failed; starting it again",
+        ),
+        (
+            logging.WARNING,
+            f"Upgrade job 99 for app a1 on {host} failed while it was watched in "
+            "the background; the user was notified",
+        ),
+    ]
 
     update.coordinator.api.query.assert_any_await(
         "core.get_jobs", params=[[["id", "=", 99]]]
@@ -692,3 +706,125 @@ async def test_late_watch_does_not_report_a_still_running_job(
     assert "app.start" not in methods
     notifications.async_create.assert_not_called()
     notifications.async_dismiss.assert_not_called()
+
+
+def _adopted_update(job_id: int) -> tuple[TrueNASAppUpdate, MagicMock, AsyncMock]:
+    """App update whose coordinator adopted ``job_id`` after an HA restart."""
+    update = _install_ready_update([])
+    update._data.update({"update_jobid": job_id, "update_adopted_jobid": job_id})
+    create_task = _capture_background_task(update)
+    watch = AsyncMock()
+    update._async_watch_late_upgrade = watch
+    return update, create_task, watch
+
+
+async def test_added_entity_watches_upgrade_adopted_after_restart() -> None:
+    """A job the coordinator re-adopted after setup is watched without restart."""
+    update, create_task, watch = _adopted_update(42)
+    with patch(
+        "custom_components.truenas_ce.update.TrueNASEntity.async_added_to_hass",
+        AsyncMock(),
+    ):
+        await update.async_added_to_hass()
+
+    create_task.assert_called_once()
+    watch.assert_called_once_with(42, restart=False)
+    create_task.call_args.args[1].close()
+    # The marker is consumed, so a re-added entity does not watch it again.
+    assert update._data["update_adopted_jobid"] == 0
+    assert update._data["update_jobid"] == 42
+
+
+async def test_upgrade_adopted_on_a_later_poll_is_watched_once() -> None:
+    """Adoption retried on a later poll still gets a watch, exactly once."""
+    update, create_task, watch = _adopted_update(42)
+    update.async_write_ha_state = MagicMock()
+    with patch(
+        "custom_components.truenas_ce.update.TrueNASEntity._handle_coordinator_update"
+    ):
+        update._handle_coordinator_update()
+        update._handle_coordinator_update()
+
+    create_task.assert_called_once()
+    watch.assert_called_once_with(42, restart=False)
+    create_task.call_args.args[1].close()
+
+
+async def test_entity_without_adopted_upgrade_starts_no_watch() -> None:
+    """An install started from HA (no adoption marker) gets no extra watch."""
+    update = _install_ready_update([])
+    update._data["update_jobid"] = 99
+    create_task = _capture_background_task(update)
+    with patch(
+        "custom_components.truenas_ce.update.TrueNASEntity.async_added_to_hass",
+        AsyncMock(),
+    ):
+        await update.async_added_to_hass()
+
+    create_task.assert_not_called()
+
+
+async def test_adopted_upgrade_failure_is_reported_without_restart(
+    notifications: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    update = _failing_update({"state": "STOPPED"})
+    restart = AsyncMock()
+    update._async_restart_after_failed_upgrade = restart
+    listeners: list = []
+    update.coordinator.async_add_listener = lambda listener: (
+        listeners.append(listener) or MagicMock()
+    )
+    update._data["update_jobid"] = 99
+    watch = asyncio.create_task(update._async_watch_late_upgrade(99, restart=False))
+    await asyncio.sleep(0)
+    update._data["update_state"] = "FAILED"
+    update._data["update_jobid"] = 0
+    for listener in listeners:
+        listener()
+    await watch
+
+    restart.assert_not_awaited()
+    methods = [c.args[0] for c in update.coordinator.api.query.await_args_list]
+    assert methods == ["core.get_jobs"]
+    message = notifications.async_create.call_args.args[1]
+    assert message == (
+        "The update of app **code-server** to version 1.1.40 on "
+        f"{update.coordinator.host} failed.\n\n"
+        f"**Reason reported by TrueNAS:**\n{_MIGRATION_REASON}\n\n"
+        "The update was already running when Home Assistant started, so its "
+        "state before the update is unknown and the app was left untouched; "
+        "please check it in TrueNAS."
+    )
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            f"Upgrade job 99 for app a1 on {update.coordinator.host} failed while "
+            "it was watched in the background; the user was notified",
+        )
+    ]
+
+
+async def test_late_watch_gives_up_after_timeout(
+    notifications: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The background watch is bounded; the coordinator keeps logging."""
+    update = _failing_update({"state": "STOPPED"})
+    update._data["update_jobid"] = 99
+    unsubscribe = MagicMock()
+    update.coordinator.async_add_listener = MagicMock(return_value=unsubscribe)
+    with patch(
+        "custom_components.truenas_ce.update.APP_UPDATE_LATE_WATCH_TIMEOUT", 0.01
+    ):
+        await update._async_watch_late_upgrade(99)
+
+    unsubscribe.assert_called_once()
+    update.coordinator.api.query.assert_not_awaited()
+    notifications.async_create.assert_not_called()
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            f"Upgrade job 99 for app a1 on {update.coordinator.host} is still "
+            "running after 0.01 s; no longer watching it, so a late failure is "
+            "only logged and the app is not restarted",
+        )
+    ]
