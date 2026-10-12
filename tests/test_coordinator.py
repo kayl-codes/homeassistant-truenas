@@ -4734,7 +4734,6 @@ async def test_adopt_running_app_upgrade_jobs_tracks_jobs_after_restart(
             _upgrade_job(11, "app1"),
             _upgrade_job(12, "app2", state="WAITING"),
             _upgrade_job(13, "app3"),  # already tracked: keep job 4
-            _upgrade_job(14, "gone"),  # app no longer exists
             _upgrade_job(15, "app2", state="SUCCESS"),
             {**_upgrade_job(16, "app2"), "method": "app.stop"},
             _upgrade_job(17, None),
@@ -4774,6 +4773,44 @@ async def test_adopt_running_app_upgrade_jobs_tracks_jobs_after_restart(
             "already running",
         ),
     ]
+
+
+async def test_adopt_running_app_upgrade_jobs_retries_until_app_is_known(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A job whose app is missing from the app data is adopted on a later poll."""
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 0, "update_state": "unknown"}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[_upgrade_job(11, "app1"), _upgrade_job(14, "app2")]
+    )
+    caplog.set_level(logging.DEBUG, logger="custom_components.truenas_ce")
+
+    await coord._adopt_running_app_upgrade_jobs()
+
+    assert coord._app_upgrade_jobs_adopted is False
+    assert (
+        logging.DEBUG,
+        "Upgrade job 14 for app app2 on truenas.local is running, but the app is "
+        "not known yet; retrying on the next poll",
+    ) in [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert coord.ds["app"]["app1"]["update_jobid"] == 11
+
+    coord.ds["app"]["app2"] = {"update_jobid": 0, "update_state": "unknown"}
+    await coord._adopt_running_app_upgrade_jobs()
+
+    assert coord._app_upgrade_jobs_adopted is True
+    assert coord.ds["app"]["app1"] == {
+        "update_jobid": 11,
+        "update_adopted_jobid": 11,
+        "update_state": "RUNNING",
+    }
+    assert coord.ds["app"]["app2"] == {
+        "update_jobid": 14,
+        "update_adopted_jobid": 14,
+        "update_state": "RUNNING",
+    }
 
 
 async def test_adopt_running_app_upgrade_jobs_retries_after_api_error() -> None:

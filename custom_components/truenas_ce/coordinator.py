@@ -2223,7 +2223,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         ``update_jobid`` lives in memory only, so after an HA restart or entry
         reload a running upgrade would otherwise show as idle until it ends.
-        A failed lookup is retried on the next poll.
+        A failed lookup is retried on the next poll, and so is a job whose app
+        is not (yet) in the app data; once that job ends, it no longer shows
+        up here and adoption completes.
         """
         jobs = await self.api.query(
             _CORE_GET_JOBS,
@@ -2236,11 +2238,23 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if not isinstance(jobs, list):
             return
-        self._app_upgrade_jobs_adopted = True
+        adopted_all = True
         for job in jobs:
             uid = _upgrade_job_app(job)
-            vals = self.ds["app"].get(uid) if uid else None
-            if vals is None or vals.get("update_jobid"):
+            if uid is None:
+                continue
+            vals = self.ds["app"].get(uid)
+            if vals is None:
+                _LOGGER.debug(
+                    "Upgrade job %s for app %s on %s is running, but the app is "
+                    "not known yet; retrying on the next poll",
+                    job["id"],
+                    uid,
+                    self.host,
+                )
+                adopted_all = False
+                continue
+            if vals.get("update_jobid"):
                 continue
             vals["update_jobid"] = job["id"]
             vals["update_adopted_jobid"] = job["id"]
@@ -2251,6 +2265,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 uid,
                 self.host,
             )
+        self._app_upgrade_jobs_adopted = adopted_all
 
     async def async_refresh_app_update_job(self, uid: str) -> dict[str, Any] | None:
         """Poll the upgrade job of app ``uid`` and store its progress.

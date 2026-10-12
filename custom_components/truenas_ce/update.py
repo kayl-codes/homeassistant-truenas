@@ -75,6 +75,9 @@ _RESTART_SKIPPED_ADOPTED = (
     "before the update is unknown and the app was left untouched; please check "
     "it in TrueNAS."
 )
+_RESTART_SKIPPED_SUPERSEDED = (
+    "A newer update of the app was started meanwhile, so the app was left untouched."
+)
 
 
 def summarize_job_error(error: Any) -> str:
@@ -378,14 +381,14 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         return None
 
     async def _async_handle_upgrade_outcome(
-        self, job: dict[str, Any], *, restart: bool = True
+        self, job: dict[str, Any], *, restart_skipped: str | None = None
     ) -> str | None:
         """Act on a finished upgrade job.
 
         Returns ``None`` on success. Otherwise notifies the user and returns
         the shortened failure reason; the app is restarted if needed only for
-        a confirmed failure, never for an unknown outcome or with
-        ``restart=False``.
+        a confirmed failure, never for an unknown outcome. ``restart_skipped``
+        is the reason shown instead when the app must not be restarted.
         """
         if job.get("state") == "SUCCESS":
             persistent_notification.async_dismiss(self.hass, self._notification_id)
@@ -399,10 +402,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 reason, _RESTART_SKIPPED_UNKNOWN, outcome_known=False
             )
             return reason
-        if restart:
-            restart_outcome = await self._async_restart_after_failed_upgrade()
-        else:
-            restart_outcome = _RESTART_SKIPPED_ADOPTED
+        restart_outcome = (
+            restart_skipped or await self._async_restart_after_failed_upgrade()
+        )
         self._notify_update_failed(reason, restart_outcome)
         return reason
 
@@ -415,8 +417,8 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         ``update_jobid`` once it ends (or vanishes); the outcome is then
         handled exactly like one seen within the install call. With
         ``restart=False`` (a job adopted after setup) a failed upgrade is
-        reported without restarting the app. The watch gives up after
-        ``APP_UPDATE_LATE_WATCH_TIMEOUT``.
+        reported without restarting the app, and so is one replaced by a newer
+        upgrade. The watch gives up after ``APP_UPDATE_LATE_WATCH_TIMEOUT``.
         """
         uid = str(self._data["id"])
         finished = asyncio.Event()
@@ -424,7 +426,8 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         @callback
         def _check_job() -> None:
             app = self.coordinator.data.get("app", {}).get(uid)
-            if not app or not app.get("update_jobid"):
+            # A newer upgrade may already be tracked: only this job counts.
+            if not app or app.get("update_jobid") != job_id:
                 finished.set()
 
         unsubscribe = self.coordinator.async_add_listener(_check_job)
@@ -455,6 +458,7 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 job_id,
             )
             return
+        restart_skipped = self._late_restart_skipped(job_id, restart=restart)
         job = await self._async_resolve_untracked_job(job_id)
         if job.get("state") in APP_UPDATE_JOB_ACTIVE_STATES:
             _LOGGER.warning(
@@ -466,7 +470,10 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 job.get("state"),
             )
             return
-        if await self._async_handle_upgrade_outcome(job, restart=restart) is not None:
+        outcome = await self._async_handle_upgrade_outcome(
+            job, restart_skipped=restart_skipped
+        )
+        if outcome is not None:
             _LOGGER.warning(
                 "Upgrade job %s for app %s on %s failed while it was watched in "
                 "the background; the user was notified",
@@ -474,6 +481,20 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 uid,
                 self.coordinator.host,
             )
+
+    def _late_restart_skipped(self, job_id: Any, *, restart: bool) -> str | None:
+        """Why a late-watched failed upgrade must not restart the app, if so."""
+        newer = self._data.get("update_jobid")
+        if newer and newer != job_id:
+            _LOGGER.debug(
+                "Upgrade job %s for app %s on %s was replaced by newer job %s",
+                job_id,
+                self._data["id"],
+                self.coordinator.host,
+                newer,
+            )
+            return _RESTART_SKIPPED_SUPERSEDED
+        return None if restart else _RESTART_SKIPPED_ADOPTED
 
     async def _async_resolve_untracked_job(self, job_id: Any) -> dict[str, Any]:
         """Final outcome of a job the coordinator already stopped tracking.
@@ -484,6 +505,10 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         """
         if job := await self._async_fetch_job(job_id):
             return job
+        newer = self._data.get("update_jobid")
+        if newer and newer != job_id:
+            # The recorded state belongs to the newer job, not this one.
+            return _JOB_OUTCOME_UNKNOWN
         known = str(self._data.get("update_state") or "unknown")
         if known == "unknown" or known in APP_UPDATE_JOB_ACTIVE_STATES:
             return _JOB_OUTCOME_UNKNOWN
