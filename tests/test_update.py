@@ -239,6 +239,7 @@ def _install_ready_update(job_states: list[dict]) -> TrueNASAppUpdate:
         update._data["update_state"] = job["state"]
         update._data["update_progress"] = job.get("progress", {}).get("percent", 0)
         if job["state"] not in ("RUNNING", "WAITING"):
+            update._data["update_ended_jobid"] = 99
             update._data["update_jobid"] = 0
         return job
 
@@ -353,6 +354,7 @@ async def _run_late_watch(update: TrueNASAppUpdate, final_state: str) -> None:
 
     # A later coordinator poll sees the job end and stops tracking it.
     update._data["update_state"] = final_state
+    update._data["update_ended_jobid"] = 99
     update._data["update_jobid"] = 0
     for listener in listeners:
         listener()
@@ -595,6 +597,7 @@ def _coordinator_finished_update(recorded_state: str) -> TrueNASAppUpdate:
 
     async def _refresh(uid: str) -> None:
         update._data["update_state"] = recorded_state
+        update._data["update_ended_jobid"] = 99
         update._data["update_jobid"] = 0
 
     update.coordinator.async_refresh_app_update_job = AsyncMock(side_effect=_refresh)
@@ -779,6 +782,17 @@ async def test_replaced_job_lookup_failure_ignores_newer_job_state() -> None:
     assert await update._async_resolve_untracked_job(99) is _JOB_OUTCOME_UNKNOWN
 
 
+async def test_lookup_failure_ignores_state_of_a_newer_ended_job() -> None:
+    """A newer job that already ended does not lend its state to the old one."""
+    update = _install_ready_update([])
+    update.coordinator.api.query = AsyncMock(return_value=None)
+    update._data.update(
+        {"update_jobid": 0, "update_ended_jobid": 100, "update_state": "SUCCESS"}
+    )
+
+    assert await update._async_resolve_untracked_job(99) is _JOB_OUTCOME_UNKNOWN
+
+
 def _adopted_update(job_id: int) -> tuple[TrueNASAppUpdate, MagicMock, AsyncMock]:
     """App update whose coordinator adopted ``job_id`` after an HA restart."""
     update = _install_ready_update([])
@@ -849,6 +863,7 @@ async def test_adopted_upgrade_failure_is_reported_without_restart(
     watch = asyncio.create_task(update._async_watch_late_upgrade(99, restart=False))
     await asyncio.sleep(0)
     update._data["update_state"] = "FAILED"
+    update._data["update_ended_jobid"] = 99
     update._data["update_jobid"] = 0
     for listener in listeners:
         listener()

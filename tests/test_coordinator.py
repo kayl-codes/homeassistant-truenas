@@ -4506,16 +4506,21 @@ async def test_refresh_app_carries_forward_update_job_tracking() -> None:
                 "update_progress": 42,
                 "update_state": "RUNNING",
                 "update_description": "Pulling image",
+                "update_ended_jobid": 3,
             }
         }
     }
     coord.state = MagicMock()
-    coord.state.get_app = AsyncMock(return_value={"app1": {"running": True}})
+    coord.state.get_app = AsyncMock(
+        return_value={"app1": {"running": True}, "app2": {"running": True}}
+    )
     coord._refresh_app_update_jobs = AsyncMock()
     await coord._refresh_app()
     assert coord.ds["app"]["app1"]["update_jobid"] == 5
     assert coord.ds["app"]["app1"]["update_progress"] == 42
     assert coord.ds["app"]["app1"]["update_state"] == "RUNNING"
+    assert coord.ds["app"]["app1"]["update_ended_jobid"] == 3
+    assert coord.ds["app"]["app2"]["update_ended_jobid"] == 0
 
 
 # ---------------------------
@@ -4610,6 +4615,7 @@ async def test_refresh_app_update_job_resets_when_finished() -> None:
     app = coord.ds["app"]["app1"]
     assert app["update_jobid"] == 0
     assert app["update_state"] == "SUCCESS"
+    assert app["update_ended_jobid"] == 5
     # Final progress stays visible for troubleshooting.
     assert app["update_progress"] == 100
 
@@ -4657,17 +4663,31 @@ async def test_refresh_app_update_job_failed_keeps_final_progress() -> None:
     app = coord.ds["app"]["app1"]
     assert app["update_jobid"] == 0
     assert app["update_state"] == "FAILED"
+    assert app["update_ended_jobid"] == 5
     assert app["update_progress"] == 40
     assert app["update_description"] == "Pulling image"
 
 
-async def test_refresh_app_update_job_resets_when_job_missing() -> None:
+async def test_refresh_app_update_job_resets_when_job_missing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     coord = _bare_coordinator()
     coord.ds = {"app": {"app1": {"update_jobid": 5}}}
     coord.api = MagicMock()
     coord.api.query = AsyncMock(return_value=[])
     assert await coord.async_refresh_app_update_job("app1") is None
-    assert coord.ds["app"]["app1"]["update_jobid"] == 0
+    app = coord.ds["app"]["app1"]
+    assert app["update_jobid"] == 0
+    assert app["update_ended_jobid"] == 5
+    assert app["update_state"] == "unknown"
+    assert [(r.levelno, r.getMessage(), r.exc_info) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            "Upgrade job 5 for app app1 no longer exists on truenas.local; "
+            "stopped tracking",
+            None,
+        )
+    ]
 
 
 async def test_refresh_app_update_job_keeps_job_on_api_error() -> None:
@@ -4733,7 +4753,7 @@ async def test_adopt_running_app_upgrade_jobs_tracks_jobs_after_restart(
         return_value=[
             _upgrade_job(11, "app1"),
             _upgrade_job(12, "app2", state="WAITING"),
-            _upgrade_job(13, "app3"),  # already tracked: keep job 4
+            _upgrade_job(4, "app3"),  # already tracked
             _upgrade_job(15, "app2", state="SUCCESS"),
             {**_upgrade_job(16, "app2"), "method": "app.stop"},
             _upgrade_job(17, None),
@@ -4773,6 +4793,29 @@ async def test_adopt_running_app_upgrade_jobs_tracks_jobs_after_restart(
             "already running",
         ),
     ]
+
+
+async def test_adopt_running_app_upgrade_jobs_adopts_queued_job_later() -> None:
+    """A second upgrade of a tracked app is adopted once the first one ended."""
+    coord = _bare_coordinator()
+    coord.ds = {"app": {"app1": {"update_jobid": 11, "update_state": "RUNNING"}}}
+    coord.api = MagicMock()
+    coord.api.query = AsyncMock(
+        return_value=[_upgrade_job(11, "app1"), _upgrade_job(12, "app1", "WAITING")]
+    )
+
+    await coord._adopt_running_app_upgrade_jobs()
+
+    assert coord._app_upgrade_jobs_adopted is False
+    assert coord.ds["app"]["app1"] == {"update_jobid": 11, "update_state": "RUNNING"}
+
+    coord.ds["app"]["app1"]["update_jobid"] = 0
+    coord.api.query.return_value = [_upgrade_job(12, "app1")]
+    await coord._adopt_running_app_upgrade_jobs()
+
+    assert coord._app_upgrade_jobs_adopted is True
+    assert coord.ds["app"]["app1"]["update_jobid"] == 12
+    assert coord.ds["app"]["app1"]["update_adopted_jobid"] == 12
 
 
 async def test_adopt_running_app_upgrade_jobs_retries_until_app_is_known(

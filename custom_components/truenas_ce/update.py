@@ -509,6 +509,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         if newer and newer != job_id:
             # The recorded state belongs to the newer job, not this one.
             return _JOB_OUTCOME_UNKNOWN
+        if self._data.get("update_ended_jobid") != job_id:
+            # The recorded state belongs to another (newer) job.
+            return _JOB_OUTCOME_UNKNOWN
         known = str(self._data.get("update_state") or "unknown")
         if known == "unknown" or known in APP_UPDATE_JOB_ACTIVE_STATES:
             return _JOB_OUTCOME_UNKNOWN

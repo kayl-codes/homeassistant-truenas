@@ -2173,6 +2173,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         "update_state",
         "update_description",
         "update_adopted_jobid",
+        "update_ended_jobid",
     )
     _APP_UPDATE_JOB_DEFAULTS: dict[str, Any] = {
         "update_jobid": 0,
@@ -2182,6 +2183,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Set for a job adopted after setup until the update entity has
         # started watching it (see TrueNASAppUpdate._watch_adopted_upgrade).
         "update_adopted_jobid": 0,
+        # The job whose final state ``update_state`` holds once tracking ended.
+        "update_ended_jobid": 0,
     }
 
     async def _refresh_app(self) -> None:
@@ -2224,8 +2227,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``update_jobid`` lives in memory only, so after an HA restart or entry
         reload a running upgrade would otherwise show as idle until it ends.
         A failed lookup is retried on the next poll, and so is a job whose app
-        is not (yet) in the app data; once that job ends, it no longer shows
-        up here and adoption completes.
+        is not (yet) in the app data or that waits behind another tracked job
+        of the same app; once such a job ends, it no longer shows up here and
+        adoption completes.
         """
         jobs = await self.api.query(
             _CORE_GET_JOBS,
@@ -2254,7 +2258,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 adopted_all = False
                 continue
-            if vals.get("update_jobid"):
+            tracked = vals.get("update_jobid")
+            if tracked:
+                # Another upgrade of this app is queued: adopt it once the
+                # tracked one has ended.
+                adopted_all = adopted_all and tracked == job["id"]
                 continue
             vals["update_jobid"] = job["id"]
             vals["update_adopted_jobid"] = job["id"]
@@ -2339,8 +2347,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Only the job id is cleared; the final state, progress and description
         stay visible in the app data for troubleshooting until the next
-        upgrade starts.
+        upgrade starts, and ``update_ended_jobid`` names the job they belong to.
         """
+        vals["update_ended_jobid"] = vals["update_jobid"]
         vals["update_jobid"] = 0
         vals["update_state"] = state
 
