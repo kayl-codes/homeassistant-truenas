@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from logging import getLogger
+from logging import DEBUG, WARNING, getLogger
 from time import monotonic
 from typing import Any
 
@@ -435,7 +435,9 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
         handled exactly like one seen within the install call. With
         ``restart=False`` (a job adopted after setup) a failed upgrade is
         reported without restarting the app, and so is one replaced by a newer
-        upgrade. The watch gives up after ``APP_UPDATE_LATE_WATCH_TIMEOUT``.
+        upgrade. Once a newer upgrade has ended too, its outcome is the one
+        reported, so this job's outcome is only logged. The watch gives up
+        after ``APP_UPDATE_LATE_WATCH_TIMEOUT``.
         """
         uid = str(self._data["id"])
         finished = asyncio.Event()
@@ -487,6 +489,19 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 job.get("state"),
             )
             return
+        if newer := self._newer_ended_job(job_id):
+            # The newer job's outcome owns the notification and the app state.
+            _LOGGER.log(
+                DEBUG if job.get("state") == "SUCCESS" else WARNING,
+                "Upgrade job %s for app %s on %s ended with %s after newer job %s; "
+                "its outcome is only logged",
+                job_id,
+                uid,
+                self.coordinator.host,
+                job.get("state") or "unknown",
+                newer,
+            )
+            return
         outcome = await self._async_handle_upgrade_outcome(
             job, restart_skipped=restart_skipped
         )
@@ -498,6 +513,13 @@ class TrueNASAppUpdate(TrueNASEntity, UpdateEntity):
                 uid,
                 self.coordinator.host,
             )
+
+    def _newer_ended_job(self, job_id: Any) -> int | None:
+        """Id of a newer upgrade job of this app that already ended, if any."""
+        ended = self._data.get("update_ended_jobid")
+        if isinstance(ended, int) and isinstance(job_id, int) and ended > job_id:
+            return ended
+        return None
 
     def _late_restart_skipped(self, job_id: Any, *, restart: bool) -> str | None:
         """Why a late-watched failed upgrade must not restart the app, if so."""

@@ -773,6 +773,75 @@ async def test_replaced_failed_upgrade_does_not_restart_the_app(
     ]
 
 
+async def _watch_job_after_newer_ended(update: TrueNASAppUpdate) -> None:
+    """Watch job 99 after a newer job 100 already ended and was reported."""
+    update._data.update({"update_jobid": 0, "update_ended_jobid": 100})
+    update.coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+    await asyncio.wait_for(update._async_watch_late_upgrade(99), timeout=1)
+
+
+async def test_late_failure_keeps_notification_of_newer_ended_job(
+    notifications: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An older job ending late never replaces the newer job's report."""
+    update = _failing_update({"state": "STOPPED"})
+    restart = AsyncMock()
+    update._async_restart_after_failed_upgrade = restart
+
+    await _watch_job_after_newer_ended(update)
+
+    restart.assert_not_awaited()
+    notifications.async_create.assert_not_called()
+    notifications.async_dismiss.assert_not_called()
+    host = update.coordinator.host
+    assert [(r.levelno, r.getMessage(), r.exc_info) for r in caplog.records] == [
+        (
+            logging.WARNING,
+            f"Upgrade job 99 for app a1 on {host} ended with FAILED after newer "
+            "job 100; its outcome is only logged",
+            None,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("ended", [0, 50, 99, None, "100"])
+async def test_late_failure_is_reported_unless_a_newer_job_ended(
+    notifications: MagicMock, ended: object
+) -> None:
+    """Only a newer ended job keeps an older job's failure out of the report."""
+    update = _failing_update({"state": "RUNNING"})
+    update._data.update({"update_jobid": 0, "update_ended_jobid": ended})
+    update.coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+
+    await asyncio.wait_for(update._async_watch_late_upgrade(99), timeout=1)
+
+    message = notifications.async_create.call_args.args[1]
+    assert _MIGRATION_REASON in message
+
+
+async def test_late_success_keeps_notification_of_newer_ended_job(
+    notifications: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    update = _install_ready_update([])
+    update.coordinator.api.query = AsyncMock(
+        return_value=[{"state": "SUCCESS", "id": 99}]
+    )
+    caplog.set_level(logging.DEBUG, logger="custom_components.truenas_ce")
+
+    await _watch_job_after_newer_ended(update)
+
+    notifications.async_create.assert_not_called()
+    notifications.async_dismiss.assert_not_called()
+    host = update.coordinator.host
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (
+            logging.DEBUG,
+            f"Upgrade job 99 for app a1 on {host} ended with SUCCESS after newer "
+            "job 100; its outcome is only logged",
+        ),
+    ]
+
+
 async def test_replaced_job_lookup_failure_ignores_newer_job_state() -> None:
     """The recorded state of a newer job is never taken as the old outcome."""
     update = _install_ready_update([])
