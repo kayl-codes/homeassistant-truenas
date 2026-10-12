@@ -18,6 +18,13 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 - [ ] **New monitored fields go through `parse_api` specs** (`vals` / `ensure_vals` in `apiparser.py`: `/` paths, `type`, `default`, `convert`), not ad-hoc post-processing in the coordinator.
 - [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics stay redacted. The debug logging in `api.py` masks `TO_REDACT` keys via `_redact` (query params, summarized responses and subscription events); any new log line that prints API params or payloads must go through `_redact`/`_summarize_payload` too (never log raw payloads with `%r`); where `api.py` cannot be imported (e.g. `apiparser.py`, which tests load standalone), log only `type(value).__name__`. Exception texts and error reasons go through `scrub_exception` (free-text secrets such as `password=…`, `--token …` or URL credentials are masked by `scrub_text`); new log lines that print an exception must pass it through `scrub_exception` too, and diagnostics wrap `async_redact_data` output in `scrub_strings`.
 
+## Tests
+
+- [ ] **Tests for log output and error messages pin the exact behaviour, not just a fragment.**
+  A substring check (`match="..."`, `"..." in caplog.text`) or a check for the expected log level alone still passes when a message gains wrong or contradictory guidance, or when the same call also logs an ERROR/traceback.
+  - Compare an error message with the full text or with the module constant it comes from (e.g. `str(excinfo.value) == coordinator_module._SYSTEM_INFO_PERMISSION_DENIED`); for an expected log record, compare its full `record.getMessage()` the same way instead of searching `caplog.text`, and assert its exact `levelno`; where two branches raise or log similar messages, also assert that the other branch's wording is absent.
+  - When a test expects a quieter level (DEBUG/INFO/WARNING instead of ERROR), also assert that no record above the expected level and no `exc_info` traceback was logged by the integration (for an expected WARNING: `not any(r.levelno > logging.WARNING or r.exc_info for r in caplog.records if r.name.startswith("custom_components.truenas_ce"))`, so unrelated loggers cannot fail the test), including after state transitions such as a failure cause changing. If an earlier phase of the same test logs an ERROR on purpose, call `caplog.clear()` before the phase under test so only its records are checked.
+
 ## Services and UI strings
 
 - [ ] **Actions are declared in `services.yaml`** (Home Assistant reads it for names/fields); never add an `actions.yaml`.
