@@ -66,6 +66,8 @@ from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
+_CORE_GET_JOBS = "core.get_jobs"
+
 # How long note_expected_disconnect()'s dedup pre-arming stays valid; see
 # TrueNASCoordinator._expected_disconnect_reason.
 _EXPECTED_DISCONNECT_GRACE = timedelta(minutes=15)
@@ -243,6 +245,23 @@ def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, dict[str, A
     declared type for every not-yet-migrated endpoint.
     """
     return {str(uid): values for uid, values in data.items()}
+
+
+def _upgrade_job_app(job: Any) -> str | None:
+    """App name of a still-active ``app.upgrade`` job, else ``None``.
+
+    ``app.upgrade`` takes the app name as its first argument; anything that
+    is not a well-formed active job is skipped.
+    """
+    if (
+        not isinstance(job, dict)
+        or not job.get("id")
+        or job.get("method") != "app.upgrade"
+        or job.get("state") not in APP_UPDATE_JOB_ACTIVE_STATES
+    ):
+        return None
+    args = job.get("arguments")
+    return str(args[0]) if isinstance(args, list) and args and args[0] else None
 
 
 def _is_truenas_sensor_id(statistic_id: str, device_slug: str) -> bool:
@@ -632,6 +651,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._vm_push = _PushSourceState()
         self._container_push = _PushSourceState()
         self._app_push = _PushSourceState()
+        # Running app upgrade jobs are looked up once after setup, so an
+        # upgrade that outlived an HA restart or entry reload is tracked again.
+        self._app_upgrade_jobs_adopted = False
 
     # ---------------------------
     #   connected
@@ -1321,7 +1343,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.ds["system_info"] = parse_api(
             data=self.ds["system_info"],
             source=await self.api.query(
-                "core.get_jobs",
+                _CORE_GET_JOBS,
                 params=[[["id", "=", self.ds["system_info"].get("update_jobid")]]],
             ),
             vals=[
@@ -2150,12 +2172,19 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         "update_progress",
         "update_state",
         "update_description",
+        "update_adopted_jobid",
+        "update_ended_jobid",
     )
     _APP_UPDATE_JOB_DEFAULTS: dict[str, Any] = {
         "update_jobid": 0,
         "update_progress": 0,
         "update_state": "unknown",
         "update_description": "",
+        # Set for a job adopted after setup until the update entity has
+        # started watching it (see TrueNASAppUpdate._watch_adopted_upgrade).
+        "update_adopted_jobid": 0,
+        # The job whose final state ``update_state`` holds once tracking ended.
+        "update_ended_jobid": 0,
     }
 
     async def _refresh_app(self) -> None:
@@ -2186,9 +2215,65 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         entity from staying "in progress" forever (e.g. after HA restarts mid
         upgrade or if the entity's tracking loop gave up).
         """
+        if not self._app_upgrade_jobs_adopted:
+            await self._adopt_running_app_upgrade_jobs()
         for uid, vals in self.ds["app"].items():
             if vals.get("update_jobid"):
                 await self.async_refresh_app_update_job(uid)
+
+    async def _adopt_running_app_upgrade_jobs(self) -> None:
+        """Track app upgrade jobs that were already running before setup.
+
+        ``update_jobid`` lives in memory only, so after an HA restart or entry
+        reload a running upgrade would otherwise show as idle until it ends.
+        A failed lookup is retried on the next poll, and so is a job whose app
+        is not (yet) in the app data or that waits behind another tracked job
+        of the same app; once such a job ends, it no longer shows up here and
+        adoption completes.
+        """
+        jobs = await self.api.query(
+            _CORE_GET_JOBS,
+            params=[
+                [
+                    ["method", "=", "app.upgrade"],
+                    ["state", "in", sorted(APP_UPDATE_JOB_ACTIVE_STATES)],
+                ]
+            ],
+        )
+        if not isinstance(jobs, list):
+            return
+        adopted_all = True
+        for job in jobs:
+            uid = _upgrade_job_app(job)
+            if uid is None:
+                continue
+            vals = self.ds["app"].get(uid)
+            if vals is None:
+                _LOGGER.debug(
+                    "Upgrade job %s for app %s on %s is running, but the app is "
+                    "not known yet; retrying on the next poll",
+                    job["id"],
+                    uid,
+                    self.host,
+                )
+                adopted_all = False
+                continue
+            tracked = vals.get("update_jobid")
+            if tracked:
+                # Another upgrade of this app is queued: adopt it once the
+                # tracked one has ended.
+                adopted_all = adopted_all and tracked == job["id"]
+                continue
+            vals["update_jobid"] = job["id"]
+            vals["update_adopted_jobid"] = job["id"]
+            vals["update_state"] = job["state"]
+            _LOGGER.debug(
+                "Tracking upgrade job %s for app %s on %s that was already running",
+                job["id"],
+                uid,
+                self.host,
+            )
+        self._app_upgrade_jobs_adopted = adopted_all
 
     async def async_refresh_app_update_job(self, uid: str) -> dict[str, Any] | None:
         """Poll the upgrade job of app ``uid`` and store its progress.
@@ -2208,11 +2293,18 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not job_id:
             return None
 
-        jobs = await self.api.query("core.get_jobs", params=[[["id", "=", job_id]]])
+        jobs = await self.api.query(_CORE_GET_JOBS, params=[[["id", "=", job_id]]])
         if jobs is None:
             # Transient API error: keep tracking, retry on the next poll.
             return None
         job = jobs[0] if jobs and isinstance(jobs[0], dict) else None
+        # The entity's install loop and the coordinator poll can query the
+        # same job concurrently, and a poll may replace the app dict meanwhile:
+        # only the pass that still finds the job tracked records its end, so
+        # a failure is logged once.
+        vals = self.ds.get("app", {}).get(uid)
+        if not vals or vals.get("update_jobid") != job_id:
+            return job
         if job is None:
             _LOGGER.warning(
                 "Upgrade job %s for app %s no longer exists on %s; stopped tracking",
@@ -2223,24 +2315,31 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reset_app_update_job(vals, state="unknown")
             return None
 
+        self._record_app_update_job(uid, vals, job)
+        return job
+
+    def _record_app_update_job(
+        self, uid: str, vals: dict[str, Any], job: dict[str, Any]
+    ) -> None:
+        """Store a polled upgrade job's progress; stop tracking once it ended."""
         state = str(job.get("state") or "unknown")
         progress = job.get("progress") or {}
         vals["update_state"] = state
         vals["update_progress"] = int(progress.get("percent") or 0)
         vals["update_description"] = str(progress.get("description") or "")
 
-        if state not in APP_UPDATE_JOB_ACTIVE_STATES:
-            if state != "SUCCESS":
-                _LOGGER.error(
-                    "Upgrade job %s for app %s on %s finished with state %s: %s",
-                    job_id,
-                    uid,
-                    self.host,
-                    state,
-                    job.get("error") or "no error message",
-                )
-            self._reset_app_update_job(vals, state=state)
-        return job
+        if state in APP_UPDATE_JOB_ACTIVE_STATES:
+            return
+        if state != "SUCCESS":
+            _LOGGER.error(
+                "Upgrade job %s for app %s on %s finished with state %s: %s",
+                vals["update_jobid"],
+                uid,
+                self.host,
+                state,
+                job.get("error") or "no error message",
+            )
+        self._reset_app_update_job(vals, state=state)
 
     @staticmethod
     def _reset_app_update_job(vals: dict[str, Any], *, state: str) -> None:
@@ -2248,8 +2347,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Only the job id is cleared; the final state, progress and description
         stay visible in the app data for troubleshooting until the next
-        upgrade starts.
+        upgrade starts, and ``update_ended_jobid`` names the job they belong to.
         """
+        vals["update_ended_jobid"] = vals["update_jobid"]
         vals["update_jobid"] = 0
         vals["update_state"] = state
 

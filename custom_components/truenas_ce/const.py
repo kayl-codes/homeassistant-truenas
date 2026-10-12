@@ -43,6 +43,9 @@ APP_UPDATE_JOB_POLL_INTERVAL = 2
 # Give up on entity-side job tracking after this long; the coordinator's
 # regular poll keeps mirroring the job state afterwards.
 APP_UPDATE_JOB_TIMEOUT = 30 * 60
+# Stop the background watch for a late upgrade outcome after this long (s);
+# the coordinator keeps mirroring the job and still logs a failure.
+APP_UPDATE_LATE_WATCH_TIMEOUT = 24 * 60 * 60
 
 ERR_CERT_VERIFY_FAILED = "certificate_verify_failed"
 ERR_HTTP_USED = "http_used"
