@@ -10,6 +10,7 @@ network I/O happens.
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -386,6 +387,14 @@ async def test_connect_returns_true_when_already_connected(
     connected_api._client.connect.assert_not_awaited()
 
 
+async def test_connect_when_already_connected_clears_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._error = "stale error"
+    assert await connected_api.connect() is True
+    assert connected_api.error == ""
+
+
 async def test_connect_success_clears_error(api: TrueNASAPI) -> None:
     api._error = "stale error"
     assert await api.connect() is True
@@ -657,7 +666,8 @@ async def test_connection_test_not_fooled_by_concurrent_eacces(
     assert await connected_api.query("smb.status") is None
     release.set()
     assert await test_task == (False, ERR_TIMEOUT)
-    assert connected_api.error == ERR_TIMEOUT
+    # error is per task: this task's own last call was the failed smb.status.
+    assert connected_api.error == "[EACCES] Not authorized"
 
 
 async def test_connection_test_not_fooled_by_concurrent_call_error(
@@ -682,7 +692,164 @@ async def test_connection_test_not_fooled_by_concurrent_call_error(
     assert await connected_api.query("smb.status") is None
     release.set()
     assert await test_task == (False, ERR_MALFORMED_RESULT)
-    assert connected_api.error == ERR_MALFORMED_RESULT
+    # error is per task: this task's own last call was the failed smb.status.
+    assert connected_api.error == "unrelated failure"
+
+
+async def test_error_not_overwritten_by_concurrent_task(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A query failing in another task must not leak into this task's error.
+
+    Entity actions read ``api.error`` right after awaiting ``query()``; a poll
+    job failing meanwhile on the shared instance must not turn a successful
+    action into a reported failure (or the other way round).
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
+        if service == "vm.start":
+            started.set()
+            await release.wait()
+            return None
+        raise TrueNASCallError("boom", reason="poll failure")
+
+    connected_api._client.call.side_effect = fake_call
+
+    async def action() -> str:
+        await connected_api.query("vm.start", [1])
+        return connected_api.error
+
+    action_task = asyncio.create_task(action())
+    await started.wait()
+
+    async def poll() -> str:
+        await connected_api.query("pool.query")
+        return connected_api.error
+
+    assert await asyncio.create_task(poll()) == "poll failure"
+    release.set()
+    assert await action_task == ""
+
+
+async def test_own_failure_survives_concurrent_success(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A concurrent successful query must not clear this task's failure."""
+    failed = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
+        if service == "vm.start":
+            raise TrueNASCallError("boom", reason="action failure")
+        return []
+
+    connected_api._client.call.side_effect = fake_call
+
+    async def action() -> str:
+        await connected_api.query("vm.start", [1])
+        # Read the error only after the concurrent success below has run, so a
+        # shared error would have been cleared by then.
+        failed.set()
+        await release.wait()
+        return connected_api.error
+
+    action_task = asyncio.create_task(action())
+    await failed.wait()
+    assert await connected_api.query("pool.query") == []
+    assert connected_api.error == ""
+    release.set()
+    assert await action_task == "action failure"
+
+
+async def test_success_clears_previous_error_in_same_task(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="nope")
+    await connected_api.query("smb.status")
+    assert connected_api.error == "nope"
+    connected_api._client.call.side_effect = None
+    connected_api._client.call.return_value = {"ok": True}
+    await connected_api.query("smb.status")
+    assert connected_api.error == ""
+
+
+async def test_child_task_error_invisible_to_parent(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A child task's error must not leak back into a non-empty parent error."""
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="parent")
+    await connected_api.query("smb.status")
+
+    async def child() -> str:
+        connected_api._client.call.side_effect = TrueNASCallError(
+            "boom", reason="child"
+        )
+        await connected_api.query("pool.query")
+        return connected_api.error
+
+    assert await asyncio.create_task(child()) == "child"
+    assert connected_api.error == "parent"
+
+
+async def test_error_is_kept_per_instance(connected_api: TrueNASAPI) -> None:
+    """Two API instances (two config entries) never share their error."""
+    other = TrueNASAPI("other.local", "key")
+    assert other.error == ""
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="nope")
+    await connected_api.query("smb.status")
+    other._error = "other failure"
+    assert connected_api.error == "nope"
+    assert other.error == "other failure"
+
+
+async def test_error_mapping_drops_discarded_and_cleared_instances(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A long-lived task using many short-lived instances must not keep them."""
+    other = TrueNASAPI("other.local", "key")
+    other._error = "other failure"
+    probes = [TrueNASAPI(f"short{index}.local", "key") for index in range(5)]
+    for probe in probes:
+        probe._error = "probe failure"
+    refs = [probe._error_key for probe in probes]
+    assert len(api_module._CALL_ERRORS.get()) == 6
+    del probe, probes
+    gc.collect()
+    assert all(ref() is None for ref in refs)
+
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="nope")
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {
+        other._error_key: "other failure",
+        connected_api._error_key: "nope",
+    }
+
+    connected_api._client.call.side_effect = None
+    connected_api._client.call.return_value = {"ok": True}
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {other._error_key: "other failure"}
+    assert connected_api.error == ""
+    assert other.error == "other failure"
+
+
+async def test_unchanged_error_write_still_drops_discarded_instances(
+    connected_api: TrueNASAPI,
+) -> None:
+    """Rewriting the current value must not skip dropping discarded instances."""
+    probe = TrueNASAPI("short.local", "key")
+    probe._error = "probe failure"
+    ref = probe._error_key
+    del probe
+    gc.collect()
+    assert ref() is None
+    assert connected_api.error == ""
+
+    connected_api._client.call.return_value = {"ok": True}
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {}
+    assert connected_api.error == ""
 
 
 # ---------------------------

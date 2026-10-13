@@ -1037,9 +1037,8 @@ def _coord_with_active_app_stats_sub() -> TrueNASCoordinator:
 async def test_get_app_stats_raises_when_reading_subscription_events_fails() -> None:
     """A failed read is signaled via get_subscription_events()'s own returned
 
-    error, not the coordinator's shared api.error (get_app_stats runs
-    concurrently with other jobs on the same TrueNASAPI instance, so that
-    attribute isn't safe to read back here -- see the raise's own comment).
+    error, not api.error (get_app_stats decides from the call's own
+    returned outcome -- see the raise's own comment).
     Uses is_connection_error=False, as a real application-level failure
     (e.g. a permission error) would -- must surface as UpdateFailed
     regardless of self.api.connected()'s current (possibly unrelated,

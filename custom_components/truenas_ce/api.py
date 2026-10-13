@@ -2,7 +2,11 @@
 
 import asyncio
 import re
+import weakref
+from collections.abc import Mapping
+from contextvars import ContextVar
 from logging import DEBUG, ERROR, Filter, LogRecord, getLogger
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from aiotruenas import TrueNASClient
@@ -95,13 +99,27 @@ _OSERROR_TEXT_ATTRS = ("strerror", "filename", "filename2")
 _CYCLE_PLACEHOLDER = "..."
 _MAX_SCRUB_DEPTH = 32
 
+# Last error per TrueNASAPI instance (keyed by its _error_key token), stored
+# per asyncio task: a caller that reads ``api.error`` right after awaiting
+# ``query()`` sees only its own call's outcome, never one written meanwhile by
+# a concurrent caller (a poll job, an entity action) on the shared instance.
+# The mapping is replaced, never mutated, so a task's copied context stays
+# isolated from its parent's: an error recorded in a child task is invisible
+# to its parent, and a new task starts with its creator's last error until its
+# own first call -- so read ``error`` only right after this task's own call.
+# Keys are weak references, so the mapping never keeps an instance alive;
+# each write drops dead instances and cleared ("") entries, so a long-lived
+# task using many short-lived instances does not accumulate them.
+_CALL_ERRORS: ContextVar[Mapping[weakref.ref["TrueNASAPI"], str]] = ContextVar(
+    "truenas_ce_call_errors", default=MappingProxyType({})
+)
+
 
 class _CallResult(NamedTuple):
     """Outcome of a single ``_query`` call.
 
     ``error`` and ``errname`` belong to this call only (both "" on
-    success), unlike ``TrueNASAPI.error``, which concurrent queries on the
-    shared instance overwrite.
+    success); ``TrueNASAPI.error`` holds the same text for the calling task.
     """
 
     data: Any
@@ -378,6 +396,12 @@ class TrueNASAPI:
     integration's defensive style. The one exception is
     ``get_subscription_events()``, which instead always returns a
     ``(events, error, is_connection_error)`` tuple -- see its own docstring.
+
+    The recorded error is kept per asyncio task (see ``_CALL_ERRORS``), so
+    reading ``error`` right after an awaited call is safe even while other
+    tasks use the same instance. Read it only in the task that made the call:
+    a call run in a child task (e.g. ``asyncio.create_task``) records its
+    error there, so return it with the task's result instead.
     """
 
     def __init__(
@@ -413,7 +437,7 @@ class TrueNASAPI:
 
         self._host = host
         self._scheme = scheme
-        self._error = ""
+        self._error_key = weakref.ref(self)
         self._closed = False
         self._client = TrueNASClient(
             host,
@@ -447,6 +471,7 @@ class TrueNASAPI:
             return False
 
         if self._client.connected:
+            self._error = ""
             return True
 
         try:
@@ -531,14 +556,12 @@ class TrueNASAPI:
     ) -> _CallResult:
         """Run ``query`` and also return this call's error and errname.
 
-        Both are returned rather than only stored on the instance, so
-        concurrent queries on the shared API can never overwrite them for
-        connection_test. The errname is e.g. "EACCES" for a failed call and
-        "" on success or non-call errors.
+        The error matches what ``self.error`` then reports for the calling
+        task; the errname is only returned here (e.g. "EACCES" for a failed
+        call, "" on success or non-call errors), for connection_test.
         """
         if not self.connected() and not await self.connect():
-            # connect() set self._error right before returning, with no await
-            # in between, so no other query can have overwritten it yet.
+            # connect() just recorded this task's connect error.
             return _CallResult(None, self._error, "")
 
         self._error = ""
@@ -661,15 +684,13 @@ class TrueNASAPI:
         """Read events from a subscription queue.
 
         Also returns the call's own error (if any) and whether that error is
-        specifically attributable to this call's own connection attempt/loss,
-        alongside ``self._error`` (kept for the existing "last error"
-        diagnostic consumers throughout the integration). A caller that can
-        overlap with other callers on this shared TrueNASAPI instance (e.g.
-        entity actions running alongside the poll) cannot rely on reading
-        back self.error/self.connected() after this returns: another caller
-        can change either during this call's own internal await, so neither
-        reflects whether THIS call's own failure
-        was actually connection-related. is_connection_error is True for
+        specifically attributable to this call's own connection attempt/loss.
+        A caller that can overlap with other callers on this shared
+        TrueNASAPI instance (e.g. entity actions running alongside the poll)
+        cannot rely on reading back self.connected() after this returns:
+        another caller can change it during this call's own internal await,
+        so it does not reflect whether THIS call's own failure was actually
+        connection-related. is_connection_error is True for
         this call's own initial connect() check failing, for any
         TrueNASConnectionError raised mid-call (isinstance, so this also
         covers e.g. TrueNASConnectionClosedError/TrueNASUnknownError), and
@@ -684,9 +705,8 @@ class TrueNASAPI:
         connection state.
         """
         if not self.connected() and not await self.connect():
-            # Captured into a local instead of re-reading self._error for the
-            # return below, so this stays race-free even if a future
-            # refactor adds an await before the return.
+            # Captured into a local so the return below does not depend on
+            # re-reading self._error.
             connect_error = self._error or ERR_CONNECTION_REFUSED
             self._error = connect_error
             _LOGGER.warning(
@@ -767,8 +787,35 @@ class TrueNASAPI:
         return self._client
 
     @property
+    def _error(self) -> str:
+        """Return the calling task's last recorded error for this instance."""
+        return _CALL_ERRORS.get().get(self._error_key, "")
+
+    @_error.setter
+    def _error(self, value: str) -> None:
+        errors = _CALL_ERRORS.get()
+        has_dead = any(key() is None for key in errors)
+        if not has_dead and errors.get(self._error_key, "") == value:
+            return
+        kept = {
+            key: error
+            for key, error in errors.items()
+            if key is not self._error_key and key() is not None
+        }
+        if value:
+            kept[self._error_key] = value
+        _CALL_ERRORS.set(MappingProxyType(kept))
+
+    @property
     def error(self) -> str:
-        """Return error."""
+        """Return the error of the calling task's last call ("" on success).
+
+        Set by connect(), connection_test(), query(), subscribe_events() and
+        get_subscription_events(). The best-effort is_subscribed() and
+        unsubscribe_events() only record a failure and never clear it;
+        unsubscribe_events() only logs a call TrueNAS rejects (e.g. for an
+        already-gone subscription).
+        """
         return self._error
 
     @property
