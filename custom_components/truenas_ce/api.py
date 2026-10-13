@@ -799,7 +799,9 @@ class TrueNASAPI:
 
         Set by connect(), connection_test(), query(), subscribe_events() and
         get_subscription_events(). The best-effort is_subscribed() and
-        unsubscribe_events() only record a failure and never clear it.
+        unsubscribe_events() only record a failure and never clear it;
+        unsubscribe_events() only logs a call TrueNAS rejects (e.g. for an
+        already-gone subscription).
         """
         return self._error
 
