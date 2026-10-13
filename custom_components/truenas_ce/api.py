@@ -793,7 +793,12 @@ class TrueNASAPI:
 
     @property
     def error(self) -> str:
-        """Return the error of the calling task's last call ("" on success)."""
+        """Return the error of the calling task's last call ("" on success).
+
+        Set by connect(), connection_test(), query(), subscribe_events() and
+        get_subscription_events(). The best-effort is_subscribed() and
+        unsubscribe_events() only record a failure and never clear it.
+        """
         return self._error
 
     @property
