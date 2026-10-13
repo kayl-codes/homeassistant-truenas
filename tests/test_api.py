@@ -10,6 +10,7 @@ network I/O happens.
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -800,6 +801,36 @@ async def test_error_is_kept_per_instance(connected_api: TrueNASAPI) -> None:
     await connected_api.query("smb.status")
     other._error = "other failure"
     assert connected_api.error == "nope"
+    assert other.error == "other failure"
+
+
+async def test_error_mapping_drops_discarded_and_cleared_instances(
+    connected_api: TrueNASAPI,
+) -> None:
+    """A long-lived task using many short-lived instances must not keep them."""
+    other = TrueNASAPI("other.local", "key")
+    other._error = "other failure"
+    probes = [TrueNASAPI(f"short{index}.local", "key") for index in range(5)]
+    for probe in probes:
+        probe._error = "probe failure"
+    refs = [probe._error_key for probe in probes]
+    assert len(api_module._CALL_ERRORS.get()) == 6
+    del probe, probes
+    gc.collect()
+    assert all(ref() is None for ref in refs)
+
+    connected_api._client.call.side_effect = TrueNASCallError("boom", reason="nope")
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {
+        other._error_key: "other failure",
+        connected_api._error_key: "nope",
+    }
+
+    connected_api._client.call.side_effect = None
+    connected_api._client.call.return_value = {"ok": True}
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {other._error_key: "other failure"}
+    assert connected_api.error == ""
     assert other.error == "other failure"
 
 

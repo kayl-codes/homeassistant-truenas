@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import weakref
 from collections.abc import Mapping
 from contextvars import ContextVar
 from logging import DEBUG, ERROR, Filter, LogRecord, getLogger
@@ -106,7 +107,10 @@ _MAX_SCRUB_DEPTH = 32
 # isolated from its parent's: an error recorded in a child task is invisible
 # to its parent, and a new task starts with its creator's last error until its
 # own first call -- so read ``error`` only right after this task's own call.
-_CALL_ERRORS: ContextVar[Mapping[object, str]] = ContextVar(
+# Keys are weak references, so the mapping never keeps an instance alive;
+# each write drops dead instances and cleared ("") entries, so a long-lived
+# task using many short-lived instances does not accumulate them.
+_CALL_ERRORS: ContextVar[Mapping[weakref.ref["TrueNASAPI"], str]] = ContextVar(
     "truenas_ce_call_errors", default=MappingProxyType({})
 )
 
@@ -433,7 +437,7 @@ class TrueNASAPI:
 
         self._host = host
         self._scheme = scheme
-        self._error_key = object()
+        self._error_key = weakref.ref(self)
         self._closed = False
         self._client = TrueNASClient(
             host,
@@ -790,8 +794,16 @@ class TrueNASAPI:
     @_error.setter
     def _error(self, value: str) -> None:
         errors = _CALL_ERRORS.get()
-        if errors.get(self._error_key, "") != value:
-            _CALL_ERRORS.set(MappingProxyType({**errors, self._error_key: value}))
+        if errors.get(self._error_key, "") == value:
+            return
+        kept = {
+            key: error
+            for key, error in errors.items()
+            if key is not self._error_key and key() is not None
+        }
+        if value:
+            kept[self._error_key] = value
+        _CALL_ERRORS.set(MappingProxyType(kept))
 
     @property
     def error(self) -> str:
