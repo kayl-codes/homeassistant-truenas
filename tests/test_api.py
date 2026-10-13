@@ -834,6 +834,24 @@ async def test_error_mapping_drops_discarded_and_cleared_instances(
     assert other.error == "other failure"
 
 
+async def test_unchanged_error_write_still_drops_discarded_instances(
+    connected_api: TrueNASAPI,
+) -> None:
+    """Rewriting the current value must not skip dropping discarded instances."""
+    probe = TrueNASAPI("short.local", "key")
+    probe._error = "probe failure"
+    ref = probe._error_key
+    del probe
+    gc.collect()
+    assert ref() is None
+    assert connected_api.error == ""
+
+    connected_api._client.call.return_value = {"ok": True}
+    await connected_api.query("smb.status")
+    assert dict(api_module._CALL_ERRORS.get()) == {}
+    assert connected_api.error == ""
+
+
 # ---------------------------
 #   query
 # ---------------------------

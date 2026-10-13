@@ -794,7 +794,8 @@ class TrueNASAPI:
     @_error.setter
     def _error(self, value: str) -> None:
         errors = _CALL_ERRORS.get()
-        if errors.get(self._error_key, "") == value:
+        has_dead = any(key() is None for key in errors)
+        if not has_dead and errors.get(self._error_key, "") == value:
             return
         kept = {
             key: error
