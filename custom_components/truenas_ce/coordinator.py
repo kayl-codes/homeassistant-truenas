@@ -2595,12 +2595,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # permission error, as a connection issue and silently drop it).
             return None
         # get_subscription_events() returns [] on both "no new events" and
-        # "the read itself failed"; its own returned error (not
-        # self.api.error -- that attribute is shared by every caller of this
-        # TrueNASAPI instance, e.g. entity actions running alongside the
-        # poll, so it can be overwritten by another call before this one
-        # returns) is what lets a genuine failure
-        # surface here instead of being read as a routine empty poll.
+        # "the read itself failed"; its own returned error is what lets a
+        # genuine failure surface here instead of being read as a routine
+        # empty poll.
         raise UpdateFailed(
             f"Failed to read app.stats subscription events from TrueNAS"
             f" ({self.host}): {error}"
