@@ -395,7 +395,9 @@ class TrueNASAPI:
 
     The recorded error is kept per asyncio task (see ``_CALL_ERRORS``), so
     reading ``error`` right after an awaited call is safe even while other
-    tasks use the same instance.
+    tasks use the same instance. Read it only in the task that made the call:
+    a call run in a child task (e.g. ``asyncio.create_task``) records its
+    error there, so return it with the task's result instead.
     """
 
     def __init__(
