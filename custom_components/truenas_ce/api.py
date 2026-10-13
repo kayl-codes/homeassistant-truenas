@@ -465,6 +465,7 @@ class TrueNASAPI:
             return False
 
         if self._client.connected:
+            self._error = ""
             return True
 
         try:

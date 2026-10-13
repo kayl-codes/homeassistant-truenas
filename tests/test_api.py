@@ -386,6 +386,14 @@ async def test_connect_returns_true_when_already_connected(
     connected_api._client.connect.assert_not_awaited()
 
 
+async def test_connect_when_already_connected_clears_error(
+    connected_api: TrueNASAPI,
+) -> None:
+    connected_api._error = "stale error"
+    assert await connected_api.connect() is True
+    assert connected_api.error == ""
+
+
 async def test_connect_success_clears_error(api: TrueNASAPI) -> None:
     api._error = "stale error"
     assert await api.connect() is True
@@ -728,13 +736,11 @@ async def test_own_failure_survives_concurrent_success(
     connected_api: TrueNASAPI,
 ) -> None:
     """A concurrent successful query must not clear this task's failure."""
-    started = asyncio.Event()
+    failed = asyncio.Event()
     release = asyncio.Event()
 
     async def fake_call(service: str, *args: Any, **kwargs: Any) -> Any:
         if service == "vm.start":
-            started.set()
-            await release.wait()
             raise TrueNASCallError("boom", reason="action failure")
         return []
 
@@ -742,10 +748,14 @@ async def test_own_failure_survives_concurrent_success(
 
     async def action() -> str:
         await connected_api.query("vm.start", [1])
+        # Read the error only after the concurrent success below has run, so a
+        # shared error would have been cleared by then.
+        failed.set()
+        await release.wait()
         return connected_api.error
 
     action_task = asyncio.create_task(action())
-    await started.wait()
+    await failed.wait()
     assert await connected_api.query("pool.query") == []
     assert connected_api.error == ""
     release.set()
