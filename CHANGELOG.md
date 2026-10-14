@@ -14,6 +14,63 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.12.0] — Pool Usage, Alert Levels, App-Update Recovery & Zeroconf Discovery
+
+### Added
+- **New pool usage sensor.** Each pool now has a **Usage** sensor that shows how full it is, in
+  percent, with long-term statistics. You no longer need a template sensor built from the pool's
+  `available` and `total` attributes. Thanks @broyuken for the suggestion! (#171, #172)
+- **Alert levels on the alerts sensor.** The alerts sensor now covers all seven TrueNAS alert
+  levels, so ERROR, ALERT, EMERGENCY and NOTICE alerts are no longer dropped. New attributes:
+  - `highest_level`: the most severe active level.
+  - `levels`: one entry per alert, in the same order as `messages` and `uuids`.
+  - counters `emergency`, `alert`, `error`, `notice` and `unknown`, alongside the existing
+    `critical`, `warning` and `info`.
+
+  Existing attribute names are unchanged. (#171, #175)
+- **Recovery when an app update fails.** A failed TrueNAS app upgrade can leave the app stopped.
+  The app is now started again, and a persistent notification shows the TrueNAS reason without the
+  Python traceback. A later successful update dismisses the notification. Starting an update for an
+  app that is not running now shows a clear error. (#165, #166)
+- **Polish translation.** Thanks @bieniu! (#167)
+
+### Changed
+- **Secrets are redacted in debug logs and diagnostics.** This covers:
+  - API keys, passwords and tokens in `api.py` debug logs;
+  - cloud, SSH and replication credentials, including OAuth access and refresh tokens;
+  - secrets embedded in free text, exception messages and scripts.
+
+  Malformed API entries are logged by type only. The TrueNAS host stays visible in debug logs so
+  that several instances can be told apart; it is still redacted in diagnostics.
+  (#182, #183, #184, #185)
+- **A lost API-key role is reported clearly.** If the API key's user loses its TrueNAS role, the
+  integration logs a single WARNING without a traceback, naming the missing privilege. If system
+  information can no longer be read, setup fails with a message that says which privilege to grant.
+  The config flow's "unknown error" text now points to the Home Assistant log. (#187)
+- Requires `aiotruenas` 1.6.1 or later. Pool capacity, dataset used/available and pool usage now
+  show `unknown` instead of `0` when TrueNAS reports no value, so a faulted pool no longer writes
+  zeros into long-term statistics. (#177)
+
+### Fixed
+- **Zeroconf discovery never found a TrueNAS.** The discovery check treated the expected
+  "invalid API key" reply as a failure, so Home Assistant never offered a discovered TrueNAS for
+  setup. A TrueNAS on the local network is now discovered again. (#191)
+- **App updates are still tracked after a Home Assistant restart or reload.** Upgrade jobs that are
+  still running are picked up again, and a failure still triggers the notification. A failed
+  upgrade is logged once instead of twice. (#189)
+- **An action could report another call's error.** Concurrent actions and polls could overwrite
+  each other's error state, so a successful action could be reported as failed, or a real failure
+  could be hidden. Each call now reports only its own outcome. (#190)
+- **The config flow showed "Unknown error occurred."** in two cases where it now shows the real
+  cause:
+  - TrueNAS dropped the connection during login or the connection test (#169);
+  - the API key's user may not read system information (#170).
+- **An unreadable TrueNAS version could silently select removed API methods.** On TrueNAS 26 this
+  made update and service actions fail with "method does not exist". The last known version is now
+  kept, a WARNING is logged, and update and service actions use the current API while the version is unknown. (#168)
+- **App network (RX/TX) sensors were unavailable for an extra poll interval after every restart.**
+  They now subscribe on the first refresh. (#178)
+
 ## [2.11.2] — Legacy Takeover, Long Task Names & Device-Registry Fixes
 
 ### Fixed
