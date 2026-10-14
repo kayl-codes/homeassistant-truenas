@@ -36,7 +36,7 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Monitor System (CPU, Load, Memory, Temperature, **ARC Hit Ratio**, Uptime)
  * Monitor Network interfaces in a dedicated device group (RX/TX traffic + link connectivity per NIC)
  * Monitor Disks
- * Monitor Pools (including the boot-pool)
+ * Monitor Pools (including the boot-pool, with a usage % sensor)
  * Monitor Datasets
  * Monitor and run Replication Tasks
  * Monitor and run Rsync Tasks
@@ -48,11 +48,11 @@ Monitor and control your TrueNAS device from Home Assistant.
  * Control and Monitor Cloudsync
  * Monitor Directory Services (Active Directory / LDAP / IPA status)
  * **Monitor Certificate Expiry** (expiration time, days remaining, expired status)
- * **Monitor, dismiss and restore Active Alerts** (list all alerts, dismiss by UUID, restore dismissed)
+ * **Monitor, dismiss and restore Active Alerts** (all seven TrueNAS alert levels, list all alerts, dismiss by UUID, restore dismissed)
  * Create a Dataset Snapshot
  * Lock / unlock encrypted Datasets and store passphrases for automated unlock
  * **Refresh coordinator data on demand** (System Refresh action)
- * Update Sensor, including **live progress** while an app update installs
+ * Update Sensor, including **live progress** while an app update installs and automatic recovery when it fails
  * Reboot and Shutdown TrueNAS system
  * Configurable poll interval, data unit, behaviour and per-group sensor toggles (Options)
 
@@ -63,6 +63,9 @@ Monitor status for each TrueNAS pool.
 
 ![Pools Health](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_healthy.png)
 ![Pools Free Space](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_free.png)
+
+Each pool has a **Usage** sensor that shows how full the pool is, in percent, with long-term
+statistics. It shows `unknown` when TrueNAS reports no capacity, for example for a faulted pool.
 
 Each pool also exposes **scrub controls** (start, pause, resume, stop) as buttons
 and **scrub diagnostics** (state, progress, start/end timestamps, errors) as sensors.
@@ -142,6 +145,12 @@ Each app's **Update** entity supports Home Assistant's install-progress feature:
 starting an update, it reports the live `update_percentage` and a short status description
 while the TrueNAS upgrade job runs, and surfaces a failed/aborted job as an error instead of
 finishing silently.
+
+If an update fails, TrueNAS can leave the app stopped. The integration then starts the app
+again and shows a persistent notification with the TrueNAS reason. A later successful update
+dismisses it. Updates that are still running when Home Assistant restarts are picked up again;
+in that case a failure is still reported, but the app is not restarted, because its state before
+the update is unknown.
 
 > **Apps** is a monitored group (enabled by default). You can disable it under
 > *Settings → Devices & Services → TrueNAS → Configure → Monitored groups*.
@@ -278,6 +287,12 @@ Useful when you run an action (e.g., dataset lock/unlock, service restart) and n
 ## Alerts
 Dismiss and restore TrueNAS alerts, or list all active alerts with customizable properties.
 
+The alerts sensor counts the active alerts. Its attributes cover all seven TrueNAS alert levels:
+- `highest_level` — the most severe active level (e.g. `CRITICAL`), empty without active alerts
+- `levels` — one level per alert, in the same order as `messages` and `uuids`
+- counters `emergency`, `alert`, `critical`, `error`, `warning`, `notice`, `info` and `unknown`
+  (an unrecognized level); together they add up to the sensor state
+
 All alert actions are **domain-level services** (no target entity needed) and include an optional `config_entry` selector when multiple TrueNAS instances are configured.
 
 **Available actions:**
@@ -396,6 +411,9 @@ If you are using development branch for TrueNAS, some features may stop working.
 
 2. Setup this integration for your TrueNAS device in Home Assistant via `Configuration -> Integrations -> Add -> TrueNAS`.
 You can add this integration several times for different devices.
+A TrueNAS on your local network is usually discovered automatically (zeroconf); Home Assistant
+then offers it under *Settings → Devices & Services → Discovered*. The host is already filled in,
+so you only need to enter the API key.
 
 NOTES:
 - If you dont see "TrueNAS" integration, clear your browser cache.
