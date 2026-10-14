@@ -12,10 +12,15 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiotruenas.exceptions import (
+    TrueNASAuthenticationError,
+    TrueNASConnectionRefusedError,
+)
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 
 from custom_components.truenas_ce import config_flow, const
@@ -287,12 +292,47 @@ async def test_validate_connection_unknown_error_when_connection_test_raises() -
 async def test_probe_is_truenas_true_on_invalid_key() -> None:
     """A bogus-key rejection proves it's a real TrueNAS JSON-RPC endpoint."""
     api = MagicMock()
-    api.connect = AsyncMock()
+    api.connect = AsyncMock(return_value=False)
     api.disconnect = AsyncMock()
     api.error = ERR_INVALID_KEY
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
         assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == "1.2.3.4"
     mock_api.assert_called_once_with("1.2.3.4", "-", verify_ssl=False, scheme="wss")
+    api.disconnect.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (TrueNASAuthenticationError("rejected"), "1.2.3.4"),
+        (TrueNASConnectionRefusedError("refused"), None),
+    ],
+)
+async def test_probe_is_truenas_real_api_connect_failure(
+    exc: Exception, expected: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only the real TrueNASAPI's bogus-key rejection identifies a TrueNAS.
+
+    Regression test: the probe used to bail out on any failed connect()
+    before checking ``api.error``, so it could never recognise a TrueNAS --
+    the mocked tests above hid it by letting connect() return a truthy mock.
+    Either way the probe stays quiet: nothing above DEBUG, no traceback.
+    """
+    caplog.set_level(logging.DEBUG)
+    with patch("aiotruenas.TrueNASClient.connect", AsyncMock(side_effect=exc)):
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") == expected
+    assert not [r for r in caplog.records if r.levelno > logging.DEBUG]
+    assert all(r.exc_info is None for r in caplog.records)
+
+
+async def test_probe_is_truenas_false_when_bogus_key_connects() -> None:
+    """A device that accepts the bogus key is not a TrueNAS answer."""
+    api = MagicMock()
+    api.connect = AsyncMock(return_value=True)
+    api.disconnect = AsyncMock()
+    api.error = ""
+    with patch.object(config_flow, "TrueNASAPI", return_value=api):
+        assert await TrueNASConfigFlow._probe_is_truenas("1.2.3.4") is None
     api.disconnect.assert_awaited_once()
 
 
@@ -304,7 +344,7 @@ async def test_probe_is_truenas_connects_quietly() -> None:
     ERROR traceback per candidate.
     """
     api = MagicMock()
-    api.connect = AsyncMock()
+    api.connect = AsyncMock(return_value=False)
     api.disconnect = AsyncMock()
     api.error = ERR_INVALID_KEY
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
@@ -315,7 +355,7 @@ async def test_probe_is_truenas_connects_quietly() -> None:
 async def test_probe_is_truenas_false_when_not_truenas() -> None:
     """Any other error means some unrelated _http._tcp device, not TrueNAS."""
     api = MagicMock()
-    api.connect = AsyncMock()
+    api.connect = AsyncMock(return_value=False)
     api.disconnect = AsyncMock()
     api.error = ERR_CONNECTION_REFUSED
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
@@ -338,7 +378,7 @@ async def test_probe_is_truenas_false_when_connect_raises() -> None:
 async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
     """A broken disconnect() must not abort the probe for the whole flow."""
     api = MagicMock()
-    api.connect = AsyncMock()
+    api.connect = AsyncMock(return_value=False)
     api.disconnect = AsyncMock(side_effect=OSError("already closed"))
     api.error = ERR_INVALID_KEY
     with patch.object(config_flow, "TrueNASAPI", return_value=api):
@@ -349,12 +389,12 @@ async def test_probe_is_truenas_true_when_disconnect_raises() -> None:
 async def test_probe_is_truenas_falls_back_to_advertised_port() -> None:
     """A box reachable only on its advertised port keeps that port."""
     default_api = MagicMock()
-    default_api.connect = AsyncMock()
+    default_api.connect = AsyncMock(return_value=False)
     default_api.disconnect = AsyncMock()
     default_api.error = ERR_CONNECTION_REFUSED
 
     port_api = MagicMock()
-    port_api.connect = AsyncMock()
+    port_api.connect = AsyncMock(return_value=False)
     port_api.disconnect = AsyncMock()
     port_api.error = ERR_INVALID_KEY
 
@@ -372,7 +412,7 @@ async def test_probe_is_truenas_falls_back_to_advertised_port() -> None:
 async def test_probe_is_truenas_ignores_default_ports(port: int | None) -> None:
     """Default ports add nothing over the bare host, so they are not retried."""
     api = MagicMock()
-    api.connect = AsyncMock()
+    api.connect = AsyncMock(return_value=False)
     api.disconnect = AsyncMock()
     api.error = ERR_CONNECTION_REFUSED
     with patch.object(config_flow, "TrueNASAPI", return_value=api) as mock_api:
