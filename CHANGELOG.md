@@ -70,6 +70,10 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   kept, a WARNING is logged, and update and service actions use the current API while the version is unknown. (#168)
 - **App network (RX/TX) sensors were unavailable for an extra poll interval after every restart.**
   They now subscribe on the first refresh. (#178)
+- **Home Assistant 2026.10 logged a deprecation warning for `DeviceEntry.config_entries`** (the
+  property stops working in 2027.10). On Home Assistant 2026.8+ the integration now uses
+  `DeviceEntry.config_entry_id` and keeps the previous check on older versions. Thanks @ErikvO for
+  the report! (#174, #176)
 
 ## [2.11.2] — Legacy Takeover, Long Task Names & Device-Registry Fixes
 
