@@ -9,6 +9,9 @@ on:
       - '.github/**'
       - '**.md'
       - 'docs/**'
+      - 'Pipfile'
+      - 'Pipfile.lock'
+      - 'pyproject.toml'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -18,6 +21,9 @@ on:
       - '.github/**'
       - '**.md'
       - 'docs/**'
+      - 'Pipfile'
+      - 'Pipfile.lock'
+      - 'pyproject.toml'
   workflow_dispatch:
 
 permissions:
