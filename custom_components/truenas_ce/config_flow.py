@@ -386,10 +386,14 @@ async def _async_probe_candidate(host: str) -> bool:
     later connection always default to ``wss`` too (the config flow has no
     scheme field), so a candidate that only answers on plain ``ws`` could
     never complete setup regardless.
+
+    ``connect()`` logs in as part of connecting, so the expected rejection
+    surfaces as a *failed* connect with ``api.error == ERR_INVALID_KEY``; a
+    successful connect with the bogus key is not a TrueNAS answer either.
     """
     api = TrueNASAPI(host, "-", verify_ssl=False, scheme="wss")
     try:
-        if not await _async_try_connect(api, host, "probe is not reachable"):
+        if await _async_try_connect(api, host, "probe is not reachable"):
             return False
         return api.error == ERR_INVALID_KEY
     finally:
