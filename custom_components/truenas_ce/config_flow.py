@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import ipaddress
 import socket
 from collections.abc import Mapping
 from logging import getLogger
@@ -12,6 +14,7 @@ import voluptuous as vol
 from homeassistant.config_entries import (
     CONN_CLASS_LOCAL_POLL,
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlowWithReload,
@@ -22,11 +25,11 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .api import SECRET_SCRUB_FILTER, TrueNASAPI
+from .api import SECRET_SCRUB_FILTER, TrueNASAPI, scrub_exception
 from .const import (
     ALLOWED_DATA_UNITS,
     BEHAVIOR_REMOVE_INACTIVE_NIC,
@@ -429,6 +432,131 @@ async def _async_get_system_id(api: TrueNASAPI, host: str) -> str | None:
     return None
 
 
+# ``interface.ip_in_use`` params: also report IPv6, including link-local --
+# a box often announces itself over mDNS on its fe80:: address only.
+_IP_IN_USE_PARAMS = [{"ipv4": True, "ipv6": True, "ipv6_link_local": True}]
+# Upper bound for resolving a stored hostname, so a slow resolver cannot
+# stall the discovery flow.
+_RESOLVE_TIMEOUT = 5
+
+
+# ---------------------------
+#   _host_without_port
+# ---------------------------
+def _host_without_port(host: str) -> str:
+    """Return the bare host of a sanitized ``host[:port]`` (IPv6 unbracketed)."""
+    if host.startswith("["):
+        return host[1:].partition("]")[0]
+    name, sep, port = host.rpartition(":")
+    return name if sep and port.isdigit() else host
+
+
+# ---------------------------
+#   _normalize_ip
+# ---------------------------
+def _normalize_ip(value: str) -> str | None:
+    """Return ``value`` as a canonical IP string, or None if it is not an IP.
+
+    An IPv6 scope id (``fe80::1%eth0``) is dropped: it names the local
+    interface the address was seen on, not the address itself, so mDNS and
+    TrueNAS would otherwise never agree on the same link-local address.
+    """
+    try:
+        return str(ipaddress.ip_address(value.partition("%")[0]))
+    except ValueError:
+        return None
+
+
+# ---------------------------
+#   _ip_set
+# ---------------------------
+def _ip_set(values: list[str]) -> set[str]:
+    """Return the canonical IPs among ``values``, skipping non-IP entries."""
+    return {ip for value in values if (ip := _normalize_ip(value))}
+
+
+# ---------------------------
+#   _async_resolve_host
+# ---------------------------
+async def _async_resolve_host(hass: HomeAssistant, host: str) -> set[str]:
+    """Resolve hostname ``host`` to its IPs; empty on any lookup failure.
+
+    Besides ``OSError`` (incl. ``TimeoutError``), a malformed stored host
+    (e.g. ``nas..lan``) makes ``getaddrinfo`` raise ``UnicodeError`` -- that
+    must not break discovery for every other device either.
+    """
+    try:
+        async with asyncio.timeout(_RESOLVE_TIMEOUT):
+            infos = await hass.loop.getaddrinfo(host, None)
+    except (OSError, UnicodeError) as err:
+        _LOGGER.debug(
+            "TrueNAS %s: failed to resolve host: %s", host, scrub_exception(err)
+        )
+        return set()
+    return _ip_set([str(info[4][0]) for info in infos])
+
+
+# ---------------------------
+#   _async_entry_reported_ips
+# ---------------------------
+async def _async_entry_reported_ips(entry: ConfigEntry) -> set[str]:
+    """Return the IPs a loaded entry's own TrueNAS reports as in use.
+
+    Asked over the entry's *existing*, already-authenticated connection to
+    the box it is configured for -- never the newly discovered host -- so no
+    stored credential is ever sent anywhere new. Skipped while that
+    connection is down, since ``query`` would otherwise start a reconnect to
+    the box just because some device was discovered. Any failure just yields
+    an empty set: this only ever suppresses a duplicate discovery.
+    """
+    if entry.state is not ConfigEntryState.LOADED:
+        return set()
+    api = getattr(getattr(entry, "runtime_data", None), "api", None)
+    if api is None or not api.connected():
+        return set()
+    try:
+        result = await api.query("interface.ip_in_use", _IP_IN_USE_PARAMS)
+    except Exception as err:
+        _LOGGER.debug(
+            "TrueNAS %s: interface.ip_in_use failed: %s",
+            entry.title,
+            scrub_exception(err),
+        )
+        return set()
+    if not isinstance(result, list):
+        return set()
+    return _ip_set(
+        [
+            item["address"]
+            for item in result
+            if isinstance(item, dict) and isinstance(item.get("address"), str)
+        ]
+    )
+
+
+# ---------------------------
+#   _async_entry_matches_discovery
+# ---------------------------
+async def _async_entry_matches_discovery(
+    hass: HomeAssistant, entry: ConfigEntry, addresses: set[str], hostname: str
+) -> bool:
+    """Return True if ``entry`` is the box behind the discovered addresses.
+
+    Checked cheapest first: the stored host literally being one of the
+    discovered IPs or the mDNS hostname, then the stored hostname resolving
+    to one of them, then the IPs the box itself reports (#195).
+    """
+    stored = entry.data.get(CONF_HOST)
+    host = _host_without_port(sanitize_host(stored)) if isinstance(stored, str) else ""
+    if host:
+        host_ip = _normalize_ip(host)
+        if host == hostname or (host_ip is not None and host_ip in addresses):
+            return True
+        if host_ip is None and await _async_resolve_host(hass, host) & addresses:
+            return True
+    return bool(await _async_entry_reported_ips(entry) & addresses)
+
+
 # ---------------------------
 #   TrueNASConfigFlow
 # ---------------------------
@@ -647,9 +775,37 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         if probed_host is None:
             return self.async_abort(reason="not_truenas")
 
+        # The checks above only catch an entry set up with this exact
+        # address; one set up by hostname (or rediscovered on another of the
+        # box's IPs, e.g. IPv6) needs the identity matching below (#195). It
+        # runs after the probe, so its DNS lookups and RPCs are only spent on
+        # actual TrueNAS hosts, not on every _http._tcp device on the LAN.
+        if await self._async_discovery_is_configured(discovery_info):
+            return self.async_abort(reason="already_configured")
+
         self.truenas_config[CONF_HOST] = probed_host
         self.context["title_placeholders"] = {CONF_NAME: probed_host}
         return await self.async_step_zeroconf_confirm()
+
+    async def _async_discovery_is_configured(
+        self, discovery_info: ZeroconfServiceInfo
+    ) -> bool:
+        """Return True if an existing entry already covers the discovered box."""
+        addresses = _ip_set(
+            [str(ip) for ip in discovery_info.ip_addresses] + [discovery_info.host]
+        )
+        hostname = (discovery_info.hostname or "").rstrip(".").lower()
+        for entry in self._async_current_entries(include_ignore=False):
+            if await _async_entry_matches_discovery(
+                self.hass, entry, addresses, hostname
+            ):
+                _LOGGER.debug(
+                    "TrueNAS %s: discovered %s matches this configured entry",
+                    entry.title,
+                    discovery_info.host,
+                )
+                return True
+        return False
 
     @staticmethod
     async def _probe_is_truenas(host: str, port: int | None = None) -> str | None:
