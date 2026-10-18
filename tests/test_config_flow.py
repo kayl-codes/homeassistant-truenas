@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -727,6 +728,7 @@ async def test_resolve_host_returns_resolved_ips() -> None:
         TimeoutError(),
         # What getaddrinfo really raises for a malformed host like "nas..lan".
         UnicodeError("label empty or too long"),
+        ValueError("embedded null character"),
     ],
 )
 async def test_resolve_host_failure_yields_empty_set(error: Exception) -> None:
@@ -785,3 +787,33 @@ async def test_entry_reported_ips_skips_disconnected_api() -> None:
     entry.runtime_data.api.connected.return_value = False
     assert await config_flow._async_entry_reported_ips(entry) == set()
     query.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("matches", "expected"),
+    [([], False), ([False, False], False), ([False, True], True), ([True, True], True)],
+)
+async def test_discovery_is_configured_checks_all_entries(
+    matches: list[bool], expected: bool
+) -> None:
+    """Any matching entry (not just the first) marks the discovery configured."""
+    entries = [SimpleNamespace(title=f"e{i}") for i in range(len(matches))]
+    seen: list[object] = []
+
+    async def fake_match(
+        hass: object, entry: object, addresses: set[str], hostname: str
+    ) -> bool:
+        seen.append(entry)
+        assert addresses == {"192.168.1.50"}
+        assert hostname == "nas.local"
+        return matches[entries.index(entry)]
+
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    info = SimpleNamespace(ip_addresses=[], host="192.168.1.50", hostname="NAS.local.")
+    with (
+        patch.object(config_flow, "_async_entry_matches_discovery", fake_match),
+        patch.object(flow, "_async_current_entries", return_value=entries),
+    ):
+        assert await flow._async_discovery_is_configured(info) is expected
+    assert seen == entries  # every entry is checked concurrently

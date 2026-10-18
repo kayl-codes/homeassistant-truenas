@@ -482,13 +482,14 @@ async def _async_resolve_host(hass: HomeAssistant, host: str) -> set[str]:
     """Resolve hostname ``host`` to its IPs; empty on any lookup failure.
 
     Besides ``OSError`` (incl. ``TimeoutError``), a malformed stored host
-    (e.g. ``nas..lan``) makes ``getaddrinfo`` raise ``UnicodeError`` -- that
-    must not break discovery for every other device either.
+    makes ``getaddrinfo`` raise ``ValueError`` (``UnicodeError`` for e.g.
+    ``nas..lan``, an embedded NUL on some platforms) -- that must not break
+    discovery for every other device either.
     """
     try:
         async with asyncio.timeout(_RESOLVE_TIMEOUT):
             infos = await hass.loop.getaddrinfo(host, None)
-    except (OSError, UnicodeError) as err:
+    except (OSError, ValueError) as err:
         _LOGGER.debug(
             "TrueNAS %s: failed to resolve host: %s", host, scrub_exception(err)
         )
@@ -758,10 +759,13 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         known to answer the tiny probe handshake, which a spoofed device on
         the same network can mimic, so treating it as proof of identity would
         leak real credentials to whatever actually answered the discovery
-        broadcast. The flow always falls through to the user-facing confirm
-        step instead; only a connection this flow itself authenticates (see
-        ``_async_apply_user_input``) can establish the box's real identity
-        and fold a rediscovered host into an existing entry.
+        broadcast. Unless an existing entry already covers the box (matched
+        without any credential, see ``_async_discovery_is_configured``; the
+        flow then aborts as ``already_configured``), the flow falls through
+        to the user-facing confirm step; only a connection this flow itself
+        authenticates (see ``_async_apply_user_input``) can establish the
+        box's real identity and fold a rediscovered host into an existing
+        entry.
         """
         host = sanitize_host(discovery_info.host)
         self._async_abort_entries_match({CONF_HOST: host})
@@ -790,15 +794,24 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_discovery_is_configured(
         self, discovery_info: ZeroconfServiceInfo
     ) -> bool:
-        """Return True if an existing entry already covers the discovered box."""
+        """Return True if an existing entry already covers the discovered box.
+
+        Entries are checked concurrently, so slow DNS lookups or RPCs of
+        several entries do not add up before the confirm form appears.
+        """
         addresses = _ip_set(
             [str(ip) for ip in discovery_info.ip_addresses] + [discovery_info.host]
         )
         hostname = (discovery_info.hostname or "").rstrip(".").lower()
-        for entry in self._async_current_entries(include_ignore=False):
-            if await _async_entry_matches_discovery(
-                self.hass, entry, addresses, hostname
-            ):
+        entries = self._async_current_entries(include_ignore=False)
+        matches = await asyncio.gather(
+            *(
+                _async_entry_matches_discovery(self.hass, entry, addresses, hostname)
+                for entry in entries
+            )
+        )
+        for entry, matched in zip(entries, matches, strict=True):
+            if matched:
                 _LOGGER.debug(
                     "TrueNAS %s: discovered %s matches this configured entry",
                     entry.title,
