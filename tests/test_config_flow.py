@@ -15,7 +15,7 @@ import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from aiotruenas.exceptions import (
@@ -687,6 +687,10 @@ async def test_check_connection_if_changed_runs_when_host_changed() -> None:
         ("192.168.1.50:443", "192.168.1.50"),
         ("[fe80::1]", "fe80::1"),
         ("[2001:db8::1]:8443", "2001:db8::1"),
+        ("nas.local.", "nas.local"),
+        ("nas.local.:8443", "nas.local"),
+        ("user:secret@nas.local:8443", "nas.local"),
+        ("user:secret@[fe80::1]:8443", "fe80::1"),
     ],
 )
 def test_host_without_port(host: str, expected: str) -> None:
@@ -817,3 +821,40 @@ async def test_discovery_is_configured_checks_all_entries(
     ):
         assert await flow._async_discovery_is_configured(info) is expected
     assert seen == entries  # every entry is checked concurrently
+
+
+@pytest.mark.parametrize(
+    ("stored", "mdns", "resolved_with"),
+    [
+        # A stored FQDN with trailing dot matches the mDNS name without DNS.
+        ("nas.local.", "nas.local", None),
+        # Userinfo and port are stripped before the host reaches the resolver.
+        ("user:secret@nas.lan:8443", "other.local", "nas.lan"),
+    ],
+)
+async def test_entry_matches_discovery_uses_stripped_host(
+    stored: str, mdns: str, resolved_with: str | None
+) -> None:
+    """The stripped stored host is what gets compared and resolved (#195)."""
+    entry = SimpleNamespace(data={CONF_HOST: stored}, state=None, title="t")
+    resolve = AsyncMock(return_value={"192.168.1.50"})
+    with patch.object(config_flow, "_async_resolve_host", resolve):
+        assert await config_flow._async_entry_matches_discovery(
+            MagicMock(), entry, {"192.168.1.50"}, mdns
+        )
+    if resolved_with is None:
+        resolve.assert_not_awaited()
+    else:
+        resolve.assert_awaited_once_with(ANY, resolved_with)
+
+
+async def test_resolve_host_failure_does_not_log_host(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed lookup never logs the (possibly credential-bearing) host."""
+    hass = MagicMock()
+    hass.loop.getaddrinfo = AsyncMock(side_effect=OSError("boom"))
+    with caplog.at_level(logging.DEBUG, logger=config_flow.__name__):
+        assert await config_flow._async_resolve_host(hass, "user:pa") == set()
+    assert "user:pa" not in caplog.text
+    assert "failed to resolve a stored host" in caplog.text

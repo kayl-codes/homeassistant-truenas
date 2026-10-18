@@ -444,11 +444,17 @@ _RESOLVE_TIMEOUT = 5
 #   _host_without_port
 # ---------------------------
 def _host_without_port(host: str) -> str:
-    """Return the bare host of a sanitized ``host[:port]`` (IPv6 unbracketed)."""
+    """Return the bare host of a sanitized ``host[:port]`` (IPv6 unbracketed).
+
+    URL userinfo (``user:pass@``, which ``sanitize_host`` keeps) and a
+    trailing FQDN dot are dropped too, so a credential never reaches the
+    logs and ``nas.local.`` still matches the discovered ``nas.local``.
+    """
+    host = host.rpartition("@")[2]
     if host.startswith("["):
         return host[1:].partition("]")[0]
     name, sep, port = host.rpartition(":")
-    return name if sep and port.isdigit() else host
+    return (name if sep and port.isdigit() else host).rstrip(".")
 
 
 # ---------------------------
@@ -490,8 +496,11 @@ async def _async_resolve_host(hass: HomeAssistant, host: str) -> set[str]:
         async with asyncio.timeout(_RESOLVE_TIMEOUT):
             infos = await hass.loop.getaddrinfo(host, None)
     except (OSError, ValueError) as err:
+        # The host is deliberately not logged: ``sanitize_host`` cuts at the
+        # first ``/?#`` before userinfo is stripped, so a password containing
+        # one of those could otherwise leak a prefix into the log.
         _LOGGER.debug(
-            "TrueNAS %s: failed to resolve host: %s", host, scrub_exception(err)
+            "TrueNAS: failed to resolve a stored host: %s", scrub_exception(err)
         )
         return set()
     return _ip_set([str(info[4][0]) for info in infos])
