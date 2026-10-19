@@ -824,7 +824,7 @@ async def test_cleanup_orphaned_entities_removes_stale_entity_and_empty_device(
 ) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "TrueNAS"})
     entry.add_to_hass(hass)
-    coordinator = SimpleNamespace(last_update_success=True)
+    coordinator = SimpleNamespace(last_update_success=True, system_device_id=None)
 
     dev_reg = dr.async_get(hass)
     live_device = dev_reg.async_get_or_create(
@@ -867,6 +867,40 @@ async def test_cleanup_orphaned_entities_removes_stale_entity_and_empty_device(
     assert dev_reg.async_get(empty_device.id) is None
 
 
+async def test_cleanup_keeps_freshly_registered_empty_system_device(
+    hass: HomeAssistant,
+) -> None:
+    """The System device must survive cleanup while it has no entities yet (#196).
+
+    On a fresh install ``async_setup_entry`` registers the System device and
+    runs cleanup before any platform attached an entity to it. Removing it
+    there left ``coordinator.system_device_id`` dangling, so every other
+    device's ``via_device_id`` link was rejected and their entities dropped.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "TrueNAS"})
+    entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    system_device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "system-device")}
+    )
+    empty_device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "empty-device")}
+    )
+    coordinator = SimpleNamespace(
+        last_update_success=True, system_device_id=system_device.id
+    )
+
+    with patch.object(
+        init_module, "_collect_active_unique_ids", return_value=(set(), set())
+    ):
+        _cleanup_orphaned_entities(hass, entry, coordinator)
+
+    assert dev_reg.async_get(system_device.id) is not None
+    # Other empty devices are still cleaned up as before.
+    assert dev_reg.async_get(empty_device.id) is None
+
+
 async def test_cleanup_orphaned_entities_noop_after_failed_refresh(
     hass: HomeAssistant,
 ) -> None:
@@ -900,6 +934,7 @@ async def test_cleanup_keeps_entities_when_dynamic_domain_is_empty(
     entry.add_to_hass(hass)
     coordinator = SimpleNamespace(
         last_update_success=True,
+        system_device_id=None,
         config_entry=entry,
         data={"app_stats": {}},
         # "myapp" is installed (known via ds["app"]) but hasn't sent its
