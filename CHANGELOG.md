@@ -14,6 +14,24 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Fixed
+- **"Config flow could not be loaded" (504) when adding the integration.** Before the setup form
+  opened, the integration tried to guess the TrueNAS host by resolving up to ten hostnames one
+  after another, with no time limit. With a slow or unresponsive DNS server this took minutes, and
+  a reverse proxy such as NGINX Proxy Manager gave up with a 504. The guess now runs in parallel and
+  stops after 3 seconds; if nothing answers, the host field is pre-filled with `truenas.local`
+  (previously the misspelled `trueas.local`). Thanks @V4ler1an for reporting! (#196, #198)
+- **Entities were missing on a fresh install until Home Assistant restarted.** The cleanup of empty
+  devices removed the just-created TrueNAS System device before any entity was attached to it, so
+  other devices such as the apps could not link to it and their entities were not added. The
+  System device is now kept. (#196, #198)
+- **Zeroconf offered an already configured TrueNAS again.** A TrueNAS that is already set up, for
+  example by IP address, was offered under *Discovered* once more, also via its IPv6 address. The
+  discovery now recognises it by its stored host and the addresses that host resolves to, and
+  (while the entry is loaded and connected) by the addresses the TrueNAS itself reports, and no
+  longer offers it. Discovery never sends the stored API key of an existing entry to a
+  newly discovered device. (#195, #197)
+
 ## [2.12.0] — Pool Usage, Alert Levels, App-Update Recovery & Zeroconf Discovery
 
 ### Added

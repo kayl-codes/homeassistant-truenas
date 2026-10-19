@@ -413,7 +413,13 @@ If you are using development branch for TrueNAS, some features may stop working.
 You can add this integration several times for different devices.
 A TrueNAS on your local network is usually discovered automatically (zeroconf); Home Assistant
 then offers it under *Settings → Devices & Services → Discovered*. The host is already filled in,
-so you only need to enter the API key.
+so you only need to enter the API key. A TrueNAS that is already set up is not offered again
+when it announces itself under its configured host or one of that host's addresses. While its
+entry is loaded and connected, this also covers the other addresses the TrueNAS reports (for
+example its IPv6 address).
+When you add the integration manually, the host field is pre-filled with a best guess; the guess
+takes at most 3 seconds and falls back to `truenas.local`, so the form opens quickly even with a
+slow DNS server.
 
 NOTES:
 - If you dont see "TrueNAS" integration, clear your browser cache.
