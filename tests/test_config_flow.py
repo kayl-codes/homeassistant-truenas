@@ -892,6 +892,35 @@ async def test_guess_ip_reuses_last_answer_while_its_lookups_still_run() -> None
         release.set()
 
 
+async def test_guess_ip_picks_up_an_answer_that_arrived_after_the_deadline() -> None:
+    top_release = threading.Event()
+    rest_release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            top_release.wait(5)
+            return "10.0.0.1"
+        rest_release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
+            top_release.set()
+            top = config_flow._host_guess.lookups[0]
+            await asyncio.to_thread(top.result, 2)
+            # The other lookups still run, yet the late top answer is used.
+            assert await config_flow._async_guess_ip() == "10.0.0.1"
+    finally:
+        top_release.set()
+        rest_release.set()
+
+
 async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
     release = threading.Event()
 

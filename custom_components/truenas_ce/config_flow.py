@@ -326,10 +326,9 @@ _HOST_GUESS_EXECUTOR = ThreadPoolExecutor(
 
 @dataclass
 class _HostGuessState:
-    """Lookups of the latest guess and the answer it produced."""
+    """Lookups of the latest guess, kept to tell whether they still occupy the pool."""
 
     lookups: list[Future[str | None]] = field(default_factory=list)
-    answer: str | None = None
 
 
 _host_guess = _HostGuessState()
@@ -380,6 +379,8 @@ async def _async_wait_for_answer(lookups: list[Future[str | None]]) -> str | Non
             decided, ip = _pick_answer(lookups, settle=False)
             if decided:
                 return ip
+            # Never empty: a waiter only completes via a loop callback, which
+            # cannot run between _pick_answer seeing an unfinished lookup and here.
             await asyncio.wait(
                 [waiter for waiter in waiters if not waiter.done()],
                 timeout=remaining,
@@ -403,9 +404,10 @@ async def _async_guess_ip() -> str:
     until the resolver gives up, but no longer delay the form.
     """
     if any(not lookup.done() for lookup in _host_guess.lookups):
-        # Its answer (if any) is still the best one known; often only slower,
+        # Use the best answer that batch has produced so far -- including one
+        # that arrived after its own deadline; often only slower,
         # lower-priority candidates are left running.
-        fallback = _host_guess.answer or DEFAULT_HOST
+        fallback = _pick_answer(_host_guess.lookups, settle=True)[1] or DEFAULT_HOST
         _LOGGER.debug(
             "Lookups of an earlier host guess are still running, using %s",
             fallback,
@@ -415,7 +417,6 @@ async def _async_guess_ip() -> str:
     start = time.monotonic()
     lookups = [_HOST_GUESS_EXECUTOR.submit(_resolve_host, host) for host in candidates]
     _host_guess.lookups = lookups
-    _host_guess.answer = None
     try:
         ip = await _async_wait_for_answer(lookups)
     finally:
@@ -430,7 +431,6 @@ async def _async_guess_ip() -> str:
         len(candidates),
     )
     if ip:
-        _host_guess.answer = ip
         return ip
     _LOGGER.debug(
         "No candidate hostname resolved within %.1fs, using %s",
