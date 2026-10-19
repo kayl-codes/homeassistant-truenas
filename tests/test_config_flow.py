@@ -231,8 +231,12 @@ async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
             return resolved[host]
         raise OSError("not found")
 
-    with patch.object(
-        config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+    with (
+        # Generous: only the event decides the answer order, never the deadline.
+        patch.object(config_flow, "GUESS_HOST_TIMEOUT", 30.0),
+        patch.object(
+            config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+        ),
     ):
         assert await config_flow._async_guess_ip() == "10.0.0.1"
 
@@ -343,7 +347,7 @@ async def test_guess_ip_does_not_wait_for_hanging_dns(
     finally:
         release.set()
     assert result == config_flow.DEFAULT_HOST
-    assert elapsed < 2
+    assert elapsed < 1  # 0.2 s cap plus scheduling slack, far below the 5 s hang
     candidates = 1 + len(const.KNOWN_DOMAINS)
     messages = [
         (r.levelno, r.getMessage())
