@@ -7,7 +7,8 @@ import contextlib
 import socket
 import time
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any
 
@@ -315,11 +316,23 @@ GUESS_HOST_TIMEOUT: float = 3.0
 
 # Own small pool for the lookups: a blocked resolver call cannot be cancelled,
 # so with Home Assistant's shared executor a stalled DNS server plus repeated
-# setup attempts would tie up threads that unrelated jobs need. Here they only
-# queue behind each other; queued lookups are cancelled at the deadline.
+# setup attempts would tie up threads that unrelated jobs need. It holds exactly
+# one guess; while lookups of an earlier guess still occupy it, no new batch is
+# queued (see _HostGuessState), so stalled guesses cannot pile up.
 _HOST_GUESS_EXECUTOR = ThreadPoolExecutor(
     max_workers=1 + len(KNOWN_DOMAINS), thread_name_prefix="truenas_ce_host_guess"
 )
+
+
+@dataclass
+class _HostGuessState:
+    """Lookups of the latest guess and the answer it produced."""
+
+    lookups: list[Future[str | None]] = field(default_factory=list)
+    answer: str | None = None
+
+
+_host_guess = _HostGuessState()
 
 
 def _guess_host_candidates() -> list[str]:
@@ -335,34 +348,90 @@ def _resolve_host(host: str) -> str | None:
     return None
 
 
+def _pick_answer(
+    lookups: list[Future[str | None]], *, settle: bool
+) -> tuple[bool, str | None]:
+    """Return (decided, ip) for the highest-priority candidate that resolved.
+
+    Until ``settle``, an unfinished candidate blocks the decision because it can
+    still beat every lower-priority answer.
+    """
+    for lookup in lookups:
+        if not lookup.done():
+            if settle:
+                continue
+            return False, None
+        # exception() first: an unexpected lookup error must not abort the guess.
+        if (
+            not lookup.cancelled()
+            and lookup.exception() is None
+            and (ip := lookup.result())
+        ):
+            return True, ip
+    return True, None
+
+
+async def _async_wait_for_answer(lookups: list[Future[str | None]]) -> str | None:
+    """Wait until the best answer is known or GUESS_HOST_TIMEOUT has passed."""
+    waiters = [asyncio.wrap_future(lookup) for lookup in lookups]
+    deadline = time.monotonic() + GUESS_HOST_TIMEOUT
+    try:
+        while (remaining := deadline - time.monotonic()) > 0:
+            decided, ip = _pick_answer(lookups, settle=False)
+            if decided:
+                return ip
+            await asyncio.wait(
+                [waiter for waiter in waiters if not waiter.done()],
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        return _pick_answer(lookups, settle=True)[1]
+    finally:
+        # A lookup finishing later must not call back into a loop that may be
+        # closed by then.
+        for waiter in waiters:
+            waiter.cancel()
+
+
 async def _async_guess_ip() -> str:
     """Try to guess the TrueNAS IP from common local hostnames.
 
     All candidates are resolved in parallel and the whole guess is capped at
-    GUESS_HOST_TIMEOUT; the first candidate (in priority order) that resolved
-    in time wins, otherwise DEFAULT_HOST is used. Lookups still running at the
-    deadline keep their _HOST_GUESS_EXECUTOR thread until the resolver gives
-    up, but no longer delay the form.
+    GUESS_HOST_TIMEOUT. The highest-priority candidate that resolved wins, as
+    soon as no better one can still answer; otherwise DEFAULT_HOST is used.
+    Lookups still running at the end keep their _HOST_GUESS_EXECUTOR thread
+    until the resolver gives up, but no longer delay the form.
     """
+    if any(not lookup.done() for lookup in _host_guess.lookups):
+        # Its answer (if any) is still the best one known; often only slower,
+        # lower-priority candidates are left running.
+        fallback = _host_guess.answer or DEFAULT_HOST
+        _LOGGER.debug(
+            "Lookups of an earlier host guess are still running, using %s",
+            fallback,
+        )
+        return fallback
     candidates = _guess_host_candidates()
     start = time.monotonic()
-    loop = asyncio.get_running_loop()
-    lookups = [
-        loop.run_in_executor(_HOST_GUESS_EXECUTOR, _resolve_host, host)
-        for host in candidates
-    ]
-    done, pending = await asyncio.wait(lookups, timeout=GUESS_HOST_TIMEOUT)
-    for lookup in pending:
-        lookup.cancel()
+    lookups = [_HOST_GUESS_EXECUTOR.submit(_resolve_host, host) for host in candidates]
+    _host_guess.lookups = lookups
+    _host_guess.answer = None
+    try:
+        ip = await _async_wait_for_answer(lookups)
+    finally:
+        # Also on caller cancellation: queued lookups must never run later.
+        pending = [lookup for lookup in lookups if not lookup.done()]
+        for lookup in pending:
+            lookup.cancel()
     _LOGGER.debug(
         "Host guess finished in %.1fs (%d of %d lookups still pending)",
         time.monotonic() - start,
         len(pending),
         len(candidates),
     )
-    for lookup in lookups:
-        if lookup in done and (ip := lookup.result()):
-            return ip
+    if ip:
+        _host_guess.answer = ip
+        return ip
     _LOGGER.debug(
         "No candidate hostname resolved within %.1fs, using %s",
         GUESS_HOST_TIMEOUT,
