@@ -219,11 +219,15 @@ async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
     # The bare "truenas" outranks every domain-suffixed name, even when its
     # answer arrives last.
     resolved = {"truenas": "10.0.0.1", "truenas.lan": "10.0.0.7"}
+    lower_answered = threading.Event()
 
     def fake_gethostbyname(host: str) -> str:
         if host == "truenas":
-            time.sleep(0.2)
+            # Answer only after the lower-priority name has answered.
+            assert lower_answered.wait(5)
         if host in resolved:
+            if host != "truenas":
+                lower_answered.set()
             return resolved[host]
         raise OSError("not found")
 
@@ -283,6 +287,7 @@ async def test_guess_ip_returns_best_answer_without_waiting_for_the_rest() -> No
     finally:
         release.set()
     assert result == "10.0.0.1"
+    assert len(still_running) == GUESS_CANDIDATES - 1
     assert all(still_running)
 
 
