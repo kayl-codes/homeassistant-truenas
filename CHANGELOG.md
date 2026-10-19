@@ -14,8 +14,6 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
-Released as the pre-release **2.12.1-rc1**.
-
 ### Fixed
 - **"Config flow could not be loaded" (504) when adding the integration.** Before the setup form
   opened, the integration tried to guess the TrueNAS host by resolving up to ten hostnames one
