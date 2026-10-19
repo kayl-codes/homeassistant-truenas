@@ -6,7 +6,10 @@ import asyncio
 import contextlib
 import ipaddress
 import socket
+import time
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any
 
@@ -306,14 +309,135 @@ def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
 
 
 # ---------------------------
-#   _guess_ip
+#   _async_guess_ip
 # ---------------------------
-def _guess_ip() -> str:
-    """Try to guess the TrueNAS IP from common local hostnames."""
-    for domain in [""] + KNOWN_DOMAINS:
-        test_host = f"truenas.{domain}" if domain else "truenas"
-        with contextlib.suppress(OSError):
-            return socket.gethostbyname(test_host)
+# Upper bound for prefilling the host field. The guess runs before the first
+# form is shown, so a DNS server that never answers must not stall the whole
+# dialog (a reverse proxy turns that into a 504 -- #196).
+GUESS_HOST_TIMEOUT: float = 3.0
+
+# Own small pool for the lookups: a blocked resolver call cannot be cancelled,
+# so with Home Assistant's shared executor a stalled DNS server plus repeated
+# setup attempts would tie up threads that unrelated jobs need. It holds exactly
+# one guess; while lookups of an earlier guess still occupy it, no new batch is
+# queued (see _HostGuessState), so stalled guesses cannot pile up.
+_HOST_GUESS_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1 + len(KNOWN_DOMAINS), thread_name_prefix="truenas_ce_host_guess"
+)
+
+
+@dataclass
+class _HostGuessState:
+    """Lookups of the latest guess, kept to tell whether they still occupy the pool."""
+
+    lookups: list[Future[str | None]] = field(default_factory=list)
+
+
+_host_guess = _HostGuessState()
+
+
+def _guess_host_candidates() -> list[str]:
+    """Return the hostnames to try, in priority order."""
+    return ["truenas"] + [f"truenas.{domain}" for domain in KNOWN_DOMAINS]
+
+
+def _resolve_host(host: str) -> str | None:
+    """Resolve ``host`` to an IPv4 address, or None if it does not resolve."""
+    try:
+        return socket.gethostbyname(host)
+    except (OSError, ValueError):
+        # ValueError covers UnicodeError from IDNA encoding of a malformed label.
+        return None
+    except Exception:  # a prefill guess must never abort the form
+        _LOGGER.debug("Unexpected error resolving %s", host, exc_info=True)
+        return None
+
+
+def _pick_answer(
+    lookups: list[Future[str | None]], *, settle: bool
+) -> tuple[bool, str | None]:
+    """Return (decided, ip) for the highest-priority candidate that resolved.
+
+    Until ``settle``, an unfinished candidate blocks the decision because it can
+    still beat every lower-priority answer.
+    """
+    for lookup in lookups:
+        if not lookup.done():
+            if settle:
+                continue
+            return False, None
+        if not lookup.cancelled() and (ip := lookup.result()):
+            return True, ip
+    return True, None
+
+
+async def _async_wait_for_answer(lookups: list[Future[str | None]]) -> str | None:
+    """Wait until the best answer is known or GUESS_HOST_TIMEOUT has passed."""
+    waiters = [asyncio.wrap_future(lookup) for lookup in lookups]
+    deadline = time.monotonic() + GUESS_HOST_TIMEOUT
+    try:
+        while (remaining := deadline - time.monotonic()) > 0:
+            decided, ip = _pick_answer(lookups, settle=False)
+            if decided:
+                return ip
+            # Never empty: a waiter only completes via a loop callback, which
+            # cannot run between _pick_answer seeing an unfinished lookup and here.
+            await asyncio.wait(
+                [waiter for waiter in waiters if not waiter.done()],
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        return _pick_answer(lookups, settle=True)[1]
+    finally:
+        # A lookup finishing later must not call back into a loop that may be
+        # closed by then.
+        for waiter in waiters:
+            waiter.cancel()
+
+
+async def _async_guess_ip() -> str:
+    """Try to guess the TrueNAS IP from common local hostnames.
+
+    All candidates are resolved in parallel and the whole guess is capped at
+    GUESS_HOST_TIMEOUT. The highest-priority candidate that resolved wins, as
+    soon as no better one can still answer; otherwise DEFAULT_HOST is used.
+    Lookups still running at the end keep their _HOST_GUESS_EXECUTOR thread
+    until the resolver gives up, but no longer delay the form.
+    """
+    if any(not lookup.done() for lookup in _host_guess.lookups):
+        # Use the best answer that batch has produced so far -- including one
+        # that arrived after its own deadline; often only slower,
+        # lower-priority candidates are left running.
+        fallback = _pick_answer(_host_guess.lookups, settle=True)[1] or DEFAULT_HOST
+        _LOGGER.debug(
+            "Lookups of an earlier host guess are still running, using %s",
+            fallback,
+        )
+        return fallback
+    candidates = _guess_host_candidates()
+    start = time.monotonic()
+    lookups = [_HOST_GUESS_EXECUTOR.submit(_resolve_host, host) for host in candidates]
+    _host_guess.lookups = lookups
+    try:
+        ip = await _async_wait_for_answer(lookups)
+    finally:
+        # Also on caller cancellation: queued lookups must never run later.
+        pending = [lookup for lookup in lookups if not lookup.done()]
+        for lookup in pending:
+            lookup.cancel()
+    _LOGGER.debug(
+        "Host guess finished in %.1fs (%d of %d lookups still pending)",
+        time.monotonic() - start,
+        len(pending),
+        len(candidates),
+    )
+    if ip:
+        return ip
+    _LOGGER.debug(
+        "No candidate hostname resolved within %.1fs, using %s",
+        GUESS_HOST_TIMEOUT,
+        DEFAULT_HOST,
+    )
     return DEFAULT_HOST
 
 
@@ -658,7 +782,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is None and not truenas_config.get(CONF_HOST):
-            default_host = await self.hass.async_add_executor_job(_guess_ip)
+            default_host = await _async_guess_ip()
             _LOGGER.debug("Auto-discovered default host: %s", default_host)
             truenas_config[CONF_HOST] = default_host
 

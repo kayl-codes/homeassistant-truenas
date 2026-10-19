@@ -1089,6 +1089,49 @@ async def test_async_setup_entry_wires_coordinator_and_platforms() -> None:
     assert coordinator.system_device_id is register_device_mock.return_value
 
 
+async def test_async_setup_entry_registers_system_device_before_cleanup() -> None:
+    """Cleanup must already know the System device id (#196).
+
+    ``_cleanup_orphaned_entities`` exempts ``coordinator.system_device_id``
+    from empty-device removal. On a fresh install the System device has no
+    entities yet, so if cleanup ran before registration (or saw a stale id)
+    it would delete the device and break every via_device_id link to it.
+    """
+    hass = MagicMock()
+    hass.config_entries.async_forward_entry_setups = AsyncMock()
+    entry = _config_entry(entry_id="e1")
+    entry.async_on_unload = MagicMock()
+
+    coordinator = MagicMock()
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+    coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+    coordinator.system_device_id = None
+    seen_by_cleanup: list[Any] = []
+
+    with (
+        patch.object(init_module, "TrueNASCoordinator", return_value=coordinator),
+        patch.object(
+            init_module, "async_adopt_legacy_entities", new=AsyncMock(return_value=[])
+        ),
+        patch.object(init_module, "_migrate_data_size_units"),
+        patch.object(
+            init_module,
+            "_cleanup_orphaned_entities",
+            side_effect=lambda _h, _e, coord: seen_by_cleanup.append(
+                coord.system_device_id
+            ),
+        ),
+        patch.object(init_module, "finalize_legacy_adoption"),
+        patch.object(init_module, "async_notify_migration_result"),
+        patch.object(
+            init_module, "register_system_device", return_value="system-device-id"
+        ),
+    ):
+        await async_setup_entry(hass, entry)
+
+    assert seen_by_cleanup == ["system-device-id"]
+
+
 async def test_async_setup_entry_closes_api_on_first_refresh_failure() -> None:
     """A failed first refresh must close the websocket, not leak it.
 
