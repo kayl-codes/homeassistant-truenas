@@ -29,8 +29,9 @@ Released as the pre-release **2.12.1-rc1**.
   System device is now kept. (#196, #198)
 - **Zeroconf offered an already configured TrueNAS again.** A TrueNAS that is already set up, for
   example by IP address, was offered under *Discovered* once more, also via its IPv6 address. The
-  discovery now recognises it by its stored host, the addresses that host resolves to and the
-  addresses the TrueNAS itself reports, and no longer offers it. No credentials are ever sent to a
+  discovery now recognises it by its stored host and the addresses that host resolves to, and
+  (while the entry is loaded and connected) by the addresses the TrueNAS itself reports, and no
+  longer offers it. No credentials are ever sent to a
   newly discovered device. (#195, #197)
 
 ## [2.12.0] — Pool Usage, Alert Levels, App-Update Recovery & Zeroconf Discovery
