@@ -946,7 +946,7 @@ async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
 
 
 async def test_guess_ip_ignores_an_unexpected_lookup_error(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fake_gethostbyname(host: str) -> str:
         if host == "truenas":
@@ -962,7 +962,7 @@ async def test_guess_ip_ignores_an_unexpected_lookup_error(
     ):
         assert await config_flow._async_guess_ip() == "10.0.0.9"
     # Drop the last references so a never-retrieved error would be logged now.
-    config_flow._host_guess.lookups = []
+    monkeypatch.setattr(config_flow._host_guess, "lookups", [])
     gc.collect()
     await asyncio.sleep(0)
     assert "exception was never retrieved" not in caplog.text
