@@ -181,18 +181,9 @@ def test_map_error_to_ha_unknown_error_falls_back() -> None:
 # ---------------------------
 #   _async_guess_ip
 # ---------------------------
-def _executor_hass() -> MagicMock:
-    """A hass stand-in whose async_add_executor_job really uses a thread."""
-    hass = MagicMock()
-    hass.async_add_executor_job.side_effect = lambda func, *args: (
-        asyncio.get_running_loop().run_in_executor(None, func, *args)
-    )
-    return hass
-
-
 async def test_guess_ip_returns_first_resolvable_host() -> None:
     with patch.object(config_flow.socket, "gethostbyname", return_value="10.0.0.5"):
-        assert await config_flow._async_guess_ip(_executor_hass()) == "10.0.0.5"
+        assert await config_flow._async_guess_ip() == "10.0.0.5"
 
 
 async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
@@ -210,7 +201,7 @@ async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
-        assert await config_flow._async_guess_ip(_executor_hass()) == "10.0.0.1"
+        assert await config_flow._async_guess_ip() == "10.0.0.1"
 
 
 async def test_guess_ip_uses_lower_priority_answer_when_higher_one_hangs() -> None:
@@ -231,36 +222,36 @@ async def test_guess_ip_uses_lower_priority_answer_when_higher_one_hangs() -> No
                 config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
             ),
         ):
-            result = await config_flow._async_guess_ip(_executor_hass())
+            result = await config_flow._async_guess_ip()
     finally:
         release.set()
     assert result == "10.0.0.9"
 
 
-async def test_guess_ip_tries_every_candidate() -> None:
-    calls: list[str] = []
+async def test_guess_ip_tries_every_candidate_on_its_own_executor() -> None:
+    calls: list[tuple[str, str]] = []
 
     def fake_gethostbyname(host: str) -> str:
-        calls.append(host)
+        calls.append((host, threading.current_thread().name))
         raise OSError("not found")
 
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
-        await config_flow._async_guess_ip(_executor_hass())
-    assert sorted(calls) == sorted(
+        await config_flow._async_guess_ip()
+    assert sorted(host for host, _ in calls) == sorted(
         ["truenas"] + [f"truenas.{d}" for d in const.KNOWN_DOMAINS]
     )
+    # Never on Home Assistant's shared executor: a stalled resolver call can't
+    # be cancelled and would otherwise tie up threads other jobs need.
+    assert all(name.startswith("truenas_ce_host_guess") for _, name in calls)
 
 
 async def test_guess_ip_returns_default_host_when_none_resolve() -> None:
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=OSError("not found")
     ):
-        assert (
-            await config_flow._async_guess_ip(_executor_hass())
-            == config_flow.DEFAULT_HOST
-        )
+        assert await config_flow._async_guess_ip() == "truenas.local"
 
 
 async def test_guess_ip_does_not_wait_for_hanging_dns(
@@ -284,7 +275,7 @@ async def test_guess_ip_does_not_wait_for_hanging_dns(
             ),
         ):
             start = time.monotonic()
-            result = await config_flow._async_guess_ip(_executor_hass())
+            result = await config_flow._async_guess_ip()
             elapsed = time.monotonic() - start
     finally:
         release.set()
@@ -775,3 +766,41 @@ async def test_check_connection_if_changed_runs_when_host_changed() -> None:
     with patch.object(flow, "_validate_connection", AsyncMock()) as mocked_validate:
         await flow._check_connection_if_changed(truenas_config, entry_data, errors)
     mocked_validate.assert_awaited_once_with(truenas_config, errors)
+
+
+async def test_guess_ip_stays_bounded_while_pool_is_saturated() -> None:
+    """Earlier stalled lookups must neither stall nor pile up behind a new guess."""
+    candidates = 1 + len(const.KNOWN_DOMAINS)
+    release = threading.Event()
+    started: list[str] = []
+
+    def hanging_gethostbyname(host: str) -> str:
+        started.append(host)
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket,
+                "gethostbyname",
+                side_effect=hanging_gethostbyname,
+            ),
+        ):
+            assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
+            assert len(started) == candidates  # every worker is now stuck
+
+            start = time.monotonic()
+            result = await config_flow._async_guess_ip()
+            elapsed = time.monotonic() - start
+            assert len(started) == candidates  # second guess only queued
+
+            release.set()
+            await asyncio.sleep(0.2)
+    finally:
+        release.set()
+    assert result == config_flow.DEFAULT_HOST
+    assert elapsed < 2
+    # The queued lookups were cancelled, so the freed workers never ran them.
+    assert len(started) == candidates

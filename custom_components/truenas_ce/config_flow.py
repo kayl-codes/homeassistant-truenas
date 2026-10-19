@@ -7,6 +7,7 @@ import contextlib
 import socket
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 from typing import Any
 
@@ -24,7 +25,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -312,6 +313,14 @@ def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
 # dialog (a reverse proxy turns that into a 504 -- #196).
 GUESS_HOST_TIMEOUT: float = 3.0
 
+# Own small pool for the lookups: a blocked resolver call cannot be cancelled,
+# so with Home Assistant's shared executor a stalled DNS server plus repeated
+# setup attempts would tie up threads that unrelated jobs need. Here they only
+# queue behind each other; queued lookups are cancelled at the deadline.
+_HOST_GUESS_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1 + len(KNOWN_DOMAINS), thread_name_prefix="truenas_ce_host_guess"
+)
+
 
 def _guess_host_candidates() -> list[str]:
     """Return the hostnames to try, in priority order."""
@@ -326,18 +335,22 @@ def _resolve_host(host: str) -> str | None:
     return None
 
 
-async def _async_guess_ip(hass: HomeAssistant) -> str:
+async def _async_guess_ip() -> str:
     """Try to guess the TrueNAS IP from common local hostnames.
 
     All candidates are resolved in parallel and the whole guess is capped at
     GUESS_HOST_TIMEOUT; the first candidate (in priority order) that resolved
     in time wins, otherwise DEFAULT_HOST is used. Lookups still running at the
-    deadline keep their executor thread until the resolver gives up, but no
-    longer delay the form.
+    deadline keep their _HOST_GUESS_EXECUTOR thread until the resolver gives
+    up, but no longer delay the form.
     """
     candidates = _guess_host_candidates()
     start = time.monotonic()
-    lookups = [hass.async_add_executor_job(_resolve_host, host) for host in candidates]
+    loop = asyncio.get_running_loop()
+    lookups = [
+        loop.run_in_executor(_HOST_GUESS_EXECUTOR, _resolve_host, host)
+        for host in candidates
+    ]
     done, pending = await asyncio.wait(lookups, timeout=GUESS_HOST_TIMEOUT)
     for lookup in pending:
         lookup.cancel()
@@ -564,7 +577,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is None and not truenas_config.get(CONF_HOST):
-            default_host = await _async_guess_ip(self.hass)
+            default_host = await _async_guess_ip()
             _LOGGER.debug("Auto-discovered default host: %s", default_host)
             truenas_config[CONF_HOST] = default_host
 
