@@ -11,8 +11,11 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -176,34 +179,133 @@ def test_map_error_to_ha_unknown_error_falls_back() -> None:
 
 
 # ---------------------------
-#   _guess_ip
+#   _async_guess_ip
 # ---------------------------
-def test_guess_ip_returns_first_resolvable_host() -> None:
+def _executor_hass() -> MagicMock:
+    """A hass stand-in whose async_add_executor_job really uses a thread."""
+    hass = MagicMock()
+    hass.async_add_executor_job.side_effect = lambda func, *args: (
+        asyncio.get_running_loop().run_in_executor(None, func, *args)
+    )
+    return hass
+
+
+async def test_guess_ip_returns_first_resolvable_host() -> None:
     with patch.object(config_flow.socket, "gethostbyname", return_value="10.0.0.5"):
-        assert config_flow._guess_ip() == "10.0.0.5"
+        assert await config_flow._async_guess_ip(_executor_hass()) == "10.0.0.5"
 
 
-def test_guess_ip_falls_back_through_known_domains() -> None:
-    calls: list[str] = []
+async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
+    # The bare "truenas" outranks every domain-suffixed name, even when its
+    # answer arrives last.
+    resolved = {"truenas": "10.0.0.1", "truenas.lan": "10.0.0.7"}
 
     def fake_gethostbyname(host: str) -> str:
-        calls.append(host)
-        if len(calls) < 3:
-            raise OSError("not found")
-        return "10.0.0.9"
+        if host == "truenas":
+            time.sleep(0.2)
+        if host in resolved:
+            return resolved[host]
+        raise OSError("not found")
 
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
-        assert config_flow._guess_ip() == "10.0.0.9"
-    assert calls == ["truenas", "truenas.fritz.box", "truenas.local"]
+        assert await config_flow._async_guess_ip(_executor_hass()) == "10.0.0.1"
 
 
-def test_guess_ip_returns_default_host_when_none_resolve() -> None:
+async def test_guess_ip_uses_lower_priority_answer_when_higher_one_hangs() -> None:
+    release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            release.wait(5)
+            return "10.0.0.1"
+        if host == "truenas.local":
+            return "10.0.0.9"
+        raise OSError("not found")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            result = await config_flow._async_guess_ip(_executor_hass())
+    finally:
+        release.set()
+    assert result == "10.0.0.9"
+
+
+async def test_guess_ip_tries_every_candidate() -> None:
+    calls: list[str] = []
+
+    def fake_gethostbyname(host: str) -> str:
+        calls.append(host)
+        raise OSError("not found")
+
+    with patch.object(
+        config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+    ):
+        await config_flow._async_guess_ip(_executor_hass())
+    assert sorted(calls) == sorted(
+        ["truenas"] + [f"truenas.{d}" for d in const.KNOWN_DOMAINS]
+    )
+
+
+async def test_guess_ip_returns_default_host_when_none_resolve() -> None:
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=OSError("not found")
     ):
-        assert config_flow._guess_ip() == config_flow.DEFAULT_HOST
+        assert (
+            await config_flow._async_guess_ip(_executor_hass())
+            == config_flow.DEFAULT_HOST
+        )
+
+
+async def test_guess_ip_does_not_wait_for_hanging_dns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A resolver that never answers must not stall the form (#196)."""
+    caplog.set_level(logging.DEBUG, logger=config_flow.__name__)
+    release = threading.Event()
+
+    def hanging_gethostbyname(host: str) -> str:
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket,
+                "gethostbyname",
+                side_effect=hanging_gethostbyname,
+            ),
+        ):
+            start = time.monotonic()
+            result = await config_flow._async_guess_ip(_executor_hass())
+            elapsed = time.monotonic() - start
+    finally:
+        release.set()
+    assert result == config_flow.DEFAULT_HOST
+    assert elapsed < 2
+    candidates = 1 + len(const.KNOWN_DOMAINS)
+    messages = [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if r.name == config_flow.__name__
+    ]
+    assert any(
+        level == logging.DEBUG
+        and msg.startswith("Host guess finished in ")
+        and msg.endswith(f"({candidates} of {candidates} lookups still pending)")
+        for level, msg in messages
+    )
+    assert (
+        logging.DEBUG,
+        f"No candidate hostname resolved within 0.2s, using {config_flow.DEFAULT_HOST}",
+    ) in messages
 
 
 # ---------------------------

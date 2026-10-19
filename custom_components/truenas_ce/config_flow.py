@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import socket
+import time
 from collections.abc import Mapping
 from logging import getLogger
 from typing import Any
@@ -22,7 +24,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -303,14 +305,56 @@ def _pop_blank_api_key(user_input: dict[str, Any], keep_existing: bool) -> None:
 
 
 # ---------------------------
-#   _guess_ip
+#   _async_guess_ip
 # ---------------------------
-def _guess_ip() -> str:
-    """Try to guess the TrueNAS IP from common local hostnames."""
-    for domain in [""] + KNOWN_DOMAINS:
-        test_host = f"truenas.{domain}" if domain else "truenas"
-        with contextlib.suppress(OSError):
-            return socket.gethostbyname(test_host)
+# Upper bound for prefilling the host field. The guess runs before the first
+# form is shown, so a DNS server that never answers must not stall the whole
+# dialog (a reverse proxy turns that into a 504 -- #196).
+GUESS_HOST_TIMEOUT: float = 3.0
+
+
+def _guess_host_candidates() -> list[str]:
+    """Return the hostnames to try, in priority order."""
+    return ["truenas"] + [f"truenas.{domain}" for domain in KNOWN_DOMAINS]
+
+
+def _resolve_host(host: str) -> str | None:
+    """Resolve ``host`` to an IPv4 address, or None if it does not resolve."""
+    # ValueError covers UnicodeError from IDNA encoding of a malformed label.
+    with contextlib.suppress(OSError, ValueError):
+        return socket.gethostbyname(host)
+    return None
+
+
+async def _async_guess_ip(hass: HomeAssistant) -> str:
+    """Try to guess the TrueNAS IP from common local hostnames.
+
+    All candidates are resolved in parallel and the whole guess is capped at
+    GUESS_HOST_TIMEOUT; the first candidate (in priority order) that resolved
+    in time wins, otherwise DEFAULT_HOST is used. Lookups still running at the
+    deadline keep their executor thread until the resolver gives up, but no
+    longer delay the form.
+    """
+    candidates = _guess_host_candidates()
+    start = time.monotonic()
+    lookups = [hass.async_add_executor_job(_resolve_host, host) for host in candidates]
+    done, pending = await asyncio.wait(lookups, timeout=GUESS_HOST_TIMEOUT)
+    for lookup in pending:
+        lookup.cancel()
+    _LOGGER.debug(
+        "Host guess finished in %.1fs (%d of %d lookups still pending)",
+        time.monotonic() - start,
+        len(pending),
+        len(candidates),
+    )
+    for lookup in lookups:
+        if lookup in done and (ip := lookup.result()):
+            return ip
+    _LOGGER.debug(
+        "No candidate hostname resolved within %.1fs, using %s",
+        GUESS_HOST_TIMEOUT,
+        DEFAULT_HOST,
+    )
     return DEFAULT_HOST
 
 
@@ -520,7 +564,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is None and not truenas_config.get(CONF_HOST):
-            default_host = await self.hass.async_add_executor_job(_guess_ip)
+            default_host = await _async_guess_ip(self.hass)
             _LOGGER.debug("Auto-discovered default host: %s", default_host)
             truenas_config[CONF_HOST] = default_host
 
