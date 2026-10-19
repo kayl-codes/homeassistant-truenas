@@ -90,6 +90,16 @@ def _mock_guess_ip() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_resolve_host() -> Iterator[AsyncMock]:
+    """Keep zeroconf's stored-hostname matching off the real DNS (#195)."""
+    with patch(
+        "custom_components.truenas_ce.config_flow._async_resolve_host",
+        AsyncMock(return_value=set()),
+    ) as mock_resolve:
+        yield mock_resolve
+
+
 @pytest.fixture
 def _mock_connection_ok() -> Iterator[None]:
     with (
@@ -392,6 +402,138 @@ async def test_zeroconf_flow_aborts_on_already_configured_host(
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def _init_zeroconf_flow(
+    hass: HomeAssistant, discovery_info: ZeroconfServiceInfo
+) -> tuple[config_entries.ConfigFlowResult, AsyncMock]:
+    """Start a zeroconf flow, returning its result and the probe mock."""
+    with patch.object(
+        config_flow.TrueNASConfigFlow,
+        "_probe_is_truenas",
+        AsyncMock(return_value=discovery_info.host),
+    ) as mock_probe:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=discovery_info,
+        )
+    return result, mock_probe
+
+
+def _runtime_data(query: AsyncMock) -> SimpleNamespace:
+    """Stand-in for a loaded entry's coordinator with a connected API."""
+    return SimpleNamespace(api=SimpleNamespace(query=query, connected=lambda: True))
+
+
+async def test_zeroconf_flow_aborts_when_stored_ip_is_another_discovered_ip(
+    hass: HomeAssistant, _mock_resolve_host: AsyncMock
+) -> None:
+    """A dual-stack announcement matches an entry set up by its IPv4 (#195)."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        data=_user_input(**{CONF_HOST: "192.168.1.50:443"}),
+    ).add_to_hass(hass)
+    discovery_info = ZeroconfServiceInfo(
+        ip_address=ipaddress.ip_address("fe80::1"),
+        ip_addresses=[
+            ipaddress.ip_address("fe80::1"),
+            ipaddress.ip_address("192.168.1.50"),
+        ],
+        port=80,
+        hostname="nas.local.",
+        type="_http._tcp.local.",
+        name="nas._http._tcp.local.",
+        properties={},
+    )
+
+    result, _ = await _init_zeroconf_flow(hass, discovery_info)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    # A stored IP literal never needs a DNS lookup.
+    _mock_resolve_host.assert_not_awaited()
+
+
+async def test_zeroconf_flow_aborts_when_stored_hostname_resolves_to_ip(
+    hass: HomeAssistant, _mock_resolve_host: AsyncMock
+) -> None:
+    """An entry set up by hostname is recognised by the discovered IP (#195)."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        data=_user_input(**{CONF_HOST: "nas.home.lan:8443"}),
+    ).add_to_hass(hass)
+    _mock_resolve_host.return_value = {"192.168.1.50"}
+
+    result, mock_probe = await _init_zeroconf_flow(hass, _zeroconf_discovery_info())
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    _mock_resolve_host.assert_awaited_once_with(hass, "nas.home.lan")
+    # Identity matching only runs once the probe confirmed a TrueNAS host.
+    mock_probe.assert_awaited_once()
+
+
+async def test_zeroconf_flow_aborts_when_stored_host_is_mdns_hostname(
+    hass: HomeAssistant,
+) -> None:
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        data=_user_input(**{CONF_HOST: "TrueNAS.local"}),
+    ).add_to_hass(hass)
+
+    result, _ = await _init_zeroconf_flow(hass, _zeroconf_discovery_info())
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_zeroconf_flow_aborts_when_box_reports_discovered_ipv6(
+    hass: HomeAssistant,
+) -> None:
+    """The loaded entry's own box reports the discovered link-local IP (#195)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=config_entries.ConfigEntryState.LOADED,
+        data=_user_input(**{CONF_HOST: "192.168.1.50"}),
+    )
+    entry.add_to_hass(hass)
+    query = AsyncMock(
+        return_value=[
+            {"type": "INET", "address": "192.168.1.50", "netmask": 24},
+            {"type": "INET6", "address": "fe80::d250:99ff:fefb:368d", "netmask": 64},
+        ]
+    )
+    entry.runtime_data = _runtime_data(query)
+
+    result, _ = await _init_zeroconf_flow(
+        hass, _zeroconf_discovery_info("fe80::d250:99ff:fefb:368d")
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    query.assert_awaited_once_with("interface.ip_in_use", config_flow._IP_IN_USE_PARAMS)
+
+
+async def test_zeroconf_flow_offers_box_no_entry_matches(
+    hass: HomeAssistant,
+) -> None:
+    """A different box (other IPs, other hostname) is still offered."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=config_entries.ConfigEntryState.LOADED,
+        data=_user_input(**{CONF_HOST: "nas.home.lan"}),
+    )
+    entry.add_to_hass(hass)
+    entry.runtime_data = _runtime_data(
+        AsyncMock(return_value=[{"type": "INET", "address": "10.0.0.2"}])
+    )
+
+    result, mock_probe = await _init_zeroconf_flow(hass, _zeroconf_discovery_info())
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "zeroconf_confirm"
+    mock_probe.assert_awaited_once()
 
 
 async def test_zeroconf_flow_never_probes_stored_credentials(

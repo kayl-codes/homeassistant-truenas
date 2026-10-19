@@ -19,7 +19,8 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from aiotruenas.exceptions import (
@@ -833,6 +834,190 @@ async def test_check_connection_if_changed_runs_when_host_changed() -> None:
     with patch.object(flow, "_validate_connection", AsyncMock()) as mocked_validate:
         await flow._check_connection_if_changed(truenas_config, entry_data, errors)
     mocked_validate.assert_awaited_once_with(truenas_config, errors)
+
+
+# ---------------------------
+#   zeroconf identity matching (#195)
+# ---------------------------
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("nas.local", "nas.local"),
+        ("nas.local:8443", "nas.local"),
+        ("192.168.1.50:443", "192.168.1.50"),
+        ("[fe80::1]", "fe80::1"),
+        ("[2001:db8::1]:8443", "2001:db8::1"),
+        ("nas.local.", "nas.local"),
+        ("nas.local.:8443", "nas.local"),
+        ("user:secret@nas.local:8443", "nas.local"),
+        ("user:secret@[fe80::1]:8443", "fe80::1"),
+    ],
+)
+def test_host_without_port(host: str, expected: str) -> None:
+    assert config_flow._host_without_port(host) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("192.168.1.50", "192.168.1.50"),
+        ("FE80::0001", "fe80::1"),
+        ("fe80::1%eth0", "fe80::1"),
+        ("nas.local", None),
+        ("", None),
+    ],
+)
+def test_normalize_ip(value: str, expected: str | None) -> None:
+    assert config_flow._normalize_ip(value) == expected
+
+
+async def test_resolve_host_returns_resolved_ips() -> None:
+    hass = MagicMock()
+    hass.loop.getaddrinfo = AsyncMock(
+        return_value=[
+            (2, 1, 6, "", ("192.168.1.50", 0)),
+            (23, 1, 6, "", ("fe80::1%2", 0, 0, 2)),
+        ]
+    )
+    assert await config_flow._async_resolve_host(hass, "nas.lan") == {
+        "192.168.1.50",
+        "fe80::1",
+    }
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("NXDOMAIN"),
+        TimeoutError(),
+        # What getaddrinfo really raises for a malformed host like "nas..lan".
+        UnicodeError("label empty or too long"),
+        ValueError("embedded null character"),
+    ],
+)
+async def test_resolve_host_failure_yields_empty_set(error: Exception) -> None:
+    hass = MagicMock()
+    hass.loop.getaddrinfo = AsyncMock(side_effect=error)
+    assert await config_flow._async_resolve_host(hass, "nas..lan") == set()
+
+
+def _loaded_entry(query: AsyncMock) -> MagicMock:
+    entry = MagicMock()
+    entry.state = config_flow.ConfigEntryState.LOADED
+    entry.runtime_data.api.query = query
+    entry.runtime_data.api.connected = MagicMock(return_value=True)
+    return entry
+
+
+async def test_entry_reported_ips_parses_ip_in_use() -> None:
+    # Shape verified against a live TrueNAS 25.10 box.
+    query = AsyncMock(
+        return_value=[
+            {"type": "INET", "address": "192.168.0.252", "netmask": 24},
+            {"type": "INET6", "address": "fe80::d250:99ff:fefb:368d", "netmask": 64},
+            {"type": "INET", "address": None},
+            "garbage",
+        ]
+    )
+    ips = await config_flow._async_entry_reported_ips(_loaded_entry(query))
+    assert ips == {"192.168.0.252", "fe80::d250:99ff:fefb:368d"}
+    query.assert_awaited_once_with("interface.ip_in_use", config_flow._IP_IN_USE_PARAMS)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        AsyncMock(return_value=None),
+        AsyncMock(return_value={"address": "192.168.0.252"}),
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ],
+)
+async def test_entry_reported_ips_tolerates_bad_replies(query: AsyncMock) -> None:
+    assert await config_flow._async_entry_reported_ips(_loaded_entry(query)) == set()
+
+
+async def test_entry_reported_ips_skips_unloaded_entry() -> None:
+    query = AsyncMock()
+    entry = _loaded_entry(query)
+    entry.state = config_flow.ConfigEntryState.SETUP_RETRY
+    assert await config_flow._async_entry_reported_ips(entry) == set()
+    query.assert_not_awaited()
+
+
+async def test_entry_reported_ips_skips_disconnected_api() -> None:
+    """No RPC (and so no reconnect attempt) while the entry is offline."""
+    query = AsyncMock()
+    entry = _loaded_entry(query)
+    entry.runtime_data.api.connected.return_value = False
+    assert await config_flow._async_entry_reported_ips(entry) == set()
+    query.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("matches", "expected"),
+    [([], False), ([False, False], False), ([False, True], True), ([True, True], True)],
+)
+async def test_discovery_is_configured_checks_all_entries(
+    matches: list[bool], expected: bool
+) -> None:
+    """Any matching entry (not just the first) marks the discovery configured."""
+    entries = [SimpleNamespace(title=f"e{i}") for i in range(len(matches))]
+    seen: list[object] = []
+
+    async def fake_match(
+        hass: object, entry: object, addresses: set[str], hostname: str
+    ) -> bool:
+        seen.append(entry)
+        assert addresses == {"192.168.1.50"}
+        assert hostname == "nas.local"
+        return matches[entries.index(entry)]
+
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    info = SimpleNamespace(ip_addresses=[], host="192.168.1.50", hostname="NAS.local.")
+    with (
+        patch.object(config_flow, "_async_entry_matches_discovery", fake_match),
+        patch.object(flow, "_async_current_entries", return_value=entries),
+    ):
+        assert await flow._async_discovery_is_configured(info) is expected
+    assert seen == entries  # every entry is checked concurrently
+
+
+@pytest.mark.parametrize(
+    ("stored", "mdns", "resolved_with"),
+    [
+        # A stored FQDN with trailing dot matches the mDNS name without DNS.
+        ("nas.local.", "nas.local", None),
+        # Userinfo and port are stripped before the host reaches the resolver.
+        ("user:secret@nas.lan:8443", "other.local", "nas.lan"),
+    ],
+)
+async def test_entry_matches_discovery_uses_stripped_host(
+    stored: str, mdns: str, resolved_with: str | None
+) -> None:
+    """The stripped stored host is what gets compared and resolved (#195)."""
+    entry = SimpleNamespace(data={CONF_HOST: stored}, state=None, title="t")
+    resolve = AsyncMock(return_value={"192.168.1.50"})
+    with patch.object(config_flow, "_async_resolve_host", resolve):
+        assert await config_flow._async_entry_matches_discovery(
+            MagicMock(), entry, {"192.168.1.50"}, mdns
+        )
+    if resolved_with is None:
+        resolve.assert_not_awaited()
+    else:
+        resolve.assert_awaited_once_with(ANY, resolved_with)
+
+
+async def test_resolve_host_failure_does_not_log_host(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed lookup never logs the (possibly credential-bearing) host."""
+    hass = MagicMock()
+    hass.loop.getaddrinfo = AsyncMock(side_effect=OSError("boom"))
+    with caplog.at_level(logging.DEBUG, logger=config_flow.__name__):
+        assert await config_flow._async_resolve_host(hass, "user:pa") == set()
+    assert "user:pa" not in caplog.text
+    assert "failed to resolve a stored host" in caplog.text
 
 
 async def test_guess_ip_skips_new_lookups_while_earlier_ones_still_run(
