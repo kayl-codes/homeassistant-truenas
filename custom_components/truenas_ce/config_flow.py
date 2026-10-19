@@ -389,7 +389,8 @@ async def _async_wait_for_answer(lookups: list[Future[str | None]]) -> str | Non
         return _pick_answer(lookups, settle=True)[1]
     finally:
         # A lookup finishing later must not call back into a loop that may be
-        # closed by then.
+        # closed by then. cancel() also clears the "exception was never
+        # retrieved" flag of a waiter whose lookup already failed.
         for waiter in waiters:
             waiter.cancel()
 

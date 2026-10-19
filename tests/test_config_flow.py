@@ -12,6 +12,7 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 import threading
@@ -854,14 +855,12 @@ async def test_guess_ip_skips_new_lookups_while_earlier_ones_still_run(
             assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
             assert all_entered.wait(2)  # every worker is stuck in the resolver
 
-            start = time.monotonic()
             result = await config_flow._async_guess_ip()
-            elapsed = time.monotonic() - start
     finally:
         release.set()
     assert result == config_flow.DEFAULT_HOST
-    assert elapsed < 0.5  # returned at once instead of waiting out the timeout
-    assert len(started) == GUESS_CANDIDATES  # the second guess queued nothing
+    # The second guess queued nothing and took the guard's early return.
+    assert len(started) == GUESS_CANDIDATES
     assert (
         logging.DEBUG,
         "Lookups of an earlier host guess are still running, using "
@@ -946,11 +945,15 @@ async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
         assert await config_flow._async_guess_ip() == "10.0.0.7"
 
 
-async def test_guess_ip_ignores_an_unexpected_lookup_error() -> None:
+async def test_guess_ip_ignores_an_unexpected_lookup_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     def fake_gethostbyname(host: str) -> str:
         if host == "truenas":
             raise RuntimeError("resolver bug")
         if host == "truenas.local":
+            # Answer late, so the loop has already completed the failed waiter.
+            time.sleep(0.2)
             return "10.0.0.9"
         raise OSError("not found")
 
@@ -958,6 +961,11 @@ async def test_guess_ip_ignores_an_unexpected_lookup_error() -> None:
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
         assert await config_flow._async_guess_ip() == "10.0.0.9"
+    # Drop the last references so a never-retrieved error would be logged now.
+    config_flow._host_guess.lookups = []
+    gc.collect()
+    await asyncio.sleep(0)
+    assert "exception was never retrieved" not in caplog.text
 
 
 async def test_guess_ip_cancels_queued_lookups_when_the_flow_is_cancelled() -> None:
