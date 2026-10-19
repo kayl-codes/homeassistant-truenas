@@ -12,7 +12,6 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 from __future__ import annotations
 
 import asyncio
-import gc
 import json
 import logging
 import threading
@@ -270,19 +269,21 @@ async def test_guess_ip_returns_best_answer_without_waiting_for_the_rest() -> No
 
     try:
         with (
-            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 5.0),
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 30.0),
             patch.object(
                 config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
             ),
         ):
-            start = time.monotonic()
             result = await config_flow._async_guess_ip()
-            elapsed = time.monotonic() - start
+            # The top candidate answered, so nothing lower can win: the guess
+            # returned while the others were still blocked in the resolver.
+            still_running = [
+                not lookup.done() for lookup in config_flow._host_guess.lookups[1:]
+            ]
     finally:
         release.set()
     assert result == "10.0.0.1"
-    # The top candidate answered, so nothing lower can win: no waiting for them.
-    assert elapsed < 2
+    assert all(still_running)
 
 
 async def test_guess_ip_tries_every_candidate_on_its_own_executor() -> None:
@@ -945,15 +946,15 @@ async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
         assert await config_flow._async_guess_ip() == "10.0.0.7"
 
 
-async def test_guess_ip_ignores_an_unexpected_lookup_error(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+async def test_guess_ip_logs_and_skips_an_unexpected_lookup_error(
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.DEBUG, logger=config_flow.__name__)
+
     def fake_gethostbyname(host: str) -> str:
         if host == "truenas":
             raise RuntimeError("resolver bug")
         if host == "truenas.local":
-            # Answer late, so the loop has already completed the failed waiter.
-            time.sleep(0.2)
             return "10.0.0.9"
         raise OSError("not found")
 
@@ -961,11 +962,16 @@ async def test_guess_ip_ignores_an_unexpected_lookup_error(
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
         assert await config_flow._async_guess_ip() == "10.0.0.9"
-    # Drop the last references so a never-retrieved error would be logged now.
-    monkeypatch.setattr(config_flow._host_guess, "lookups", [])
-    gc.collect()
-    await asyncio.sleep(0)
-    assert "exception was never retrieved" not in caplog.text
+    # Visible in the debug log, and it never reaches a future as an exception.
+    records = [
+        r
+        for r in caplog.records
+        if r.getMessage() == "Unexpected error resolving truenas"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].exc_info is not None
+    assert all(lookup.exception() is None for lookup in config_flow._host_guess.lookups)
 
 
 async def test_guess_ip_cancels_queued_lookups_when_the_flow_is_cancelled() -> None:

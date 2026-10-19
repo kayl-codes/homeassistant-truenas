@@ -341,10 +341,14 @@ def _guess_host_candidates() -> list[str]:
 
 def _resolve_host(host: str) -> str | None:
     """Resolve ``host`` to an IPv4 address, or None if it does not resolve."""
-    # ValueError covers UnicodeError from IDNA encoding of a malformed label.
-    with contextlib.suppress(OSError, ValueError):
+    try:
         return socket.gethostbyname(host)
-    return None
+    except (OSError, ValueError):
+        # ValueError covers UnicodeError from IDNA encoding of a malformed label.
+        return None
+    except Exception:  # a prefill guess must never abort the form
+        _LOGGER.debug("Unexpected error resolving %s", host, exc_info=True)
+        return None
 
 
 def _pick_answer(
@@ -360,12 +364,7 @@ def _pick_answer(
             if settle:
                 continue
             return False, None
-        # exception() first: an unexpected lookup error must not abort the guess.
-        if (
-            not lookup.cancelled()
-            and lookup.exception() is None
-            and (ip := lookup.result())
-        ):
+        if not lookup.cancelled() and (ip := lookup.result()):
             return True, ip
     return True, None
 
@@ -389,8 +388,7 @@ async def _async_wait_for_answer(lookups: list[Future[str | None]]) -> str | Non
         return _pick_answer(lookups, settle=True)[1]
     finally:
         # A lookup finishing later must not call back into a loop that may be
-        # closed by then. cancel() also clears the "exception was never
-        # retrieved" flag of a waiter whose lookup already failed.
+        # closed by then.
         for waiter in waiters:
             waiter.cancel()
 
