@@ -78,13 +78,14 @@ def _mock_setup_entry() -> Iterator[AsyncMock]:
 def _mock_guess_ip() -> Iterator[None]:
     """Avoid the DNS lookup pytest-homeassistant-custom-component forbids.
 
-    ``async_step_user`` calls ``_guess_ip()`` (a real ``socket.gethostbyname``
-    lookup) to prefill a default host; the test harness patches
-    ``socket.gethostbyname`` to raise for any non-local/non-IP hostname.
+    ``async_step_user`` calls ``_async_guess_ip()`` (real
+    ``socket.gethostbyname`` lookups) to prefill a default host; the test
+    harness patches ``socket.gethostbyname`` to raise for any
+    non-local/non-IP hostname.
     """
     with patch(
-        "custom_components.truenas_ce.config_flow._guess_ip",
-        return_value=DEFAULT_HOST,
+        "custom_components.truenas_ce.config_flow._async_guess_ip",
+        AsyncMock(return_value=DEFAULT_HOST),
     ):
         yield
 

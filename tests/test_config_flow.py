@@ -11,8 +11,13 @@ pytest plugin unconditionally imports the POSIX-only ``fcntl`` module).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
+import time
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -176,34 +181,189 @@ def test_map_error_to_ha_unknown_error_falls_back() -> None:
 
 
 # ---------------------------
-#   _guess_ip
+#   _async_guess_ip
 # ---------------------------
-def test_guess_ip_returns_first_resolvable_host() -> None:
+GUESS_CANDIDATES = 1 + len(const.KNOWN_DOMAINS)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_host_guess_executor() -> Iterator[None]:
+    """Give each test its own lookup pool and join its threads afterwards.
+
+    The module-level pool lives for the process; Home Assistant's test plugin
+    rejects threads that outlive a test, and a shared pool would let one test's
+    stalled lookups leak into the next. The default resolver fake stays active
+    until the pool is joined: a worker that only reaches gethostbyname after a
+    test's own patch is gone must never hit the real (possibly slow) resolver.
+    """
+    executor = ThreadPoolExecutor(
+        max_workers=GUESS_CANDIDATES, thread_name_prefix="truenas_ce_host_guess"
+    )
+    with (
+        patch.object(config_flow, "_HOST_GUESS_EXECUTOR", executor),
+        patch.object(config_flow, "_host_guess", config_flow._HostGuessState()),
+        patch.object(
+            config_flow.socket, "gethostbyname", side_effect=OSError("not found")
+        ),
+    ):
+        yield
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
+async def test_guess_ip_returns_first_resolvable_host() -> None:
     with patch.object(config_flow.socket, "gethostbyname", return_value="10.0.0.5"):
-        assert config_flow._guess_ip() == "10.0.0.5"
+        assert await config_flow._async_guess_ip() == "10.0.0.5"
 
 
-def test_guess_ip_falls_back_through_known_domains() -> None:
-    calls: list[str] = []
+async def test_guess_ip_prefers_candidate_priority_over_answer_order() -> None:
+    # The bare "truenas" outranks every domain-suffixed name, even when its
+    # answer arrives last.
+    resolved = {"truenas": "10.0.0.1", "truenas.lan": "10.0.0.7"}
+    lower_answered = threading.Event()
 
     def fake_gethostbyname(host: str) -> str:
-        calls.append(host)
-        if len(calls) < 3:
-            raise OSError("not found")
-        return "10.0.0.9"
+        if host == "truenas":
+            # Answer only after the lower-priority name has answered.
+            assert lower_answered.wait(5)
+        if host in resolved:
+            if host != "truenas":
+                lower_answered.set()
+            return resolved[host]
+        raise OSError("not found")
+
+    with (
+        # Generous: only the event decides the answer order, never the deadline.
+        patch.object(config_flow, "GUESS_HOST_TIMEOUT", 30.0),
+        patch.object(
+            config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+        ),
+    ):
+        assert await config_flow._async_guess_ip() == "10.0.0.1"
+
+
+async def test_guess_ip_uses_lower_priority_answer_when_higher_one_hangs() -> None:
+    release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            release.wait(5)
+            return "10.0.0.1"
+        if host == "truenas.local":
+            return "10.0.0.9"
+        raise OSError("not found")
+
+    try:
+        with (
+            # Generous: the lower-priority answer only has to land in time.
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 1.0),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            result = await config_flow._async_guess_ip()
+    finally:
+        release.set()
+    assert result == "10.0.0.9"
+
+
+async def test_guess_ip_returns_best_answer_without_waiting_for_the_rest() -> None:
+    release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            return "10.0.0.1"
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 30.0),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            result = await config_flow._async_guess_ip()
+            # The top candidate answered, so nothing lower can win: the guess
+            # returned while the others were still blocked in the resolver.
+            still_running = [
+                not lookup.done() for lookup in config_flow._host_guess.lookups[1:]
+            ]
+    finally:
+        release.set()
+    assert result == "10.0.0.1"
+    assert len(still_running) == GUESS_CANDIDATES - 1
+    assert all(still_running)
+
+
+async def test_guess_ip_tries_every_candidate_on_its_own_executor() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_gethostbyname(host: str) -> str:
+        calls.append((host, threading.current_thread().name))
+        raise OSError("not found")
 
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
     ):
-        assert config_flow._guess_ip() == "10.0.0.9"
-    assert calls == ["truenas", "truenas.fritz.box", "truenas.local"]
+        await config_flow._async_guess_ip()
+    assert sorted(host for host, _ in calls) == sorted(
+        ["truenas"] + [f"truenas.{d}" for d in const.KNOWN_DOMAINS]
+    )
+    # Never on Home Assistant's shared executor: a stalled resolver call can't
+    # be cancelled and would otherwise tie up threads other jobs need.
+    assert all(name.startswith("truenas_ce_host_guess") for _, name in calls)
 
 
-def test_guess_ip_returns_default_host_when_none_resolve() -> None:
+async def test_guess_ip_returns_default_host_when_none_resolve() -> None:
     with patch.object(
         config_flow.socket, "gethostbyname", side_effect=OSError("not found")
     ):
-        assert config_flow._guess_ip() == config_flow.DEFAULT_HOST
+        assert await config_flow._async_guess_ip() == "truenas.local"
+
+
+async def test_guess_ip_does_not_wait_for_hanging_dns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A resolver that never answers must not stall the form (#196)."""
+    caplog.set_level(logging.DEBUG, logger=config_flow.__name__)
+    release = threading.Event()
+
+    def hanging_gethostbyname(host: str) -> str:
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket,
+                "gethostbyname",
+                side_effect=hanging_gethostbyname,
+            ),
+        ):
+            start = time.monotonic()
+            result = await config_flow._async_guess_ip()
+            elapsed = time.monotonic() - start
+    finally:
+        release.set()
+    assert result == config_flow.DEFAULT_HOST
+    assert elapsed < 1  # 0.2 s cap plus scheduling slack, far below the 5 s hang
+    candidates = 1 + len(const.KNOWN_DOMAINS)
+    messages = [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if r.name == config_flow.__name__
+    ]
+    assert any(
+        level == logging.DEBUG
+        and msg.startswith("Host guess finished in ")
+        and msg.endswith(f"({candidates} of {candidates} lookups still pending)")
+        for level, msg in messages
+    )
+    assert (
+        logging.DEBUG,
+        f"No candidate hostname resolved within 0.2s, using {config_flow.DEFAULT_HOST}",
+    ) in messages
 
 
 # ---------------------------
@@ -673,3 +833,186 @@ async def test_check_connection_if_changed_runs_when_host_changed() -> None:
     with patch.object(flow, "_validate_connection", AsyncMock()) as mocked_validate:
         await flow._check_connection_if_changed(truenas_config, entry_data, errors)
     mocked_validate.assert_awaited_once_with(truenas_config, errors)
+
+
+async def test_guess_ip_skips_new_lookups_while_earlier_ones_still_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stalled lookups of one guess must neither stall nor pile up behind the next."""
+    caplog.set_level(logging.DEBUG, logger=config_flow.__name__)
+    release = threading.Event()
+    all_entered = threading.Event()
+    started: list[str] = []
+    lock = threading.Lock()
+
+    def hanging_gethostbyname(host: str) -> str:
+        with lock:
+            started.append(host)
+            if len(started) == GUESS_CANDIDATES:
+                all_entered.set()
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 1.0),
+            patch.object(
+                config_flow.socket,
+                "gethostbyname",
+                side_effect=hanging_gethostbyname,
+            ),
+        ):
+            assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
+            assert all_entered.wait(2)  # every worker is stuck in the resolver
+
+            result = await config_flow._async_guess_ip()
+    finally:
+        release.set()
+    assert result == config_flow.DEFAULT_HOST
+    # The second guess queued nothing and took the guard's early return.
+    assert len(started) == GUESS_CANDIDATES
+    assert (
+        logging.DEBUG,
+        "Lookups of an earlier host guess are still running, using "
+        f"{config_flow.DEFAULT_HOST}",
+    ) in [(r.levelno, r.getMessage()) for r in caplog.records]
+
+
+async def test_guess_ip_reuses_last_answer_while_its_lookups_still_run() -> None:
+    release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            return "10.0.0.1"
+        release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 5.0),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            assert await config_flow._async_guess_ip() == "10.0.0.1"
+            # Lower-priority lookups still run: no new batch, same answer.
+            assert await config_flow._async_guess_ip() == "10.0.0.1"
+    finally:
+        release.set()
+
+
+async def test_guess_ip_picks_up_an_answer_that_arrived_after_the_deadline() -> None:
+    top_release = threading.Event()
+    rest_release = threading.Event()
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            top_release.wait(5)
+            return "10.0.0.1"
+        rest_release.wait(5)
+        raise OSError("timed out")
+
+    try:
+        with (
+            patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+            patch.object(
+                config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+            ),
+        ):
+            assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
+            top_release.set()
+            top = config_flow._host_guess.lookups[0]
+            await asyncio.to_thread(top.result, 2)
+            # The other lookups still run, yet the late top answer is used.
+            assert await config_flow._async_guess_ip() == "10.0.0.1"
+    finally:
+        top_release.set()
+        rest_release.set()
+
+
+async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
+    release = threading.Event()
+
+    def hanging_gethostbyname(host: str) -> str:
+        release.wait(5)
+        raise OSError("timed out")
+
+    with (
+        patch.object(config_flow, "GUESS_HOST_TIMEOUT", 0.2),
+        patch.object(
+            config_flow.socket, "gethostbyname", side_effect=hanging_gethostbyname
+        ),
+    ):
+        try:
+            assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
+        finally:
+            release.set()
+        deadline = time.monotonic() + 2
+        while not all(lookup.done() for lookup in config_flow._host_guess.lookups):
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.01)
+    with patch.object(config_flow.socket, "gethostbyname", return_value="10.0.0.7"):
+        assert await config_flow._async_guess_ip() == "10.0.0.7"
+
+
+async def test_guess_ip_logs_and_skips_an_unexpected_lookup_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=config_flow.__name__)
+
+    def fake_gethostbyname(host: str) -> str:
+        if host == "truenas":
+            raise RuntimeError("resolver bug")
+        if host == "truenas.local":
+            return "10.0.0.9"
+        raise OSError("not found")
+
+    with patch.object(
+        config_flow.socket, "gethostbyname", side_effect=fake_gethostbyname
+    ):
+        assert await config_flow._async_guess_ip() == "10.0.0.9"
+    # Visible in the debug log, and it never reaches a future as an exception.
+    records = [
+        r
+        for r in caplog.records
+        if r.getMessage() == "Unexpected error resolving truenas"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].exc_info is not None
+    assert all(lookup.exception() is None for lookup in config_flow._host_guess.lookups)
+
+
+async def test_guess_ip_cancels_queued_lookups_when_the_flow_is_cancelled() -> None:
+    release = threading.Event()
+    entered = threading.Event()
+    single_worker = ThreadPoolExecutor(max_workers=1)
+    called: list[str] = []
+
+    def hanging_gethostbyname(host: str) -> str:
+        called.append(host)
+        entered.set()
+        release.wait(5)
+        raise OSError("timed out")
+
+    with (
+        patch.object(config_flow, "_HOST_GUESS_EXECUTOR", single_worker),
+        patch.object(config_flow, "GUESS_HOST_TIMEOUT", 5.0),
+        patch.object(
+            config_flow.socket, "gethostbyname", side_effect=hanging_gethostbyname
+        ),
+    ):
+        try:
+            task = asyncio.create_task(config_flow._async_guess_ip())
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            lookups = list(config_flow._host_guess.lookups)
+        finally:
+            release.set()
+            single_worker.shutdown(wait=True)
+    # One lookup was running; every queued one was cancelled and never ran.
+    assert len(lookups) == GUESS_CANDIDATES
+    assert sum(lookup.cancelled() for lookup in lookups) == GUESS_CANDIDATES - 1
+    assert called == ["truenas"]

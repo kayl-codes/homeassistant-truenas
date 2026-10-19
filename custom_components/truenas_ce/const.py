@@ -30,7 +30,7 @@ SIGNAL_UPDATE_SENSORS = f"{DOMAIN}_update_sensors"
 # TrueNAS interface link states (from interface.query -> state/link_state).
 LINK_STATE_DOWN = "LINK_STATE_DOWN"
 
-DEFAULT_HOST = "trueas.local"
+DEFAULT_HOST = "truenas.local"
 
 # Default per-query timeout in seconds
 QUERY_TIMEOUT: float = 30.0
