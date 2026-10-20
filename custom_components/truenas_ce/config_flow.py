@@ -936,7 +936,9 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         """Return True if an existing entry already covers the discovered box.
 
         Entries are checked concurrently, so slow DNS lookups or RPCs of
-        several entries do not add up before the confirm form appears.
+        several entries do not add up before the confirm form appears. Every
+        matching entry (not just the first) gets its pending setup retry
+        triggered.
         """
         addresses = _ip_set(
             [str(ip) for ip in discovery_info.ip_addresses] + [discovery_info.host]
@@ -949,16 +951,17 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                 for entry in entries
             )
         )
-        for entry, matched in zip(entries, matches, strict=True):
-            if matched:
-                _LOGGER.debug(
-                    "TrueNAS %s: discovered %s matches this configured entry",
-                    entry.title,
-                    discovery_info.host,
-                )
-                self._async_reload_if_retrying(entry)
-                return True
-        return False
+        matched_entries = [
+            entry for entry, matched in zip(entries, matches, strict=True) if matched
+        ]
+        for entry in matched_entries:
+            _LOGGER.debug(
+                "TrueNAS %s: discovered %s matches this configured entry",
+                entry.title,
+                discovery_info.host,
+            )
+            self._async_reload_if_retrying(entry)
+        return bool(matched_entries)
 
     async def _async_retry_entries_for_host(self, host: str, port: int | None) -> None:
         """Retry the setup of entries stored with exactly ``host`` (#196).

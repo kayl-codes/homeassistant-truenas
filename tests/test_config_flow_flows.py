@@ -480,6 +480,8 @@ async def test_zeroconf_flow_reloads_retrying_entry_once_per_cooldown(
             AsyncMock(return_value="192.168.1.50"),
         ),
         patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+        # A frozen clock keeps a stalled test run from outlasting the cooldown.
+        patch.object(config_flow.time, "monotonic", return_value=1000.0),
     ):
         for _ in range(3):
             await hass.config_entries.flow.async_init(
@@ -578,6 +580,38 @@ async def test_zeroconf_flow_reloads_retrying_entry_matched_by_hostname(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     mock_reload.assert_called_once_with(existing.entry_id)
+
+
+async def test_zeroconf_flow_skips_retry_of_hostname_match_until_api_answers(
+    hass: HomeAssistant, _mock_resolve_host: AsyncMock
+) -> None:
+    """No early retry while only mDNS is up and the API does not answer yet."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=config_entries.ConfigEntryState.SETUP_RETRY,
+        data=_user_input(**{CONF_HOST: "nas.home.lan"}),
+    ).add_to_hass(hass)
+    _mock_resolve_host.return_value = {"192.168.1.50"}
+
+    with (
+        patch.object(
+            config_flow.TrueNASConfigFlow,
+            "_probe_is_truenas",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_truenas"
+    mock_reload.assert_not_called()
+    # Identity matching never even ran for a host that is not answering yet.
+    _mock_resolve_host.assert_not_awaited()
 
 
 async def test_zeroconf_flow_aborts_when_stored_host_is_mdns_hostname(

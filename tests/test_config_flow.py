@@ -1031,6 +1031,32 @@ async def test_discovery_is_configured_reloads_retrying_match(
         reload.assert_not_called()
 
 
+async def test_discovery_is_configured_reloads_every_retrying_match() -> None:
+    """Every matching entry waiting for a retry is reloaded, not just the first."""
+    retry = config_flow.ConfigEntryState.SETUP_RETRY
+    entries = [
+        SimpleNamespace(title=name, entry_id=name, state=retry)
+        for name in ("first", "second", "unmatched")
+    ]
+
+    async def fake_match(
+        hass: object, entry: object, addresses: set[str], hostname: str
+    ) -> bool:
+        return entry is not entries[2]
+
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    info = SimpleNamespace(ip_addresses=[], host="192.168.1.50", hostname="nas.local.")
+    with (
+        patch.object(config_flow, "_async_entry_matches_discovery", fake_match),
+        patch.object(flow, "_async_current_entries", return_value=entries),
+    ):
+        assert await flow._async_discovery_is_configured(info) is True
+    reload = flow.hass.config_entries.async_schedule_reload
+    assert [c.args[0] for c in reload.call_args_list] == ["first", "second"]
+
+
 def _retry_entry(entry_id: str, host: str, state: object) -> SimpleNamespace:
     return SimpleNamespace(
         title=entry_id, entry_id=entry_id, state=state, data={CONF_HOST: host}
