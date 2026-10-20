@@ -404,6 +404,92 @@ async def test_zeroconf_flow_aborts_on_already_configured_host(
     assert result["reason"] == "already_configured"
 
 
+@pytest.mark.parametrize(
+    ("state", "probed_host", "reloaded"),
+    [
+        (config_entries.ConfigEntryState.SETUP_RETRY, "192.168.1.50", True),
+        # mDNS often comes up before the API: no retry until the probe answers.
+        (config_entries.ConfigEntryState.SETUP_RETRY, None, False),
+        (config_entries.ConfigEntryState.LOADED, "192.168.1.50", False),
+        (config_entries.ConfigEntryState.NOT_LOADED, "192.168.1.50", False),
+    ],
+)
+async def test_zeroconf_flow_reloads_entry_waiting_for_setup_retry(
+    hass: HomeAssistant,
+    state: config_entries.ConfigEntryState,
+    probed_host: str | None,
+    reloaded: bool,
+) -> None:
+    """An on-demand NAS announcing itself skips the setup-retry backoff (#196)."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=state,
+        data=_user_input(**{CONF_HOST: "192.168.1.50"}),
+    )
+    existing.add_to_hass(hass)
+    # Another box, also waiting to retry, must not be touched.
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="other-id",
+        state=config_entries.ConfigEntryState.SETUP_RETRY,
+        data=_user_input(**{CONF_HOST: "192.168.1.60"}),
+    ).add_to_hass(hass)
+
+    with (
+        patch.object(
+            config_flow.TrueNASConfigFlow,
+            "_probe_is_truenas",
+            AsyncMock(return_value=probed_host),
+        ) as mock_probe,
+        patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_ZEROCONF},
+            data=_zeroconf_discovery_info(),
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    if reloaded:
+        mock_reload.assert_called_once_with(existing.entry_id)
+    else:
+        mock_reload.assert_not_called()
+    # The probe is only spent when a matching entry is actually retrying.
+    assert mock_probe.await_count == (
+        state is config_entries.ConfigEntryState.SETUP_RETRY
+    )
+
+
+async def test_zeroconf_flow_reloads_retrying_entry_once_per_cooldown(
+    hass: HomeAssistant,
+) -> None:
+    """A burst of announcements from a booting NAS retries its setup once."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=config_entries.ConfigEntryState.SETUP_RETRY,
+        data=_user_input(**{CONF_HOST: "192.168.1.50"}),
+    )
+    existing.add_to_hass(hass)
+
+    with (
+        patch.object(
+            config_flow.TrueNASConfigFlow,
+            "_probe_is_truenas",
+            AsyncMock(return_value="192.168.1.50"),
+        ),
+        patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+    ):
+        for _ in range(3):
+            await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_ZEROCONF},
+                data=_zeroconf_discovery_info(),
+            )
+    mock_reload.assert_called_once_with(existing.entry_id)
+
+
 async def _init_zeroconf_flow(
     hass: HomeAssistant, discovery_info: ZeroconfServiceInfo
 ) -> tuple[config_entries.ConfigFlowResult, AsyncMock]:
@@ -472,6 +558,26 @@ async def test_zeroconf_flow_aborts_when_stored_hostname_resolves_to_ip(
     _mock_resolve_host.assert_awaited_once_with(hass, "nas.home.lan")
     # Identity matching only runs once the probe confirmed a TrueNAS host.
     mock_probe.assert_awaited_once()
+
+
+async def test_zeroconf_flow_reloads_retrying_entry_matched_by_hostname(
+    hass: HomeAssistant, _mock_resolve_host: AsyncMock
+) -> None:
+    """An entry set up by hostname also skips the setup-retry backoff (#196)."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="system-id",
+        state=config_entries.ConfigEntryState.SETUP_RETRY,
+        data=_user_input(**{CONF_HOST: "nas.home.lan"}),
+    )
+    existing.add_to_hass(hass)
+    _mock_resolve_host.return_value = {"192.168.1.50"}
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+        result, _ = await _init_zeroconf_flow(hass, _zeroconf_discovery_info())
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    mock_reload.assert_called_once_with(existing.entry_id)
 
 
 async def test_zeroconf_flow_aborts_when_stored_host_is_mdns_hostname(

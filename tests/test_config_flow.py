@@ -961,7 +961,14 @@ async def test_discovery_is_configured_checks_all_entries(
     matches: list[bool], expected: bool
 ) -> None:
     """Any matching entry (not just the first) marks the discovery configured."""
-    entries = [SimpleNamespace(title=f"e{i}") for i in range(len(matches))]
+    entries = [
+        SimpleNamespace(
+            title=f"e{i}",
+            entry_id=f"id{i}",
+            state=config_flow.ConfigEntryState.NOT_LOADED,
+        )
+        for i in range(len(matches))
+    ]
     seen: list[object] = []
 
     async def fake_match(
@@ -974,6 +981,7 @@ async def test_discovery_is_configured_checks_all_entries(
 
     flow = TrueNASConfigFlow()
     flow.hass = MagicMock()
+    flow.hass.data = {}
     info = SimpleNamespace(ip_addresses=[], host="192.168.1.50", hostname="NAS.local.")
     with (
         patch.object(config_flow, "_async_entry_matches_discovery", fake_match),
@@ -981,6 +989,128 @@ async def test_discovery_is_configured_checks_all_entries(
     ):
         assert await flow._async_discovery_is_configured(info) is expected
     assert seen == entries  # every entry is checked concurrently
+    flow.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("state", "reloaded"),
+    [
+        (config_flow.ConfigEntryState.SETUP_RETRY, True),
+        (config_flow.ConfigEntryState.LOADED, False),
+        (config_flow.ConfigEntryState.SETUP_ERROR, False),
+    ],
+)
+async def test_discovery_is_configured_reloads_retrying_match(
+    state: config_flow.ConfigEntryState, reloaded: bool
+) -> None:
+    """A matched entry waiting for its setup retry is reloaded right away (#196)."""
+    other = SimpleNamespace(
+        title="other", entry_id="other", state=config_flow.ConfigEntryState.SETUP_RETRY
+    )
+    matched = SimpleNamespace(title="nas", entry_id="nas", state=state)
+
+    async def fake_match(
+        hass: object, entry: object, addresses: set[str], hostname: str
+    ) -> bool:
+        return entry is matched
+
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    info = SimpleNamespace(ip_addresses=[], host="192.168.1.50", hostname="nas.local.")
+    with (
+        patch.object(config_flow, "_async_entry_matches_discovery", fake_match),
+        patch.object(flow, "_async_current_entries", return_value=[other, matched]),
+    ):
+        assert await flow._async_discovery_is_configured(info) is True
+    reload = flow.hass.config_entries.async_schedule_reload
+    if reloaded:
+        # Only the matched entry, never an unrelated one that is also retrying.
+        reload.assert_called_once_with("nas")
+    else:
+        reload.assert_not_called()
+
+
+def _retry_entry(entry_id: str, host: str, state: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        title=entry_id, entry_id=entry_id, state=state, data={CONF_HOST: host}
+    )
+
+
+@pytest.mark.parametrize(
+    ("probed", "reloaded"), [("192.168.1.50", ["nas"]), (None, [])]
+)
+async def test_retry_entries_for_host_reloads_only_after_probe(
+    probed: str | None, reloaded: list[str]
+) -> None:
+    """Only retrying entries stored with the host, once the API answers (#196)."""
+    retry = config_flow.ConfigEntryState.SETUP_RETRY
+    entries = [
+        _retry_entry("nas", "192.168.1.50", retry),
+        _retry_entry("loaded", "192.168.1.50", config_flow.ConfigEntryState.LOADED),
+        _retry_entry("other", "192.168.1.60", retry),
+    ]
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    probe = AsyncMock(return_value=probed)
+    with (
+        patch.object(flow, "_async_current_entries", return_value=entries) as current,
+        patch.object(flow, "_probe_is_truenas", probe),
+    ):
+        await flow._async_retry_entries_for_host("192.168.1.50", 443)
+    current.assert_called_once_with(include_ignore=False)
+    probe.assert_awaited_once_with("192.168.1.50", 443)
+    reload = flow.hass.config_entries.async_schedule_reload
+    assert [c.args[0] for c in reload.call_args_list] == reloaded
+
+
+async def test_retry_entries_for_host_skips_probe_without_retrying_entry() -> None:
+    """A plain rediscovery of a loaded box costs no extra probe."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    loaded = _retry_entry("nas", "192.168.1.50", config_flow.ConfigEntryState.LOADED)
+    probe = AsyncMock()
+    with (
+        patch.object(flow, "_async_current_entries", return_value=[loaded]),
+        patch.object(flow, "_probe_is_truenas", probe),
+    ):
+        await flow._async_retry_entries_for_host("192.168.1.50", None)
+    probe.assert_not_awaited()
+    flow.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+def test_reload_if_retrying_respects_cooldown(caplog: pytest.LogCaptureFixture) -> None:
+    """Announcement bursts retry once per cooldown, then again afterwards."""
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {}
+    entry = _retry_entry(
+        "nas", "192.168.1.50", config_flow.ConfigEntryState.SETUP_RETRY
+    )
+    reload = flow.hass.config_entries.async_schedule_reload
+    cooldown = config_flow._DISCOVERY_RELOAD_COOLDOWN
+    with (
+        caplog.at_level(logging.DEBUG, logger=config_flow.__name__),
+        patch.object(
+            config_flow.time, "monotonic", side_effect=[100.0, 101.0, 100.0 + cooldown]
+        ),
+    ):
+        flow._async_reload_if_retrying(entry)
+        flow._async_reload_if_retrying(entry)
+        flow._async_reload_if_retrying(entry)
+    assert reload.call_count == 2
+    messages = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert (
+        messages
+        == [
+            (
+                logging.DEBUG,
+                "TrueNAS nas: discovered while waiting to retry setup, retrying now",
+            )
+        ]
+        * 2
+    )
 
 
 @pytest.mark.parametrize(

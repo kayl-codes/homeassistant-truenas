@@ -562,6 +562,11 @@ _IP_IN_USE_PARAMS = [{"ipv4": True, "ipv6": True, "ipv6_link_local": True}]
 # Upper bound for resolving a stored hostname, so a slow resolver cannot
 # stall the discovery flow.
 _RESOLVE_TIMEOUT = 5
+# hass.data[DOMAIN] key: entry_id -> monotonic time of the last setup retry a
+# discovery triggered; see TrueNASConfigFlow._async_reload_if_retrying.
+_DATA_DISCOVERY_RELOAD = "discovery_reload_by_entry"
+# A booting NAS announces itself repeatedly, so retry at most this often.
+_DISCOVERY_RELOAD_COOLDOWN = 60
 
 
 # ---------------------------
@@ -901,6 +906,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         entry.
         """
         host = sanitize_host(discovery_info.host)
+        await self._async_retry_entries_for_host(host, discovery_info.port)
         self._async_abort_entries_match({CONF_HOST: host})
         await self.async_set_unique_id(host)
         self._abort_if_unique_id_configured()
@@ -950,8 +956,60 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
                     entry.title,
                     discovery_info.host,
                 )
+                self._async_reload_if_retrying(entry)
                 return True
         return False
+
+    async def _async_retry_entries_for_host(self, host: str, port: int | None) -> None:
+        """Retry the setup of entries stored with exactly ``host`` (#196).
+
+        Only once the probe confirms the TrueNAS API answers: a booting box
+        often announces itself over mDNS before its middleware is up, and an
+        early retry would only fail again -- and restart Home Assistant's
+        backoff from scratch. The identity matching after the probe in
+        ``async_step_zeroconf`` covers entries stored under another address.
+        """
+        retrying = [
+            entry
+            for entry in self._async_current_entries(include_ignore=False)
+            if entry.data.get(CONF_HOST) == host
+            and entry.state is ConfigEntryState.SETUP_RETRY
+        ]
+        if retrying and await self._probe_is_truenas(host, port) is not None:
+            for entry in retrying:
+                self._async_reload_if_retrying(entry)
+
+    @callback
+    def _async_reload_if_retrying(self, entry: ConfigEntry) -> None:
+        """Reload ``entry`` now if its setup is waiting for the next retry.
+
+        A NAS that was offline when Home Assistant started sits in
+        ``SETUP_RETRY``, whose backoff grows to 10 minutes between attempts.
+        Seeing the box announce itself over mDNS means it is likely back, so
+        retry right away -- the same thing Home Assistant does for discovery
+        flows that match an entry's unique ID, which never happens here since
+        entries are keyed on the box's system ID, not on its host. The reload
+        only reconnects to the entry's own stored host, so a spoofed
+        announcement can at most cause an early retry. A cooldown keeps a
+        burst of announcements (or concurrent discovery flows, which all
+        still see ``SETUP_RETRY`` until the scheduled reload starts) from
+        reloading the entry more than once.
+        """
+        if entry.state is not ConfigEntryState.SETUP_RETRY:
+            return
+        last_reload = self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            _DATA_DISCOVERY_RELOAD, {}
+        )
+        now = time.monotonic()
+        last = last_reload.get(entry.entry_id)
+        if last is not None and now - last < _DISCOVERY_RELOAD_COOLDOWN:
+            return
+        last_reload[entry.entry_id] = now
+        _LOGGER.debug(
+            "TrueNAS %s: discovered while waiting to retry setup, retrying now",
+            entry.title,
+        )
+        self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     @staticmethod
     async def _probe_is_truenas(host: str, port: int | None = None) -> str | None:
