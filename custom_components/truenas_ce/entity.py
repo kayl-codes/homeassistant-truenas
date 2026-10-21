@@ -1069,7 +1069,7 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
         if not self._data:
             _LOGGER.debug(
                 "Data for %s is missing or empty in %s",
-                self._uid if self._uid else "keyless entity",
+                self._uid or "keyless entity",
                 self.entity_description.data_path,
             )
 

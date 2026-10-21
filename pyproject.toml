@@ -3,7 +3,8 @@ target-version = "py313"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "ASYNC"]
+# FURB/PERF/PIE/PLE/PLW/RET/RSE: a local pre-check for Sourcery-style refactorings (PLR/TRY left out as noise).
+select = ["E", "F", "W", "I", "UP", "ASYNC", "FURB", "PERF", "PIE", "PLE", "PLW", "RET", "RSE"]
 ignore = []
 
 [tool.mypy]
