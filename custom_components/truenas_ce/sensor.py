@@ -78,7 +78,7 @@ async def async_setup_entry(
     """Set up entry for TrueNAS component."""
     coordinator: TrueNASCoordinator | None = get_truenas_coordinator(config_entry)
     if coordinator is None:
-        return None
+        return
 
     platform = ep.async_get_current_platform()
 

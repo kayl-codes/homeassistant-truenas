@@ -156,8 +156,8 @@ def _text_to_passphrases(text: str) -> dict[str, str]:
     Raises ``ValueError((error_key, line))`` on the first invalid line.
     """
     result: dict[str, str] = {}
-    for line in text.strip().splitlines():
-        line = line.strip()
+    for raw_line in text.strip().splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         if "#" not in line:

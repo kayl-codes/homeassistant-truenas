@@ -9,8 +9,9 @@ def _write_locked_requirements(packages: dict, path: str) -> None:
     output is compatible with `pip install --require-hashes`.
     """
     with open(path, "w") as f:
-        for name in sorted(packages):
-            spec = packages[name]
+        for package in sorted(packages):
+            spec = packages[package]
+            name = package
             if extras := spec.get("extras"):
                 name += f"[{','.join(sorted(extras))}]"
             line = f"{name}{spec['version']}"
