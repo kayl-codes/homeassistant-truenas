@@ -15,6 +15,14 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 ## [Unreleased]
 
 ### Fixed
+- **A NAS that was offline when Home Assistant started took up to 10 minutes to show up.** Home
+  Assistant retries a failed setup with a growing delay of up to 10 minutes. The integration now
+  retries right away when the NAS announces itself on the network (zeroconf), once its API
+  answers. For networks where the announcement does not reach Home Assistant (e.g. VLANs), the new
+  [wiki page](https://github.com/kayl-codes/homeassistant-truenas/wiki/On-Demand-NAS) shows an
+  automation that does the same. Thanks @V4ler1an for the suggestion! (#196)
+- **README fixes.** Actions are prefixed with `truenas_ce.`, not `truenas.`, and debug logging is
+  enabled for `custom_components.truenas_ce`.
 - **"Config flow could not be loaded" (504) when adding the integration.** Before the setup form
   opened, the integration tried to guess the TrueNAS host by resolving up to ten hostnames one
   after another, with no time limit. With a slow or unresponsive DNS server this took minutes, and
