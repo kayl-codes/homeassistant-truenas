@@ -449,7 +449,8 @@ async def test_zeroconf_flow_reloads_entry_waiting_for_setup_retry(
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_ZEROCONF},
-            # A non-default port: the probe must use the advertised one.
+            # The probe must hit the stored host the setup will use, not the
+            # advertised port.
             data=_zeroconf_discovery_info(port=8443),
         )
     assert result["type"] is FlowResultType.ABORT
@@ -460,7 +461,7 @@ async def test_zeroconf_flow_reloads_entry_waiting_for_setup_retry(
         mock_reload.assert_not_called()
     # The probe is only spent when a matching entry is actually retrying.
     if state is config_entries.ConfigEntryState.SETUP_RETRY:
-        mock_probe.assert_awaited_once_with("192.168.1.50", 8443)
+        mock_probe.assert_awaited_once_with("192.168.1.50")
     else:
         mock_probe.assert_not_awaited()
 
@@ -482,7 +483,7 @@ async def test_zeroconf_flow_reloads_retrying_entry_once_per_cooldown(
             config_flow.TrueNASConfigFlow,
             "_probe_is_truenas",
             AsyncMock(return_value="192.168.1.50"),
-        ),
+        ) as mock_probe,
         patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
         # A frozen clock keeps a stalled test run from outlasting the cooldown.
         patch.object(config_flow.time, "monotonic", return_value=1000.0),
@@ -494,6 +495,8 @@ async def test_zeroconf_flow_reloads_retrying_entry_once_per_cooldown(
                 data=_zeroconf_discovery_info(),
             )
     mock_reload.assert_called_once_with(existing.entry_id)
+    # Announcements inside the cooldown open no further probe connection.
+    mock_probe.assert_awaited_once_with("192.168.1.50")
 
 
 async def _init_zeroconf_flow(

@@ -1084,9 +1084,9 @@ async def test_retry_entries_for_host_reloads_only_after_probe(
         patch.object(flow, "_async_current_entries", return_value=entries) as current,
         patch.object(flow, "_probe_is_truenas", probe),
     ):
-        await flow._async_retry_entries_for_host("192.168.1.50", 443)
+        await flow._async_retry_entries_for_host("192.168.1.50")
     current.assert_called_once_with(include_ignore=False)
-    probe.assert_awaited_once_with("192.168.1.50", 443)
+    probe.assert_awaited_once_with("192.168.1.50")
     reload = flow.hass.config_entries.async_schedule_reload
     assert [c.args[0] for c in reload.call_args_list] == reloaded
 
@@ -1101,9 +1101,41 @@ async def test_retry_entries_for_host_skips_probe_without_retrying_entry() -> No
         patch.object(flow, "_async_current_entries", return_value=[loaded]),
         patch.object(flow, "_probe_is_truenas", probe),
     ):
-        await flow._async_retry_entries_for_host("192.168.1.50", None)
+        await flow._async_retry_entries_for_host("192.168.1.50")
     probe.assert_not_awaited()
     flow.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("cooling", "probed", "reloaded"),
+    [(["nas"], True, ["nas2"]), (["nas", "nas2"], False, [])],
+)
+async def test_retry_entries_for_host_skips_entries_in_cooldown(
+    cooling: list[str], probed: bool, reloaded: list[str]
+) -> None:
+    """Entries just reloaded from discovery are left out before the probe."""
+    retry = config_flow.ConfigEntryState.SETUP_RETRY
+    entries = [
+        _retry_entry("nas", "192.168.1.50", retry),
+        _retry_entry("nas2", "192.168.1.50", retry),
+    ]
+    flow = TrueNASConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.data = {
+        const.DOMAIN: {
+            config_flow._DATA_DISCOVERY_RELOAD: dict.fromkeys(cooling, 100.0)
+        }
+    }
+    probe = AsyncMock(return_value="192.168.1.50")
+    with (
+        patch.object(flow, "_async_current_entries", return_value=entries),
+        patch.object(flow, "_probe_is_truenas", probe),
+        patch.object(config_flow.time, "monotonic", return_value=101.0),
+    ):
+        await flow._async_retry_entries_for_host("192.168.1.50")
+    assert probe.await_count == probed
+    reload = flow.hass.config_entries.async_schedule_reload
+    assert [c.args[0] for c in reload.call_args_list] == reloaded
 
 
 def test_reload_if_retrying_respects_cooldown(caplog: pytest.LogCaptureFixture) -> None:
@@ -1119,7 +1151,10 @@ def test_reload_if_retrying_respects_cooldown(caplog: pytest.LogCaptureFixture) 
     with (
         caplog.at_level(logging.DEBUG, logger=config_flow.__name__),
         patch.object(
-            config_flow.time, "monotonic", side_effect=[100.0, 101.0, 100.0 + cooldown]
+            config_flow.time,
+            "monotonic",
+            # first reload, check in cooldown, check after it, second reload
+            side_effect=[100.0, 101.0, 100.0 + cooldown, 100.0 + cooldown],
         ),
     ):
         flow._async_reload_if_retrying(entry)

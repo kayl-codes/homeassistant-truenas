@@ -906,7 +906,7 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         entry.
         """
         host = sanitize_host(discovery_info.host)
-        await self._async_retry_entries_for_host(host, discovery_info.port)
+        await self._async_retry_entries_for_host(host)
         self._async_abort_entries_match({CONF_HOST: host})
         await self.async_set_unique_id(host)
         self._abort_if_unique_id_configured()
@@ -963,24 +963,44 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
             self._async_reload_if_retrying(entry)
         return bool(matched_entries)
 
-    async def _async_retry_entries_for_host(self, host: str, port: int | None) -> None:
+    async def _async_retry_entries_for_host(self, host: str) -> None:
         """Retry the setup of entries stored with exactly ``host`` (#196).
 
         Only once the probe confirms the TrueNAS API answers: a booting box
         often announces itself over mDNS before its middleware is up, and an
         early retry would only fail again -- and restart Home Assistant's
-        backoff from scratch. The identity matching after the probe in
-        ``async_step_zeroconf`` covers entries stored under another address.
+        backoff from scratch. The probe targets ``host`` itself, not the
+        advertised port, because that is the endpoint the entry's setup will
+        connect to. Entries still in their cooldown are skipped before
+        probing, so repeated announcements open no extra connections (the
+        reload itself stays debounced even for concurrent flows). The
+        identity matching after the probe in ``async_step_zeroconf`` covers
+        entries stored under another address.
         """
         retrying = [
             entry
             for entry in self._async_current_entries(include_ignore=False)
             if entry.data.get(CONF_HOST) == host
             and entry.state is ConfigEntryState.SETUP_RETRY
+            and not self._in_discovery_reload_cooldown(entry)
         ]
-        if retrying and await self._probe_is_truenas(host, port) is not None:
+        if retrying and await self._probe_is_truenas(host) is not None:
             for entry in retrying:
                 self._async_reload_if_retrying(entry)
+
+    @callback
+    def _discovery_reload_times(self) -> dict[str, float]:
+        """Return when each entry was last reloaded from discovery."""
+        times: dict[str, float] = self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            _DATA_DISCOVERY_RELOAD, {}
+        )
+        return times
+
+    @callback
+    def _in_discovery_reload_cooldown(self, entry: ConfigEntry) -> bool:
+        """Return True if ``entry`` was reloaded from discovery too recently."""
+        last = self._discovery_reload_times().get(entry.entry_id)
+        return last is not None and time.monotonic() - last < _DISCOVERY_RELOAD_COOLDOWN
 
     @callback
     def _async_reload_if_retrying(self, entry: ConfigEntry) -> None:
@@ -998,16 +1018,12 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
         still see ``SETUP_RETRY`` until the scheduled reload starts) from
         reloading the entry more than once.
         """
-        if entry.state is not ConfigEntryState.SETUP_RETRY:
+        if (
+            entry.state is not ConfigEntryState.SETUP_RETRY
+            or self._in_discovery_reload_cooldown(entry)
+        ):
             return
-        last_reload = self.hass.data.setdefault(DOMAIN, {}).setdefault(
-            _DATA_DISCOVERY_RELOAD, {}
-        )
-        now = time.monotonic()
-        last = last_reload.get(entry.entry_id)
-        if last is not None and now - last < _DISCOVERY_RELOAD_COOLDOWN:
-            return
-        last_reload[entry.entry_id] = now
+        self._discovery_reload_times()[entry.entry_id] = time.monotonic()
         _LOGGER.debug(
             "TrueNAS %s: discovered while waiting to retry setup, retrying now",
             entry.title,
