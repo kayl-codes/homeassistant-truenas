@@ -606,7 +606,7 @@ async def test_zeroconf_flow_skips_retry_of_hostname_match_until_api_answers(
             config_flow.TrueNASConfigFlow,
             "_probe_is_truenas",
             AsyncMock(return_value=None),
-        ),
+        ) as mock_probe,
         patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
     ):
         result = await hass.config_entries.flow.async_init(
@@ -616,6 +616,8 @@ async def test_zeroconf_flow_skips_retry_of_hostname_match_until_api_answers(
         )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "not_truenas"
+    # The abort comes from the API probe of the discovered host.
+    mock_probe.assert_awaited_once_with("192.168.1.50", 80)
     mock_reload.assert_not_called()
     # Identity matching never even ran for a host that is not answering yet.
     _mock_resolve_host.assert_not_awaited()
