@@ -279,11 +279,13 @@ async def test_user_flow_connection_error_maps_to_ha_error(hass: HomeAssistant) 
 # ---------------------------
 #   zeroconf step
 # ---------------------------
-def _zeroconf_discovery_info(host: str = "192.168.1.50") -> ZeroconfServiceInfo:
+def _zeroconf_discovery_info(
+    host: str = "192.168.1.50", port: int = 80
+) -> ZeroconfServiceInfo:
     return ZeroconfServiceInfo(
         ip_address=ipaddress.ip_address(host),
         ip_addresses=[ipaddress.ip_address(host)],
-        port=80,
+        port=port,
         hostname="truenas.local.",
         type="_http._tcp.local.",
         name="truenas._http._tcp.local.",
@@ -447,7 +449,8 @@ async def test_zeroconf_flow_reloads_entry_waiting_for_setup_retry(
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_ZEROCONF},
-            data=_zeroconf_discovery_info(),
+            # A non-default port: the probe must use the advertised one.
+            data=_zeroconf_discovery_info(port=8443),
         )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
@@ -456,9 +459,10 @@ async def test_zeroconf_flow_reloads_entry_waiting_for_setup_retry(
     else:
         mock_reload.assert_not_called()
     # The probe is only spent when a matching entry is actually retrying.
-    assert mock_probe.await_count == (
-        state is config_entries.ConfigEntryState.SETUP_RETRY
-    )
+    if state is config_entries.ConfigEntryState.SETUP_RETRY:
+        mock_probe.assert_awaited_once_with("192.168.1.50", 8443)
+    else:
+        mock_probe.assert_not_awaited()
 
 
 async def test_zeroconf_flow_reloads_retrying_entry_once_per_cooldown(
