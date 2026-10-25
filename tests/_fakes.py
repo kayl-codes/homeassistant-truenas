@@ -103,6 +103,7 @@ def make_coordinator(
         async_clear_orphaned_statistics=AsyncMock(),
         async_count_orphans_with_data=AsyncMock(return_value=0),
         raise_migration_rollback_issue=MagicMock(),
+        rollback_possible=MagicMock(return_value=False),
         supports_update_run=MagicMock(return_value=False),
         supports_container_api=MagicMock(return_value=False),
         supports_service_control=MagicMock(return_value=False),

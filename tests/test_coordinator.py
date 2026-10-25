@@ -18,7 +18,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from aiotruenas import TrueNASState
@@ -70,6 +70,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._alerts_sub_id = None
     coord._alerts_push_consumer = None
     coord._alerts_breaker = SubscriptionCircuitBreaker()
+    coord._legacy_code_installed = None
     coord._service_push = _PushSourceState()
     coord._pool_push = _PushSourceState()
     coord._cloudsync_push = _PushSourceState()
@@ -337,14 +338,14 @@ def test_supports_update_run_from_25_10() -> None:
 
 
 # ---------------------------
-#   _rollback_possible / issue-id builders
+#   rollback_possible / issue-id builders
 # ---------------------------
 def test_rollback_possible_false_when_domain_is_legacy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     coord = _bare_coordinator()
     monkeypatch.setattr(coordinator_module, "DOMAIN", LEGACY_DOMAIN)
-    assert coord._rollback_possible() is False
+    assert coord.rollback_possible() is False
 
 
 def test_rollback_possible_true_when_legacy_entry_exists() -> None:
@@ -353,7 +354,7 @@ def test_rollback_possible_true_when_legacy_entry_exists() -> None:
     coord.config_entry.data = {MIGRATION_LEGACY_ENTRY_ID: "legacy-id-1"}
     coord.hass = MagicMock()
     coord.hass.config_entries.async_get_entry.return_value = MagicMock()
-    assert coord._rollback_possible() is True
+    assert coord.rollback_possible() is True
 
 
 def test_rollback_possible_false_when_no_legacy_id_recorded() -> None:
@@ -361,7 +362,180 @@ def test_rollback_possible_false_when_no_legacy_id_recorded() -> None:
     coord.config_entry = MagicMock()
     coord.config_entry.data = {}
     coord.hass = MagicMock()
-    assert coord._rollback_possible() is False
+    assert coord.rollback_possible() is False
+
+
+def test_rollback_possible_false_when_legacy_code_missing() -> None:
+    """Entry left behind by a HACS-only uninstall can't be rolled back to (#201)."""
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.data = {MIGRATION_LEGACY_ENTRY_ID: "legacy-id-1"}
+    coord.hass = MagicMock()
+    coord.hass.config_entries.async_get_entry.return_value = MagicMock()
+    coord._legacy_code_installed = False
+    assert coord.rollback_possible() is False
+
+
+# ---------------------------
+#   _async_update_legacy_entry_issue (#201)
+# ---------------------------
+_OLD_NAS = SimpleNamespace(entry_id="legacy-1", title="Old NAS")
+
+
+def _legacy_issue_coordinator(legacy_entry: object | None) -> TrueNASCoordinator:
+    coord = _bare_coordinator()
+    coord.config_entry = MagicMock()
+    coord.config_entry.entry_id = "entry1"
+    coord.config_entry.data = {MIGRATION_LEGACY_ENTRY_ID: "legacy-1"}
+    coord.hass = MagicMock()
+    coord.hass.config_entries.async_get_entry.return_value = legacy_entry
+    return coord
+
+
+async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    code_check = AsyncMock(return_value=False)
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module,
+            "async_legacy_integration_resolvable",
+            AsyncMock(return_value=False),
+        ),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+        await coord._async_update_legacy_entry_issue()
+
+    # Missing files stay missing until a restart; the issue is kept up each poll.
+    code_check.assert_awaited_once_with(coord.hass)
+    assert create_mock.call_count == 2
+    _, args, kwargs = create_mock.mock_calls[0]
+    assert args == (coord.hass, DOMAIN, "legacy_entry_orphaned_entry1")
+    assert kwargs["is_fixable"] is True
+    assert kwargs["translation_key"] == "legacy_entry_orphaned"
+    assert kwargs["translation_placeholders"] == {"title": "Old NAS"}
+    assert kwargs["data"] == {MIGRATION_LEGACY_ENTRY_ID: "legacy-1"}
+    delete_mock.assert_not_called()
+    assert coord.rollback_possible() is False
+
+
+async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    code_check = AsyncMock(return_value=True)
+    resolvable = AsyncMock(return_value=True)
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module, "async_legacy_integration_resolvable", resolvable
+        ),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+        await coord._async_update_legacy_entry_issue()
+
+    # Installed files are re-checked each poll to catch a later uninstall.
+    assert code_check.await_count == 2
+    resolvable.assert_not_awaited()
+    assert coord._legacy_code_installed is True
+    create_mock.assert_not_called()
+    assert delete_mock.call_count == 2
+    delete_mock.assert_called_with(coord.hass, DOMAIN, "legacy_entry_orphaned_entry1")
+    assert coord.rollback_possible() is True
+
+
+async def test_legacy_entry_uninstall_while_running_blocks_rollback_only() -> None:
+    """Uninstalled in HACS after startup: the next poll blocks the rollback.
+
+    The removal issue waits for a restart: until then Home Assistant still
+    resolves the old integration and would fail to remove its entry.
+    """
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    code_check = AsyncMock(side_effect=[True, False])
+    resolvable = AsyncMock(return_value=True)
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module, "async_legacy_integration_resolvable", resolvable
+        ),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+        assert coord.rollback_possible() is True
+        await coord._async_update_legacy_entry_issue()
+
+    resolvable.assert_awaited_once_with(coord.hass)
+    create_mock.assert_not_called()
+    assert delete_mock.call_count == 2
+    assert coord.rollback_possible() is False
+
+
+async def test_legacy_entry_issue_withdrawn_after_entry_removed() -> None:
+    """Fixed via Repairs: the next poll withdraws the issue without re-checking."""
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    code_check = AsyncMock(return_value=False)
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module,
+            "async_legacy_integration_resolvable",
+            AsyncMock(return_value=False),
+        ),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+        coord.hass.config_entries.async_get_entry.return_value = None
+        await coord._async_update_legacy_entry_issue()
+
+    code_check.assert_awaited_once()
+    create_mock.assert_called_once()
+    delete_mock.assert_called_once_with(
+        coord.hass, DOMAIN, "legacy_entry_orphaned_entry1"
+    )
+
+
+def test_rollback_possible_before_first_file_check_follows_entry() -> None:
+    """Until the first poll checked the files, only the entry decides."""
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    assert coord._legacy_code_installed is None
+    assert coord.rollback_possible() is True
+    coord._legacy_code_installed = True
+    coord.hass.config_entries.async_get_entry.return_value = None
+    assert coord.rollback_possible() is False
+
+
+async def test_legacy_entry_issue_cleared_without_checking_once_entry_gone() -> None:
+    coord = _legacy_issue_coordinator(None)
+    code_check = AsyncMock(return_value=False)
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+
+    code_check.assert_not_awaited()
+    create_mock.assert_not_called()
+    delete_mock.assert_called_once()
+
+
+async def test_legacy_entry_issue_inert_for_legacy_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(coordinator_module, "DOMAIN", LEGACY_DOMAIN)
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    with (
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
+    ):
+        await coord._async_update_legacy_entry_issue()
+
+    create_mock.assert_not_called()
+    delete_mock.assert_not_called()
 
 
 def test_statistics_issue_id_includes_entry_id() -> None:
@@ -2153,6 +2327,12 @@ def test_clear_persisted_connection_failing_noop_when_absent() -> None:
 # ---------------------------
 #   _async_update_data
 # ---------------------------
+def _stub_local_issue_checks(coord: TrueNASCoordinator) -> None:
+    """Stub the Home Assistant-side issue checks that open every refresh."""
+    coord._async_update_legacy_entry_issue = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+
+
 def _stub_all_jobs(coord: TrueNASCoordinator) -> None:
     """Patch every job invoked by ``_async_update_data`` with a no-op AsyncMock."""
     for name in (
@@ -2421,6 +2601,7 @@ async def test_async_update_data_get_updatecheck_failure_does_not_crash() -> Non
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     _stub_all_jobs(coord)
@@ -2445,6 +2626,7 @@ async def test_async_update_data_get_updatecheck_success_advances_throttle() -> 
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     _stub_all_jobs(coord)
@@ -2463,6 +2645,7 @@ async def test_async_update_data_runs_jobs_when_connected() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     _stub_all_jobs(coord)
@@ -2478,6 +2661,44 @@ async def test_async_update_data_runs_jobs_when_connected() -> None:
     assert result is coord.ds
 
 
+async def test_async_update_data_updates_legacy_issue_before_rollback_clear() -> None:
+    """The file check must run first: it decides whether a rollback is possible."""
+    coord = _bare_coordinator()
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=True)
+    coord._async_ensure_connected = AsyncMock()
+    coord.async_detect_orphaned_statistics = AsyncMock()
+    order = MagicMock()
+    order.attach_mock(AsyncMock(), "legacy")
+    order.attach_mock(MagicMock(), "clear")
+    coord._async_update_legacy_entry_issue = order.legacy
+    coord._clear_stale_migration_rollback_issue = order.clear
+    coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
+    _stub_all_jobs(coord)
+    coord.ds = {"system_info": {"hostname": "truenas"}}
+
+    await coord._async_update_data()
+
+    assert order.mock_calls == [call.legacy(), call.clear()]
+    # Call order alone would pass for a never-awaited coroutine too.
+    order.legacy.assert_awaited_once()
+
+
+async def test_async_update_data_checks_legacy_issue_while_nas_unreachable() -> None:
+    """The checks are Home Assistant-side: an offline NAS must not skip them."""
+    coord = _bare_coordinator()
+    coord._async_ensure_connected = AsyncMock(
+        side_effect=coordinator_module.UpdateFailed("offline")
+    )
+    _stub_local_issue_checks(coord)
+
+    with pytest.raises(coordinator_module.UpdateFailed):
+        await coord._async_update_data()
+
+    coord._async_update_legacy_entry_issue.assert_awaited_once()
+    coord._clear_stale_migration_rollback_issue.assert_called_once()
+
+
 async def test_async_update_data_survives_get_app_stats_failure() -> None:
     """get_app_stats now runs after the gather, on its own: a failure there
     must still be tracked for is_data_path_failing("app_stats") without
@@ -2488,6 +2709,7 @@ async def test_async_update_data_survives_get_app_stats_failure() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     _stub_all_jobs(coord)
@@ -2513,6 +2735,7 @@ async def test_async_update_data_runs_get_app_stats_after_get_app() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
     _stub_all_jobs(coord)
@@ -2545,6 +2768,7 @@ async def test_async_update_data_skips_jobs_when_disconnected() -> None:
     coord.api.connected = MagicMock(return_value=False)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     _stub_all_jobs(coord)
 
@@ -2561,6 +2785,7 @@ async def test_async_update_data_swallows_job_exceptions() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     coord.async_detect_orphaned_statistics = AsyncMock()
+    coord._async_update_legacy_entry_issue = AsyncMock()
     coord._clear_stale_migration_rollback_issue = MagicMock()
     coord.last_updatecheck_update = datetime.now(UTC)
     _stub_all_jobs(coord)
@@ -2579,6 +2804,7 @@ async def test_async_update_data_raises_when_system_info_missing() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.ds = {"system_info": {}}
 
     with pytest.raises(coordinator_module.UpdateFailed):
@@ -2603,6 +2829,7 @@ async def test_async_update_data_raises_when_hostname_is_unknown_sentinel() -> N
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.ds = {"system_info": {"hostname": "unknown"}}
 
     with pytest.raises(coordinator_module.UpdateFailed):
@@ -2625,6 +2852,7 @@ async def test_async_update_data_raises_when_hostname_is_none_or_empty() -> None
         coord.api.connected = MagicMock(return_value=True)
         coord._async_ensure_connected = AsyncMock()
         _stub_all_jobs(coord)
+        _stub_local_issue_checks(coord)
         coord.ds = {"system_info": {"hostname": bad_hostname}}
 
         with pytest.raises(coordinator_module.UpdateFailed):
@@ -2644,6 +2872,7 @@ async def test_async_update_data_reports_system_info_permission_denied() -> None
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.get_systeminfo.side_effect = TrueNASCallError("denied", errname="EACCES")
     coord.ds = {"system_info": {}}
 
@@ -2663,6 +2892,7 @@ async def test_async_update_data_keeps_generic_hostname_error_without_eacces() -
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord._job_failing = {"get_systeminfo"}
     coord._job_permission_denied = {"get_systeminfo"}
     coord.ds = {"system_info": {}}

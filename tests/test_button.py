@@ -14,7 +14,7 @@ from custom_components.truenas_ce.button import (
     TrueNASStatisticsCleanupButton,
 )
 from custom_components.truenas_ce.button_types import TrueNASButtonEntityDescription
-from custom_components.truenas_ce.const import DOMAIN, MIGRATION_LEGACY_ENTRY_ID
+from custom_components.truenas_ce.const import DOMAIN
 
 _RUN_DESC = TrueNASButtonEntityDescription(
     key="rsynctask_run", name="Run", data_path="rsynctask", api_method="rsynctask.run"
@@ -110,19 +110,12 @@ async def test_statistics_cleanup_button_press_clears_statistics() -> None:
     coordinator.async_clear_orphaned_statistics.assert_awaited_once()
 
 
-def test_migration_rollback_button_available_false_without_legacy_id() -> None:
+def test_migration_rollback_button_available_follows_coordinator() -> None:
+    """Availability is the coordinator's verdict (legacy entry *and* files, #201)."""
     coordinator = make_coordinator()
     button = TrueNASMigrationRollbackButton(coordinator)
-    button.hass = coordinator.hass
     assert button.available is False
-
-
-def test_migration_rollback_button_available_true_when_legacy_entry_exists() -> None:
-    coordinator = make_coordinator(data={}, config_entry=None)
-    coordinator.config_entry.data[MIGRATION_LEGACY_ENTRY_ID] = "legacy-1"
-    coordinator.hass.config_entries.async_get_entry.return_value = object()
-    button = TrueNASMigrationRollbackButton(coordinator)
-    button.hass = coordinator.hass
+    coordinator.rollback_possible.return_value = True
     assert button.available is True
 
 

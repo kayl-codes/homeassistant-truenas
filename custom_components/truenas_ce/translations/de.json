@@ -149,12 +149,26 @@
                             "ignore": "TrueNAS CE behalten (verwerfen)"
                         }
                     }
+                },
+                "abort": {
+                    "legacy_code_missing": "Die alte TrueNAS-Integration ist nicht mehr installiert (vermutlich wurde sie in HACS deinstalliert), daher ist kein Rollback möglich. TrueNAS CE bleibt unverändert. Um trotzdem zurückzuwechseln, installiere die alte Integration in HACS erneut und starte Home Assistant neu; andernfalls entferne ihren übrig gebliebenen Eintrag über die Reparatur „Alte TrueNAS-Integration zurückgeblieben“."
                 }
             }
         },
         "migration_rollback_failed": {
             "title": "TrueNAS-CE-Migrations-Rollback fehlgeschlagen",
             "description": "Das Rückgängigmachen der TrueNAS-CE-Migration für {name} ist mittendrin fehlgeschlagen. Die Integration befindet sich möglicherweise in einem inkonsistenten Zustand — prüfe die Home-Assistant-Protokolle für Details und drücke dann erneut den Rollback-Button oder installiere die Integration neu."
+        },
+        "legacy_entry_orphaned": {
+            "title": "Alte TrueNAS-Integration zurückgeblieben",
+            "fix_flow": {
+                "step": {
+                    "confirm": {
+                        "title": "Eintrag der alten TrueNAS-Integration entfernen",
+                        "description": "Die vorherige TrueNAS-Integration ({title}) ist noch eingerichtet – seit der TrueNAS-CE-Migration deaktiviert –, ihre Dateien sind aber nicht mehr installiert, zum Beispiel weil sie in HACS deinstalliert wurde. Home Assistant protokolliert deshalb „Unable to get manifest for integration truenas“.\n\nBestätige, um den übrig gebliebenen Eintrag zu entfernen. Deine TrueNAS-CE-Entitäten und ihr Verlauf bleiben unverändert. Ein Rollback der Migration ist ohne die Dateien der alten Integration nicht mehr möglich."
+                    }
+                }
+            }
         }
     },
     "exceptions": {

@@ -149,12 +149,26 @@
                             "ignore": "Zachowaj TrueNAS CE (zamknij)"
                         }
                     }
+                },
+                "abort": {
+                    "legacy_code_missing": "Stara integracja TrueNAS nie jest już zainstalowana (prawdopodobnie została odinstalowana w HACS), więc wycofanie nie jest możliwe. TrueNAS CE pozostaje bez zmian. Aby mimo to wycofać migrację, zainstaluj ponownie starą integrację w HACS i uruchom ponownie Home Assistanta; w przeciwnym razie usuń jej pozostały wpis za pomocą naprawy „Pozostałość starej integracji TrueNAS”."
                 }
             }
         },
         "migration_rollback_failed": {
             "title": "Wycofanie migracji TrueNAS CE nie powiodło się",
             "description": "Wycofanie migracji TrueNAS CE dla {name} zostało przerwane w trakcie. Integracja może pozostać w niespójnym stanie — sprawdź logi Home Assistanta, aby poznać szczegóły, a następnie spróbuj ponownie nacisnąć przycisk wycofania lub zainstaluj integrację ponownie."
+        },
+        "legacy_entry_orphaned": {
+            "title": "Pozostałość starej integracji TrueNAS",
+            "fix_flow": {
+                "step": {
+                    "confirm": {
+                        "title": "Usuń wpis starej integracji TrueNAS",
+                        "description": "Poprzednia integracja TrueNAS ({title}) jest nadal skonfigurowana — wyłączona od migracji do TrueNAS CE — ale jej pliki nie są już zainstalowane, na przykład dlatego, że została odinstalowana w HACS. Dlatego Home Assistant zapisuje w logach „Unable to get manifest for integration truenas”.\n\nZatwierdź, aby usunąć pozostały wpis. Twoje encje TrueNAS CE i ich historia nie zostaną naruszone. Wycofanie migracji nie jest już możliwe bez plików starej integracji."
+                    }
+                }
+            }
         }
     },
     "exceptions": {

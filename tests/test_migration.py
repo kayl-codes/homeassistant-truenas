@@ -979,6 +979,34 @@ async def test_async_rollback_to_legacy_false_when_legacy_entry_gone() -> None:
     assert await async_rollback_to_legacy(hass, entry) is False
 
 
+async def test_async_rollback_to_legacy_false_when_legacy_code_missing() -> None:
+    """HACS-only uninstall (#201): keep TrueNAS CE, never re-enable a dead entry."""
+    hass = MagicMock()
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        entry_id="legacy-1"
+    )
+    hass.config_entries.async_remove = AsyncMock()
+    hass.config_entries.async_set_disabled_by = AsyncMock()
+    entry = _config_entry(data={MIGRATION_LEGACY_ENTRY_ID: "legacy-1"})
+
+    with (
+        patch.object(
+            migration_module,
+            "async_legacy_code_installed",
+            new=AsyncMock(return_value=False),
+        ),
+        patch.object(migration_module.er, "async_get") as reg_mock,
+        patch.object(migration_module, "_remove_backups", new=AsyncMock()) as rm_mock,
+    ):
+        assert await async_rollback_to_legacy(hass, entry) is False
+
+    # The guard runs before any side effect.
+    hass.config_entries.async_remove.assert_not_awaited()
+    hass.config_entries.async_set_disabled_by.assert_not_awaited()
+    reg_mock.assert_not_called()
+    rm_mock.assert_not_awaited()
+
+
 async def test_async_rollback_to_legacy_full_flow() -> None:
     hass = MagicMock()
     hass.config_entries.async_get_entry.return_value = SimpleNamespace(
@@ -1000,6 +1028,11 @@ async def test_async_rollback_to_legacy_full_flow() -> None:
     with (
         patch.object(migration_module.er, "async_get", return_value=ent_reg),
         patch.object(migration_module, "_remove_backups", new=AsyncMock()) as rm_mock,
+        patch.object(
+            migration_module,
+            "async_legacy_code_installed",
+            new=AsyncMock(return_value=True),
+        ),
     ):
         result = await async_rollback_to_legacy(hass, entry)
 

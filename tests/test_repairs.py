@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import pytest
 from _fakes import make_coordinator
+from homeassistant.config_entries import UnknownEntry
 
 from custom_components.truenas_ce.const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
+    MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
 )
 from custom_components.truenas_ce.repairs import (
     MAX_LISTED_ORPHANS,
+    LegacyEntryOrphanedRepairFlow,
     MigrationRollbackRepairFlow,
     StatisticsCleanupRepairFlow,
     _async_rollback_and_log_errors,
     async_create_fix_flow,
 )
+
+_CODE_CHECK = "custom_components.truenas_ce.repairs.async_legacy_code_installed"
 
 
 def _close_coroutine(coro: object) -> None:
@@ -208,10 +214,14 @@ async def test_migration_rollback_step_schedules_rollback_task() -> None:
             "custom_components.truenas_ce.repairs.async_rollback_to_legacy",
             new=AsyncMock(),
         ),
+        patch(_CODE_CHECK, new=AsyncMock(return_value=True)),
     ):
         result = await flow.async_step_rollback()
 
     flow.hass.async_create_task.assert_called_once()
+    # The scheduled work must be the error-surfacing rollback wrapper.
+    scheduled = flow.hass.async_create_task.call_args.args[0]
+    assert scheduled.cr_code is _async_rollback_and_log_errors.__code__
     delete_issue.assert_called_once()
     assert result["type"] == "create_entry"
 
@@ -220,13 +230,37 @@ async def test_migration_rollback_step_no_entry_skips_task() -> None:
     flow = MigrationRollbackRepairFlow("entry2")
     flow.hass = _make_hass(None)
 
-    with patch(
-        "custom_components.truenas_ce.repairs.ir.async_delete_issue"
-    ) as delete_issue:
+    with (
+        patch(
+            "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+        ) as delete_issue,
+        patch(_CODE_CHECK, new=AsyncMock(return_value=True)),
+    ):
         await flow.async_step_rollback()
 
     flow.hass.async_create_task.assert_not_called()
     delete_issue.assert_called_once()
+
+
+async def test_migration_rollback_step_aborts_when_legacy_code_missing() -> None:
+    """HACS-only uninstall (#201): explain it instead of a doomed rollback."""
+    flow = MigrationRollbackRepairFlow("entry2")
+    flow.hass = _make_hass(SimpleNamespace(data={}))
+
+    with (
+        patch(
+            "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+        ) as delete_issue,
+        patch(_CODE_CHECK, new=AsyncMock(return_value=False)),
+    ):
+        result = await flow.async_step_rollback()
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "legacy_code_missing"
+    flow.hass.async_create_task.assert_not_called()
+    delete_issue.assert_called_once_with(
+        flow.hass, "truenas_ce", "migration_rollback_available_entry2"
+    )
 
 
 async def test_migration_rollback_ignore_deletes_issue() -> None:
@@ -319,3 +353,158 @@ async def test_rollback_task_failure_raises_visible_issue() -> None:
     assert kwargs["is_fixable"] is False
     assert kwargs["translation_key"] == "migration_rollback_failed"
     assert kwargs["translation_placeholders"] == {"name": "TrueNAS"}
+
+
+# ---------------------------
+#   LegacyEntryOrphanedRepairFlow (#201)
+# ---------------------------
+_LEGACY = SimpleNamespace(entry_id="legacy-1", title="Old NAS")
+
+
+def _legacy_flow(legacy: SimpleNamespace | None) -> LegacyEntryOrphanedRepairFlow:
+    entry = SimpleNamespace(data={MIGRATION_LEGACY_ENTRY_ID: "legacy-1"})
+    flow = LegacyEntryOrphanedRepairFlow("entry3")
+    flow.hass = _make_hass(None)
+    flow.hass.config_entries.async_get_entry = MagicMock(
+        side_effect={"entry3": entry, "legacy-1": legacy}.get
+    )
+    flow.hass.config_entries.async_remove = AsyncMock()
+    return flow
+
+
+async def test_create_fix_flow_routes_legacy_entry_orphaned_issue() -> None:
+    flow = await async_create_fix_flow(
+        SimpleNamespace(), "legacy_entry_orphaned_entry3", None
+    )
+    assert isinstance(flow, LegacyEntryOrphanedRepairFlow)
+
+    flow.hass = _make_hass(None)
+    await flow.async_step_init()
+    flow.hass.config_entries.async_get_entry.assert_called_once_with("entry3")
+
+
+async def test_legacy_entry_orphaned_init_shows_confirm_with_title() -> None:
+    result = await _legacy_flow(_LEGACY).async_step_init()
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "confirm"
+    assert result["description_placeholders"] == {"title": "Old NAS"}
+
+
+async def test_legacy_entry_orphaned_init_title_falls_back_when_entry_gone() -> None:
+    """{title} must never render unfilled, even if the entry vanished."""
+    result = await _legacy_flow(None).async_step_init()
+
+    assert result["description_placeholders"] == {"title": "truenas"}
+
+
+async def test_legacy_entry_orphaned_confirm_removes_legacy_entry() -> None:
+    flow = _legacy_flow(_LEGACY)
+    order = MagicMock()
+    order.attach_mock(flow.hass.config_entries.async_remove, "remove")
+    with patch(
+        "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+    ) as delete_issue:
+        order.attach_mock(delete_issue, "delete_issue")
+        result = await flow.async_step_confirm({})
+
+    assert result["type"] == "create_entry"
+    assert order.mock_calls == [
+        call.remove("legacy-1"),
+        call.delete_issue(flow.hass, "truenas_ce", "legacy_entry_orphaned_entry3"),
+    ]
+    # Call order alone would pass for a never-awaited coroutine too.
+    flow.hass.config_entries.async_remove.assert_awaited_once_with("legacy-1")
+
+
+async def test_legacy_entry_orphaned_confirm_already_removed_only_clears_issue() -> (
+    None
+):
+    """The user deleted the entry by hand meanwhile: nothing left to remove."""
+    flow = _legacy_flow(None)
+    with patch(
+        "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+    ) as delete_issue:
+        result = await flow.async_step_confirm({})
+
+    assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_remove.assert_not_awaited()
+    delete_issue.assert_called_once()
+
+
+async def test_legacy_entry_orphaned_confirm_tolerates_removal_race() -> None:
+    """Removed between the check and async_remove: same end state, no error."""
+    flow = _legacy_flow(_LEGACY)
+    flow.hass.config_entries.async_remove.side_effect = UnknownEntry("legacy-1")
+    with patch(
+        "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+    ) as delete_issue:
+        result = await flow.async_step_confirm({})
+
+    assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_remove.assert_awaited_once_with("legacy-1")
+    delete_issue.assert_called_once()
+
+
+async def test_legacy_entry_orphaned_confirm_without_own_entry_finishes() -> None:
+    flow = LegacyEntryOrphanedRepairFlow("entry3")
+    flow.hass = _make_hass(None)
+    flow.hass.config_entries.async_remove = AsyncMock()
+    with patch("custom_components.truenas_ce.repairs.ir.async_delete_issue"):
+        result = await flow.async_step_confirm({})
+
+    assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_remove.assert_not_awaited()
+
+
+async def test_create_fix_flow_passes_legacy_id_from_issue_data() -> None:
+    """The id on the issue survives removal of the TrueNAS CE entry itself."""
+    flow = await async_create_fix_flow(
+        SimpleNamespace(),
+        "legacy_entry_orphaned_entry3",
+        {MIGRATION_LEGACY_ENTRY_ID: "legacy-1"},
+    )
+    flow.hass = _make_hass(None)
+    # Own entry gone: only the legacy entry still resolves.
+    flow.hass.config_entries.async_get_entry = MagicMock(
+        side_effect={"legacy-1": _LEGACY}.get
+    )
+    flow.hass.config_entries.async_remove = AsyncMock()
+    with patch(
+        "custom_components.truenas_ce.repairs.ir.async_delete_issue"
+    ) as delete_issue:
+        result = await flow.async_step_confirm({})
+
+    assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_remove.assert_awaited_once_with("legacy-1")
+    delete_issue.assert_called_once_with(
+        flow.hass, "truenas_ce", "legacy_entry_orphaned_entry3"
+    )
+
+
+@pytest.mark.parametrize(
+    ("issue_data", "removed"),
+    [
+        # The id on the issue wins over the one in the entry's data.
+        ({MIGRATION_LEGACY_ENTRY_ID: "legacy-x"}, "legacy-x"),
+        # A non-str value on the issue is ignored: fall back to the entry.
+        ({MIGRATION_LEGACY_ENTRY_ID: 123}, "legacy-1"),
+    ],
+)
+async def test_create_fix_flow_legacy_id_precedence(
+    issue_data: dict[str, object], removed: str
+) -> None:
+    flow = await async_create_fix_flow(
+        SimpleNamespace(), "legacy_entry_orphaned_entry3", issue_data
+    )
+    entry = SimpleNamespace(data={MIGRATION_LEGACY_ENTRY_ID: "legacy-1"})
+    legacy_x = SimpleNamespace(entry_id="legacy-x", title="Other NAS")
+    flow.hass = _make_hass(None)
+    flow.hass.config_entries.async_get_entry = MagicMock(
+        side_effect={"entry3": entry, "legacy-1": _LEGACY, "legacy-x": legacy_x}.get
+    )
+    flow.hass.config_entries.async_remove = AsyncMock()
+    with patch("custom_components.truenas_ce.repairs.ir.async_delete_issue"):
+        await flow.async_step_confirm({})
+
+    flow.hass.config_entries.async_remove.assert_awaited_once_with(removed)

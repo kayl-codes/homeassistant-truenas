@@ -262,6 +262,9 @@ ISSUE_MIGRATION_ROLLBACK = "migration_rollback_available"
 # Raised if the fire-and-forget rollback task (see repairs.py) fails after the
 # issue above was already dismissed, so the failure stays visible in Repairs.
 ISSUE_MIGRATION_ROLLBACK_FAILED = "migration_rollback_failed"
+# Raised automatically while the disabled legacy entry outlives the old
+# integration's files (uninstalled in HACS only, #201); its fix flow removes it.
+ISSUE_LEGACY_ENTRY_ORPHANED = "legacy_entry_orphaned"
 
 # Community-Edition migration state, persisted on the (new) config entry's data.
 # MIGRATION_DONE is the idempotency flag; MIGRATION_RECORDS holds the reverse map
