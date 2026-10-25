@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -1323,10 +1323,12 @@ async def test_guess_ip_runs_again_once_earlier_lookups_finished() -> None:
             assert await config_flow._async_guess_ip() == config_flow.DEFAULT_HOST
         finally:
             release.set()
-        deadline = time.monotonic() + 2
-        while not all(lookup.done() for lookup in config_flow._host_guess.lookups):
-            assert time.monotonic() < deadline
-            await asyncio.sleep(0.01)
+        # Wait on the earlier lookups themselves; the timeout is only a hang guard.
+        assert config_flow._host_guess.lookups
+        _, still_running = await asyncio.to_thread(
+            wait, config_flow._host_guess.lookups, timeout=5
+        )
+        assert not still_running
     with patch.object(config_flow.socket, "gethostbyname", return_value="10.0.0.7"):
         assert await config_flow._async_guess_ip() == "10.0.0.7"
 
