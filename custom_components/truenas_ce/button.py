@@ -107,7 +107,12 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
 #   TrueNASPoolScrubButton
 # ---------------------------
 class TrueNASPoolScrubButton(TrueNASButton):
-    """Scrub button: starts a pool scrub via pool.scrub.scrub."""
+    """Scrub button: starts a pool scrub via pool.scrub.scrub.
+
+    pool.scrub.scrub acts on the pool by name, so it runs whether or not the
+    scheduled scrub task is enabled -- a disabled schedule only stops TrueNAS
+    from starting scrubs on its own, not a manual one (#203).
+    """
 
     async def async_press(self) -> None:
         pool_name = self._data.get("pool_name")
@@ -115,12 +120,6 @@ class TrueNASPoolScrubButton(TrueNASButton):
         if not pool_name or task_id is None:
             _LOGGER.debug(
                 "TrueNAS scrub button %s missing pool_name or task id; skipping",
-                self.entity_id,
-            )
-            return
-        if not self._data.get("enabled"):
-            _LOGGER.debug(
-                "TrueNAS scrub button %s: scrub task is disabled; skipping",
                 self.entity_id,
             )
             return

@@ -51,9 +51,9 @@ async def test_async_press_triggers_run_task() -> None:
 
 def _make_scrub_button(*, data: dict | None = None) -> TrueNASPoolScrubButton:
     desc = TrueNASButtonEntityDescription(
-        key="scrub_run", name="Run", data_path="snapshottask"
+        key="scrub_run", name="Run", data_path="scrub"
     )
-    coordinator = make_coordinator(data={"snapshottask": {"t1": (data or {})}})
+    coordinator = make_coordinator(data={"scrub": {"t1": (data or {})}})
     return TrueNASPoolScrubButton(coordinator, desc, "t1")
 
 
@@ -63,10 +63,15 @@ async def test_scrub_button_missing_pool_name_skips() -> None:
     button.coordinator.api.query.assert_not_awaited()
 
 
-async def test_scrub_button_disabled_skips() -> None:
+async def test_scrub_button_runs_when_schedule_disabled() -> None:
+    """A disabled scrub schedule must not block a manual scrub (#203)."""
     button = _make_scrub_button(data={"pool_name": "tank", "id": 1, "enabled": False})
+    button.coordinator.api.query.return_value = 123
     await button.async_press()
-    button.coordinator.api.query.assert_not_awaited()
+    button.coordinator.api.query.assert_awaited_once_with(
+        "pool.scrub.scrub", ["tank", "START"]
+    )
+    button.coordinator.set_optimistic_running.assert_called_once_with("scrub", 1)
 
 
 async def test_scrub_button_success_sets_optimistic_running() -> None:
@@ -76,7 +81,7 @@ async def test_scrub_button_success_sets_optimistic_running() -> None:
     button.coordinator.api.query.assert_awaited_once_with(
         "pool.scrub.scrub", ["tank", "START"]
     )
-    button.coordinator.set_optimistic_running.assert_called_once_with("snapshottask", 5)
+    button.coordinator.set_optimistic_running.assert_called_once_with("scrub", 5)
 
 
 async def test_scrub_button_failure_raises() -> None:
