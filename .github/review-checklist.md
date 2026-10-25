@@ -18,8 +18,18 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 - [ ] **New monitored fields go through `parse_api` specs** (`vals` / `ensure_vals` in `apiparser.py`: `/` paths, `type`, `default`, `convert`), not ad-hoc post-processing in the coordinator.
 - [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics stay redacted. The debug logging in `api.py` masks `TO_REDACT` keys via `_redact` (query params, summarized responses and subscription events); any new log line that prints API params or payloads must go through `_redact`/`_summarize_payload` too (never log raw payloads with `%r`); where `api.py` cannot be imported (e.g. `apiparser.py`, which tests load standalone), log only `type(value).__name__`. Exception texts and error reasons go through `scrub_exception` (free-text secrets such as `password=…`, `--token …` or URL credentials are masked by `scrub_text`); new log lines that print an exception must pass it through `scrub_exception` too, and diagnostics wrap `async_redact_data` output in `scrub_strings`.
 
+## Blocking calls
+
+- [ ] **No unbounded blocking call runs on Home Assistant's shared executor.**
+  A thread that blocks in a call nobody can cancel (e.g. `socket.gethostbyname` against a DNS server that never answers) stays busy after an `asyncio.timeout` gives up, so repeated attempts tie up threads that unrelated jobs need (#196). Bound the wait **and** run such calls on an own small pool that cannot pile up stalled work, like `_HOST_GUESS_EXECUTOR` + `_HostGuessState` in `config_flow.py` (one guess at a time, no new batch while an earlier one still occupies the pool). Short, bounded file or recorder work may keep using `hass.async_add_executor_job`.
+
 ## Tests
 
+- [ ] **Thread tests synchronise on events, never on wall-clock time.**
+  `time.sleep`/`asyncio.sleep` delays or short timeouts that "should be enough" for a worker make tests flaky on a slow CI runner and still pass when the ordering under test is wrong.
+  - Let workers signal and wait on `threading.Event`s (`started`/`entered` set by the worker, `release` set by the test) and assert on those, like the `_async_guess_ip` tests in `tests/test_config_flow.py`; a timeout on `Event.wait` is only a hang guard, never part of the assertion.
+  - Keep every patch the workers rely on active until all of them are joined: shut the test's pool down (`executor.shutdown(wait=True, cancel_futures=True)`) **inside** the `with patch...` block, as the host-guess executor fixture does. A worker that reaches the patched call after the patch is gone hits the real function (e.g. the real resolver).
+  - Freeze `time.monotonic` (`patch.object(config_flow.time, "monotonic", ...)`) for cooldown/debounce logic instead of relying on the test finishing inside the window; give a `side_effect` list one value per read the code makes.
 - [ ] **Tests for log output and error messages pin the exact behaviour, not just a fragment.**
   A substring check (`match="..."`, `"..." in caplog.text`) or a check for the expected log level alone still passes when a message gains wrong or contradictory guidance, or when the same call also logs an ERROR/traceback.
   - Compare an error message with the full text or with the module constant it comes from (e.g. `str(excinfo.value) == coordinator_module._SYSTEM_INFO_PERMISSION_DENIED`); for an expected log record, compare its full `record.getMessage()` the same way instead of searching `caplog.text`, and assert its exact `levelno`; where two branches raise or log similar messages, also assert that the other branch's wording is absent.
