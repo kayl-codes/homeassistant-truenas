@@ -13,6 +13,8 @@ from custom_components.truenas_ce import helper as helper_module
 from custom_components.truenas_ce.helper import (
     async_legacy_code_installed,
     async_legacy_integration_resolvable,
+    pool_scrub_progress,
+    pool_scrub_state,
     sanitize_host,
 )
 
@@ -110,3 +112,51 @@ async def test_legacy_integration_not_resolvable_when_missing_at_startup() -> No
         AsyncMock(side_effect=IntegrationNotFound("truenas")),
     ):
         assert await async_legacy_integration_resolvable(object()) is False
+
+
+# ---------------------------
+#   pool_scrub_state / pool_scrub_progress (#204)
+# ---------------------------
+_PAUSE_TIME = "2026-10-25T21:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("pool", "expected"),
+    [
+        ({"scrub_state": "SCANNING", "scrub_pause": None}, "SCANNING"),
+        ({"scrub_state": "SCANNING", "scrub_pause": _PAUSE_TIME}, "PAUSED"),
+        ({"scrub_state": "FINISHED", "scrub_pause": None}, "FINISHED"),
+        # A stop clears the pause; a stale one must not turn CANCELED into PAUSED.
+        ({"scrub_state": "CANCELED", "scrub_pause": _PAUSE_TIME}, "CANCELED"),
+        ({"scrub_state": None}, None),
+        ({}, None),
+    ],
+)
+def test_pool_scrub_state(pool: dict, expected: str | None) -> None:
+    assert pool_scrub_state(pool) == expected
+
+
+@pytest.mark.parametrize(
+    ("pool", "expected"),
+    [
+        ({"scrub_state": "SCANNING", "scrub_percentage": 11.300981044769287}, 11.3),
+        (
+            {
+                "scrub_state": "SCANNING",
+                "scrub_pause": _PAUSE_TIME,
+                "scrub_percentage": 1.44,
+            },
+            1.4,
+        ),
+        # TrueNAS reports a finished scrub just below 100.
+        ({"scrub_state": "FINISHED", "scrub_percentage": 99.91}, 100.0),
+        ({"scrub_state": "FINISHED"}, 100.0),
+        ({"scrub_state": "CANCELED", "scrub_percentage": 56.94}, 56.9),
+        ({"scrub_state": "NONE", "scrub_percentage": 0}, None),
+        ({"scrub_state": "SCANNING", "scrub_percentage": None}, None),
+        ({"scrub_state": "SCANNING", "scrub_percentage": True}, None),
+        ({}, None),
+    ],
+)
+def test_pool_scrub_progress(pool: dict, expected: float | None) -> None:
+    assert pool_scrub_progress(pool) == expected

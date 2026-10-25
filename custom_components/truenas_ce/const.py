@@ -196,7 +196,19 @@ API_RSYNCTASK_RUN = "rsynctask.run"
 API_REPLICATION_RUN = "replication.run"
 API_SNAPSHOTTASK_RUN = "pool.snapshottask.run"
 API_POOL_SCRUB_SCRUB = "pool.scrub.scrub"
+# pool.scrub.scrub actions; resuming a paused scrub is START again.
 SCRUB_ACTION_START = "START"
+SCRUB_ACTION_PAUSE = "PAUSE"
+SCRUB_ACTION_STOP = "STOP"
+# pool.query's scan.function for a scrub (a resilver reports RESILVER).
+SCAN_FUNCTION_SCRUB = "SCRUB"
+# Pool scan states as reported in pool.query's scan.state.
+SCRUB_STATE_SCANNING = "SCANNING"
+SCRUB_STATE_FINISHED = "FINISHED"
+SCRUB_STATE_CANCELED = "CANCELED"
+# Not a TrueNAS state: TrueNAS keeps a paused scrub at SCANNING and only sets
+# scan.pause, so the integration derives PAUSED from the two.
+SCRUB_STATE_PAUSED = "PAUSED"
 
 SERVICE_SYSTEM_REBOOT = "system_reboot"
 SCHEMA_SERVICE_SYSTEM_REBOOT: VolDictType = {}

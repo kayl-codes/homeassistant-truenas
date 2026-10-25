@@ -70,6 +70,13 @@ statistics. It shows `unknown` when TrueNAS reports no capacity, for example for
 Each pool also exposes **scrub controls** (start, pause, resume, stop) as buttons
 and **scrub diagnostics** (state, progress, start/end timestamps, errors) as sensors.
 
+The scrub buttons belong to the pool's scrub task, so a pool without one gets none. **Pause**,
+**Resume** and **Stop** only act when the scrub is in a matching state (for example, Resume needs
+a paused scrub); otherwise Home Assistant shows an error and nothing is sent to TrueNAS. The
+**Scrub state** sensor shows `PAUSED` for a paused scrub (TrueNAS itself keeps reporting
+`SCANNING`), and **Scrub progress** shows the percentage, 100 % once finished and the last value
+for a canceled scrub.
+
 ![Pool Controls](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_controls.png)
 ![Pool Diagnostics](https://raw.githubusercontent.com/kayl-codes/homeassistant-truenas/master/docs/assets/images/ui/pool_diag.png)
 

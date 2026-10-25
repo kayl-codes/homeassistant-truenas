@@ -184,6 +184,15 @@
         "scrub_failed": {
             "message": "Scrub TrueNAS pre pool {pool} zlyhal na {host}: {error}"
         },
+        "scrub_pause_not_possible": {
+            "message": "Scrub poolu {pool} nie je možné pozastaviť: žiadny scrub nebeží."
+        },
+        "scrub_resume_not_possible": {
+            "message": "Scrub poolu {pool} nie je možné obnoviť: žiadny scrub nie je pozastavený."
+        },
+        "scrub_stop_not_possible": {
+            "message": "Scrub poolu {pool} nie je možné zastaviť: žiadny scrub nebeží ani nie je pozastavený."
+        },
         "alert_action_failed": {
             "message": "Akcia {action} pre upozornenie {uuid} zlyhala na {host}: {error}"
         },
@@ -249,6 +258,15 @@
             },
             "scrub_run": {
                 "name": "Spustiť scrub"
+            },
+            "scrub_pause": {
+                "name": "Pozastaviť scrub"
+            },
+            "scrub_resume": {
+                "name": "Obnoviť scrub"
+            },
+            "scrub_stop": {
+                "name": "Zastaviť scrub"
             },
             "snapshottask_run": {
                 "name": "Spustiť"
@@ -334,6 +352,9 @@
             },
             "pool_scrub_state": {
                 "name": "Stav scrub"
+            },
+            "pool_scrub_progress": {
+                "name": "Priebeh scrub"
             },
             "traffic_rx": {
                 "name": "RX"

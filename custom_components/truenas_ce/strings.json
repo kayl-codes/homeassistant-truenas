@@ -184,6 +184,15 @@
         "scrub_failed": {
             "message": "TrueNAS scrub failed for pool {pool} on {host}: {error}"
         },
+        "scrub_pause_not_possible": {
+            "message": "Cannot pause the scrub on pool {pool}: no scrub is running."
+        },
+        "scrub_resume_not_possible": {
+            "message": "Cannot resume the scrub on pool {pool}: no scrub is paused."
+        },
+        "scrub_stop_not_possible": {
+            "message": "Cannot stop the scrub on pool {pool}: no scrub is running or paused."
+        },
         "alert_action_failed": {
             "message": "Failed to {action} alert {uuid} on {host}: {error}"
         },
@@ -249,6 +258,15 @@
             },
             "scrub_run": {
                 "name": "Run scrub"
+            },
+            "scrub_pause": {
+                "name": "Pause scrub"
+            },
+            "scrub_resume": {
+                "name": "Resume scrub"
+            },
+            "scrub_stop": {
+                "name": "Stop scrub"
             },
             "snapshottask_run": {
                 "name": "Run"
@@ -334,6 +352,9 @@
             },
             "pool_scrub_state": {
                 "name": "Scrub state"
+            },
+            "pool_scrub_progress": {
+                "name": "Scrub progress"
             },
             "traffic_rx": {
                 "name": "RX"

@@ -1641,6 +1641,16 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _on_pool_push(self, _batch: list[Any]) -> None:
         """Immediately refresh pool state on push notification."""
+        await self.async_refresh_pools()
+
+    async def async_refresh_pools(self) -> None:
+        """Re-read pool state now and notify the entities.
+
+        Also used by the scrub buttons (#204): they check the pool's current
+        scrub state rather than the last poll's -- resume is START, so on a
+        stale PAUSED it would begin a fresh scrub -- and show the result of
+        their action without waiting for the next poll.
+        """
         await self._refresh_locked(self._pool_push, self._refresh_pool)
         self.async_set_updated_data(self.ds)
 

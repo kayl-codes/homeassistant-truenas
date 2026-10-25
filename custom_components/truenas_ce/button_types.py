@@ -13,6 +13,11 @@ from .const import (
     API_REPLICATION_RUN,
     API_RSYNCTASK_RUN,
     API_SNAPSHOTTASK_RUN,
+    SCRUB_ACTION_PAUSE,
+    SCRUB_ACTION_START,
+    SCRUB_ACTION_STOP,
+    SCRUB_STATE_PAUSED,
+    SCRUB_STATE_SCANNING,
 )
 from .entity import TrueNASEntityDescription
 
@@ -26,6 +31,10 @@ class TrueNASButtonEntityDescription(ButtonEntityDescription, TrueNASEntityDescr
 
     api_method: str | None = None
     func: str = "TrueNASButton"
+    # Scrub buttons only: the pool.scrub.scrub action to send, and the pool
+    # scrub states it applies to (empty = no check, e.g. "Run scrub").
+    scrub_action: str = SCRUB_ACTION_START
+    scrub_states: tuple[str, ...] = ()
 
 
 SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
@@ -90,6 +99,43 @@ SENSOR_TYPES: tuple[TrueNASButtonEntityDescription, ...] = (
         data_uid=None,
         data_reference="id",
         func="TrueNASPoolScrubButton",
+    ),
+    TrueNASButtonEntityDescription(
+        key="scrub_pause",
+        translation_key="scrub_pause",
+        ha_group="Pools",
+        data_path="scrub",
+        data_name="pool_name",
+        data_uid=None,
+        data_reference="id",
+        func="TrueNASPoolScrubButton",
+        scrub_action=SCRUB_ACTION_PAUSE,
+        scrub_states=(SCRUB_STATE_SCANNING,),
+    ),
+    # Resuming a paused scrub is START again; TrueNAS continues where it paused.
+    TrueNASButtonEntityDescription(
+        key="scrub_resume",
+        translation_key="scrub_resume",
+        ha_group="Pools",
+        data_path="scrub",
+        data_name="pool_name",
+        data_uid=None,
+        data_reference="id",
+        func="TrueNASPoolScrubButton",
+        scrub_action=SCRUB_ACTION_START,
+        scrub_states=(SCRUB_STATE_PAUSED,),
+    ),
+    TrueNASButtonEntityDescription(
+        key="scrub_stop",
+        translation_key="scrub_stop",
+        ha_group="Pools",
+        data_path="scrub",
+        data_name="pool_name",
+        data_uid=None,
+        data_reference="id",
+        func="TrueNASPoolScrubButton",
+        scrub_action=SCRUB_ACTION_STOP,
+        scrub_states=(SCRUB_STATE_SCANNING, SCRUB_STATE_PAUSED),
     ),
 )
 
