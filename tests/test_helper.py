@@ -12,6 +12,7 @@ from homeassistant.loader import IntegrationNotFound
 from custom_components.truenas_ce import helper as helper_module
 from custom_components.truenas_ce.helper import (
     async_legacy_code_installed,
+    async_legacy_integration_resolvable,
     sanitize_host,
 )
 
@@ -88,3 +89,24 @@ async def test_legacy_code_installed_false_when_integration_missing() -> None:
         AsyncMock(side_effect=IntegrationNotFound("truenas")),
     ):
         assert await async_legacy_code_installed(object()) is False
+
+
+async def test_legacy_integration_resolvable_while_cached_since_startup() -> None:
+    """Uninstalled since startup: the loader still resolves it until a restart."""
+    hass = object()
+    with patch.object(
+        helper_module,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(file_path=Path("gone"))),
+    ) as get_mock:
+        assert await async_legacy_integration_resolvable(hass) is True
+    get_mock.assert_awaited_once_with(hass, "truenas")
+
+
+async def test_legacy_integration_not_resolvable_when_missing_at_startup() -> None:
+    with patch.object(
+        helper_module,
+        "async_get_integration",
+        AsyncMock(side_effect=IntegrationNotFound("truenas")),
+    ):
+        assert await async_legacy_integration_resolvable(object()) is False

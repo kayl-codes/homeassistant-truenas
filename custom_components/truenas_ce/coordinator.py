@@ -63,7 +63,7 @@ from .const import (
     MONITOR_GROUP_VMS,
 )
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
-from .helper import async_legacy_code_installed
+from .helper import async_legacy_code_installed, async_legacy_integration_resolvable
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addFilter(SECRET_SCRUB_FILTER)
@@ -1250,16 +1250,22 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Offer to remove the legacy entry once its integration files are gone.
 
         Re-checks the files each poll while they are installed, so an uninstall
-        in HACS surfaces within one poll. Once missing they stay missing: Home
-        Assistant caches the custom-component list at startup, so re-adding the
-        old integration takes a restart (and a new coordinator) to show up.
+        in HACS blocks the rollback within one poll. Once missing they stay
+        missing: Home Assistant caches the custom-component list at startup, so
+        re-adding the old integration takes a restart (and a new coordinator)
+        to show up. The removal itself is offered only after that restart.
         """
         if DOMAIN == LEGACY_DOMAIN:
             return
         legacy_entry = self._legacy_entry()
         if legacy_entry is not None and self._legacy_code_installed is not False:
             self._legacy_code_installed = await async_legacy_code_installed(self.hass)
-        if legacy_entry is None or self._legacy_code_installed:
+        if (
+            legacy_entry is None
+            or self._legacy_code_installed
+            # Uninstalled since startup: removing the entry fails until a restart.
+            or await async_legacy_integration_resolvable(self.hass)
+        ):
             ir.async_delete_issue(self.hass, DOMAIN, self._legacy_entry_issue_id())
             return
         ir.async_create_issue(

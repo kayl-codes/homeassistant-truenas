@@ -397,6 +397,11 @@ async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
     code_check = AsyncMock(return_value=False)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module,
+            "async_legacy_integration_resolvable",
+            AsyncMock(return_value=False),
+        ),
         patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
         patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
     ):
@@ -419,8 +424,12 @@ async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
 async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
     coord = _legacy_issue_coordinator(_OLD_NAS)
     code_check = AsyncMock(return_value=True)
+    resolvable = AsyncMock(return_value=True)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module, "async_legacy_integration_resolvable", resolvable
+        ),
         patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
         patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
     ):
@@ -429,6 +438,7 @@ async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
 
     # Installed files are re-checked each poll to catch a later uninstall.
     assert code_check.await_count == 2
+    resolvable.assert_not_awaited()
     assert coord._legacy_code_installed is True
     create_mock.assert_not_called()
     assert delete_mock.call_count == 2
@@ -436,20 +446,30 @@ async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
     assert coord.rollback_possible() is True
 
 
-async def test_legacy_entry_issue_raised_after_uninstall_while_running() -> None:
-    """Uninstalled in HACS after startup: the next poll raises the issue."""
+async def test_legacy_entry_uninstall_while_running_blocks_rollback_only() -> None:
+    """Uninstalled in HACS after startup: the next poll blocks the rollback.
+
+    The removal issue waits for a restart: until then Home Assistant still
+    resolves the old integration and would fail to remove its entry.
+    """
     coord = _legacy_issue_coordinator(_OLD_NAS)
     code_check = AsyncMock(side_effect=[True, False])
+    resolvable = AsyncMock(return_value=True)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module, "async_legacy_integration_resolvable", resolvable
+        ),
         patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
-        patch.object(coordinator_module.ir, "async_delete_issue"),
+        patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
     ):
         await coord._async_update_legacy_entry_issue()
         assert coord.rollback_possible() is True
         await coord._async_update_legacy_entry_issue()
 
-    create_mock.assert_called_once()
+    resolvable.assert_awaited_once_with(coord.hass)
+    create_mock.assert_not_called()
+    assert delete_mock.call_count == 2
     assert coord.rollback_possible() is False
 
 
@@ -459,6 +479,11 @@ async def test_legacy_entry_issue_withdrawn_after_entry_removed() -> None:
     code_check = AsyncMock(return_value=False)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(
+            coordinator_module,
+            "async_legacy_integration_resolvable",
+            AsyncMock(return_value=False),
+        ),
         patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
         patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
     ):

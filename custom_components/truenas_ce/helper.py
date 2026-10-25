@@ -59,6 +59,23 @@ async def async_legacy_code_installed(hass: HomeAssistant) -> bool:
 
 
 # ---------------------------
+#   async_legacy_integration_resolvable
+# ---------------------------
+async def async_legacy_integration_resolvable(hass: HomeAssistant) -> bool:
+    """Whether Home Assistant's loader still resolves the old integration.
+
+    The loader caches custom integrations from startup, so one uninstalled in
+    HACS since then still resolves until a restart. Removing its config entry
+    before that fails inside Home Assistant: it imports the deleted module.
+    """
+    try:
+        await async_get_integration(hass, LEGACY_DOMAIN)
+    except IntegrationNotFound:
+        return False
+    return True
+
+
+# ---------------------------
 #   sanitize_host
 # ---------------------------
 def sanitize_host(host: str) -> str:
