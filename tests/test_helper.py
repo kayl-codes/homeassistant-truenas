@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.loader import IntegrationNotFound
@@ -44,13 +46,38 @@ def test_sanitize_host(raw: str, expected: str) -> None:
     assert sanitize_host(raw) == expected
 
 
-async def test_legacy_code_installed_true_when_integration_resolves() -> None:
-    hass = object()
+def _executor_hass() -> MagicMock:
+    hass = MagicMock()
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+    return hass
+
+
+async def test_legacy_code_installed_true_when_integration_resolves(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+    hass = _executor_hass()
     with patch.object(
-        helper_module, "async_get_integration", AsyncMock(return_value=object())
+        helper_module,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(file_path=tmp_path)),
     ) as get_mock:
         assert await async_legacy_code_installed(hass) is True
     get_mock.assert_awaited_once_with(hass, "truenas")
+    # The file check must not block the event loop.
+    hass.async_add_executor_job.assert_awaited_once()
+
+
+async def test_legacy_code_installed_false_when_files_removed_since_startup(
+    tmp_path: Path,
+) -> None:
+    """The loader still resolves the cached integration after a live uninstall."""
+    with patch.object(
+        helper_module,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(file_path=tmp_path / "truenas")),
+    ):
+        assert await async_legacy_code_installed(_executor_hass()) is False
 
 
 async def test_legacy_code_installed_false_when_integration_missing() -> None:

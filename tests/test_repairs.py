@@ -219,6 +219,9 @@ async def test_migration_rollback_step_schedules_rollback_task() -> None:
         result = await flow.async_step_rollback()
 
     flow.hass.async_create_task.assert_called_once()
+    # The scheduled work must be the error-surfacing rollback wrapper.
+    scheduled = flow.hass.async_create_task.call_args.args[0]
+    assert scheduled.cr_code is _async_rollback_and_log_errors.__code__
     delete_issue.assert_called_once()
     assert result["type"] == "create_entry"
 

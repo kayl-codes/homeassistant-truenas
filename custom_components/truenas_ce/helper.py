@@ -43,9 +43,17 @@ async def async_legacy_code_installed(hass: HomeAssistant) -> bool:
     import cycle (``migration`` -> ``entity`` -> ``coordinator``).
     """
     try:
-        await async_get_integration(hass, LEGACY_DOMAIN)
+        integration = await async_get_integration(hass, LEGACY_DOMAIN)
     except IntegrationNotFound:
         _LOGGER.debug("The old '%s' integration is not installed", LEGACY_DOMAIN)
+        return False
+    # The loader caches what it resolved, so an uninstall in HACS still
+    # resolves until the next restart: confirm the files are really there.
+    manifest = integration.file_path / "manifest.json"
+    if not await hass.async_add_executor_job(manifest.is_file):
+        _LOGGER.debug(
+            "The old '%s' integration was removed since startup", LEGACY_DOMAIN
+        )
         return False
     return True
 

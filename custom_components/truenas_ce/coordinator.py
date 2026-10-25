@@ -1005,6 +1005,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Update TrueNAS data."""
 
+        # Home Assistant-side only, so run before anything that needs the NAS:
+        # offer to remove a legacy entry whose integration files are gone, then
+        # withdraw a lingering rollback issue once the old integration is gone.
+        # (The rollback issue is only ever raised on demand by the button.)
+        await self._async_update_legacy_entry_issue()
+        self._clear_stale_migration_rollback_issue()
+
         await self._async_ensure_connected()
 
         jobs = [
@@ -1104,12 +1111,6 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Re-check orphaned recorder statistics each poll so the diagnostic
         # button and Repairs issue track the current state automatically.
         await self.async_detect_orphaned_statistics()
-
-        # Offer to remove a legacy entry whose integration files are gone, then
-        # withdraw a lingering rollback issue once the old integration is gone.
-        # (The rollback issue is only ever raised on demand by the button.)
-        await self._async_update_legacy_entry_issue()
-        self._clear_stale_migration_rollback_issue()
 
         return self.ds
 
@@ -1249,8 +1250,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Offer to remove the legacy entry once its integration files are gone.
 
         Runs each poll, but checks the files only once per coordinator: Home
-        Assistant caches the custom-component list at startup, so removing or
-        re-adding the old integration takes a restart to show up anyway.
+        Assistant caches the custom-component list at startup, so re-adding the
+        old integration takes a restart to show up anyway. An uninstall after
+        that first check surfaces after the restart HACS asks for; until then
+        the rollback paths re-check the files themselves before acting.
         """
         if DOMAIN == LEGACY_DOMAIN:
             return

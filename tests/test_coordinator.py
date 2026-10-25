@@ -2284,6 +2284,12 @@ def test_clear_persisted_connection_failing_noop_when_absent() -> None:
 # ---------------------------
 #   _async_update_data
 # ---------------------------
+def _stub_local_issue_checks(coord: TrueNASCoordinator) -> None:
+    """Stub the Home Assistant-side issue checks that open every refresh."""
+    coord._async_update_legacy_entry_issue = AsyncMock()
+    coord._clear_stale_migration_rollback_issue = MagicMock()
+
+
 def _stub_all_jobs(coord: TrueNASCoordinator) -> None:
     """Patch every job invoked by ``_async_update_data`` with a no-op AsyncMock."""
     for name in (
@@ -2635,6 +2641,21 @@ async def test_async_update_data_updates_legacy_issue_before_rollback_clear() ->
     order.legacy.assert_awaited_once()
 
 
+async def test_async_update_data_checks_legacy_issue_while_nas_unreachable() -> None:
+    """The checks are Home Assistant-side: an offline NAS must not skip them."""
+    coord = _bare_coordinator()
+    coord._async_ensure_connected = AsyncMock(
+        side_effect=coordinator_module.UpdateFailed("offline")
+    )
+    _stub_local_issue_checks(coord)
+
+    with pytest.raises(coordinator_module.UpdateFailed):
+        await coord._async_update_data()
+
+    coord._async_update_legacy_entry_issue.assert_awaited_once()
+    coord._clear_stale_migration_rollback_issue.assert_called_once()
+
+
 async def test_async_update_data_survives_get_app_stats_failure() -> None:
     """get_app_stats now runs after the gather, on its own: a failure there
     must still be tracked for is_data_path_failing("app_stats") without
@@ -2740,6 +2761,7 @@ async def test_async_update_data_raises_when_system_info_missing() -> None:
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.ds = {"system_info": {}}
 
     with pytest.raises(coordinator_module.UpdateFailed):
@@ -2764,6 +2786,7 @@ async def test_async_update_data_raises_when_hostname_is_unknown_sentinel() -> N
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.ds = {"system_info": {"hostname": "unknown"}}
 
     with pytest.raises(coordinator_module.UpdateFailed):
@@ -2786,6 +2809,7 @@ async def test_async_update_data_raises_when_hostname_is_none_or_empty() -> None
         coord.api.connected = MagicMock(return_value=True)
         coord._async_ensure_connected = AsyncMock()
         _stub_all_jobs(coord)
+        _stub_local_issue_checks(coord)
         coord.ds = {"system_info": {"hostname": bad_hostname}}
 
         with pytest.raises(coordinator_module.UpdateFailed):
@@ -2805,6 +2829,7 @@ async def test_async_update_data_reports_system_info_permission_denied() -> None
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord.get_systeminfo.side_effect = TrueNASCallError("denied", errname="EACCES")
     coord.ds = {"system_info": {}}
 
@@ -2824,6 +2849,7 @@ async def test_async_update_data_keeps_generic_hostname_error_without_eacces() -
     coord.api.connected = MagicMock(return_value=True)
     coord._async_ensure_connected = AsyncMock()
     _stub_all_jobs(coord)
+    _stub_local_issue_checks(coord)
     coord._job_failing = {"get_systeminfo"}
     coord._job_permission_denied = {"get_systeminfo"}
     coord.ds = {"system_info": {}}
