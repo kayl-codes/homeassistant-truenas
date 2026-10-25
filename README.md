@@ -345,7 +345,7 @@ Target system uptime sensor.
 ![image](https://user-images.githubusercontent.com/36953052/221521930-f8f789e6-deec-4cc2-b11e-740caa056e44.png)
 
 ## Actions
-All actions are prefixed with `truenas.` and **target a specific entity** (the one whose
+All actions are prefixed with `truenas_ce.` and **target a specific entity** (the one whose
 TrueNAS object they act on). Each action has a name and description in
 *Developer Tools → Actions*.
 
@@ -368,7 +368,7 @@ TrueNAS object they act on). Each action has a name and description in
 
 Example:
 ```yaml
-action: truenas.dataset_snapshot
+action: truenas_ce.dataset_snapshot
 target:
   entity_id: sensor.truenas_<host>_<dataset>
 ```
@@ -459,6 +459,13 @@ to (not a replacement for) the pre-existing behavior of going unavailable when a
 outright fails. No action is needed — this makes an existing "stuck on last-known-good value"
 failure mode visible instead of introducing a new one.
 
+### A NAS that is not always on
+If your TrueNAS is only powered up when needed (for example for a nightly backup run), the
+integration reconnects as soon as the NAS announces itself on the network (since 2.12.1). If
+Home Assistant cannot see those announcements, for example across VLANs, a small automation does
+the same. Both are explained, with ready-to-use automations, in the wiki:
+[A NAS That Is Not Always On](https://github.com/kayl-codes/homeassistant-truenas/wiki/On-Demand-NAS).
+
 ## Options
 
 After setup you can fine-tune the integration via **Settings → Devices & Services → TrueNAS → Configure**. Saving the options reloads the integration so changes take effect immediately.
@@ -525,7 +532,7 @@ Long-term statistics recorded for the sensors are kept by Home Assistant's recor
 # Development
 
 ## Translation
-Translations live directly in this repository under [`custom_components/truenas/translations/`](custom_components/truenas/translations/), with `en.json` (mirrored from `strings.json`) as the source language. Currently shipped: English, German, Spanish, Russian, Slovak and Brazilian Portuguese.
+Translations live directly in this repository under [`custom_components/truenas_ce/translations/`](custom_components/truenas_ce/translations/), with `en.json` (mirrored from `strings.json`) as the source language. Currently shipped: English, German, Spanish, Russian, Slovak and Brazilian Portuguese.
 
 > **Note:** The Lokalise project referenced by the upstream integration is **not wired up for this fork**, so translations are currently maintained by hand in this repository rather than synced through Lokalise.
 
@@ -537,7 +544,7 @@ To enable debug for TrueNAS integration, add following to your configuration.yam
 logger:
   default: info
   logs:
-    custom_components.truenas: debug
+    custom_components.truenas_ce: debug
 ```
 
 
