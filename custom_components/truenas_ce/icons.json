@@ -13,6 +13,15 @@
       "scrub_run": {
         "default": "mdi:broom"
       },
+      "scrub_pause": {
+        "default": "mdi:pause"
+      },
+      "scrub_resume": {
+        "default": "mdi:play"
+      },
+      "scrub_stop": {
+        "default": "mdi:stop"
+      },
       "snapshottask_run": {
         "default": "mdi:play-circle-outline"
       },
@@ -95,6 +104,9 @@
       },
       "pool_scrub_state": {
         "default": "mdi:broom"
+      },
+      "pool_scrub_progress": {
+        "default": "mdi:progress-clock"
       },
       "cloudsync": {
         "default": "mdi:cloud-upload"

@@ -5,14 +5,23 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import UnitOfInformation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.loader import IntegrationNotFound, async_get_integration
 
 from .api import SECRET_SCRUB_FILTER
-from .const import DOMAIN, LEGACY_DOMAIN
+from .const import (
+    DOMAIN,
+    LEGACY_DOMAIN,
+    SCAN_FUNCTION_SCRUB,
+    SCRUB_STATE_CANCELED,
+    SCRUB_STATE_FINISHED,
+    SCRUB_STATE_PAUSED,
+    SCRUB_STATE_SCANNING,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -156,6 +165,56 @@ def scaled_data_unit(value: object, binary: bool) -> tuple[str, int | None]:
             return unit, precision
 
     return tiers[_BASE_TIER_INDEX][1], None
+
+
+# ---------------------------
+#   pool_scrub_state
+# ---------------------------
+def pool_scrub_state(pool: Mapping[str, Any]) -> str | None:
+    """Return a pool's scrub state, reporting a paused scrub as PAUSED.
+
+    TrueNAS keeps ``scan.state`` at SCANNING while a scrub is paused and only
+    sets ``scan.pause`` (aiotruenas: ``scrub_pause``), so running and paused
+    are told apart here.
+    """
+    state = pool.get("scrub_state")
+    if not isinstance(state, str):
+        return None
+    if state == SCRUB_STATE_SCANNING and pool.get("scrub_pause"):
+        return SCRUB_STATE_PAUSED
+    return state
+
+
+# Scrub states whose scan.percentage is meaningful as shown.
+_SCRUB_PROGRESS_STATES = (
+    SCRUB_STATE_SCANNING,
+    SCRUB_STATE_PAUSED,
+    SCRUB_STATE_CANCELED,
+)
+
+
+# ---------------------------
+#   pool_scrub_progress
+# ---------------------------
+def pool_scrub_progress(pool: Mapping[str, Any]) -> float | None:
+    """Return a pool's scrub progress in percent, rounded to one decimal.
+
+    A finished scrub reads 100: TrueNAS leaves ``scan.percentage`` just below
+    it (99.91-99.99). A canceled scrub keeps the value it was stopped at. With
+    no scrub (or an unknown state) there is no progress to report, and a
+    resilver's progress is not a scrub's.
+    """
+    if pool.get("scan_function") != SCAN_FUNCTION_SCRUB:
+        return None
+    state = pool_scrub_state(pool)
+    if state == SCRUB_STATE_FINISHED:
+        return 100.0
+    if state not in _SCRUB_PROGRESS_STATES:
+        return None
+    percentage = pool.get("scrub_percentage")
+    if isinstance(percentage, bool) or not isinstance(percentage, (int, float)):
+        return None
+    return round(float(percentage), 1)
 
 
 # ---------------------------

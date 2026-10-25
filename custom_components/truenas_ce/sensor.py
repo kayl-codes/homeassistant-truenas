@@ -40,7 +40,13 @@ from .entity import (
     format_unique_id,
     resolve_entry_identity,
 )
-from .helper import GB_SCALED_UNITS, alert_action, scaled_data_unit
+from .helper import (
+    GB_SCALED_UNITS,
+    alert_action,
+    pool_scrub_progress,
+    pool_scrub_state,
+    scaled_data_unit,
+)
 from .sensor_types import (  # noqa: F401
     SENSOR_SERVICES,
     SENSOR_TYPES,
@@ -118,6 +124,8 @@ async def async_setup_entry(
         "TrueNASDatasetSensor": TrueNASDatasetSensor,
         "TrueNASCertExpirySensor": TrueNASCertExpirySensor,
         "TrueNASDiskSensor": TrueNASDiskSensor,
+        "TrueNASPoolScrubStateSensor": TrueNASPoolScrubStateSensor,
+        "TrueNASPoolScrubProgressSensor": TrueNASPoolScrubProgressSensor,
         "TrueNASRsyncSensor": TrueNASRsyncSensor,
         "TrueNASReplicationSensor": TrueNASReplicationSensor,
         "TrueNASSnapshotTaskSensor": TrueNASSnapshotTaskSensor,
@@ -462,6 +470,30 @@ class TrueNASDiskSensor(TrueNASSensor):
             return "mdi:expansion-card-variant"
         disk_type = (self._data.get("type") or "").upper()
         return _DISK_TYPE_ICONS.get(disk_type, "mdi:harddisk")
+
+
+# ---------------------------
+#   TrueNASPoolScrubStateSensor
+# ---------------------------
+class TrueNASPoolScrubStateSensor(TrueNASSensor):
+    """Pool scrub state, with PAUSED for a paused scrub (#204)."""
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the scrub state as TrueNAS reports it, or PAUSED."""
+        return pool_scrub_state(self._data)
+
+
+# ---------------------------
+#   TrueNASPoolScrubProgressSensor
+# ---------------------------
+class TrueNASPoolScrubProgressSensor(TrueNASSensor):
+    """Pool scrub progress in percent (#204)."""
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the scrub progress, or None when no scrub has run."""
+        return pool_scrub_progress(self._data)
 
 
 # ---------------------------

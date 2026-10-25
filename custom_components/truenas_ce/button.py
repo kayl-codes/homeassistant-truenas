@@ -8,7 +8,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -27,6 +27,7 @@ from .const import (
     DOMAIN,
     LEGACY_DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
+    SCAN_FUNCTION_SCRUB,
     SCRUB_ACTION_START,
 )
 from .coordinator import TrueNASCoordinator, get_truenas_coordinator
@@ -37,6 +38,7 @@ from .entity import (
     format_unique_id,
     resolve_entry_identity,
 )
+from .helper import pool_scrub_state
 
 _LOGGER = getLogger(__name__)
 _LOGGER.addFilter(SECRET_SCRUB_FILTER)
@@ -107,14 +109,19 @@ class TrueNASButton(TrueNASEntity, ButtonEntity):
 #   TrueNASPoolScrubButton
 # ---------------------------
 class TrueNASPoolScrubButton(TrueNASButton):
-    """Scrub button: starts a pool scrub via pool.scrub.scrub.
+    """Scrub button: sends a pool.scrub.scrub action (start/pause/resume/stop).
 
     pool.scrub.scrub acts on the pool by name, so it runs whether or not the
     scheduled scrub task is enabled -- a disabled schedule only stops TrueNAS
     from starting scrubs on its own, not a manual one (#203).
+
+    Pause, resume and stop (#204) first check the pool's current scrub state:
+    resume is START again, which on a pool without a paused scrub would
+    silently begin a new one.
     """
 
     async def async_press(self) -> None:
+        """Send this button's scrub action for the task's pool."""
         pool_name = self._data.get("pool_name")
         task_id = self._data.get("id")
         if not pool_name or task_id is None:
@@ -123,27 +130,104 @@ class TrueNASPoolScrubButton(TrueNASButton):
                 self.entity_id,
             )
             return
+        # One scrub action at a time: two overlapping presses could both pass
+        # the state check, and Stop followed by Resume would then start a new
+        # scrub on the pool just stopped.
+        async with self.coordinator.scrub_lock:
+            await self._send_scrub_action(pool_name, task_id)
+
+    async def _send_scrub_action(self, pool_name: str, task_id: object) -> None:
+        """Check the scrub state if this button needs one, then send its action."""
+        action = self.entity_description.scrub_action
+        required_states = self.entity_description.scrub_states
+        if required_states:
+            # Check the current state, not the last poll's (see
+            # coordinator.async_refresh_pools).
+            if (error := await self._refresh_pools()) is not None:
+                raise self._scrub_failed(pool_name, error)
+            if self._scrub_state(pool_name) not in required_states:
+                # One message per button, e.g. "scrub_pause_not_possible".
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key=f"{self.entity_description.key}_not_possible",
+                    translation_placeholders={"pool": pool_name},
+                )
         result = await self.coordinator.api.query(
-            API_POOL_SCRUB_SCRUB, [pool_name, SCRUB_ACTION_START]
+            API_POOL_SCRUB_SCRUB, [pool_name, action]
         )
         if result is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="scrub_failed",
-                translation_placeholders={
-                    "pool": pool_name,
-                    "host": self.coordinator.host,
-                    "error": str(self.coordinator.api.error or "unknown error"),
-                },
+            raise self._scrub_failed(
+                pool_name, str(self.coordinator.api.error or "unknown error")
             )
-        self.coordinator.set_optimistic_running(
-            self.entity_description.data_path or "", task_id
-        )
         _LOGGER.debug(
-            "TrueNAS scrub button %s: started scrub for pool %r",
+            "TrueNAS scrub button %s: sent %s for pool %r",
             self.entity_id,
+            action,
             pool_name,
         )
+        # Only "Run scrub" marks the task RUNNING; resume is a START too, but
+        # continues the paused scrub rather than starting a run.
+        if action == SCRUB_ACTION_START and not required_states:
+            self.coordinator.set_optimistic_running(
+                self.entity_description.data_path or "", task_id
+            )
+        # Re-read the pool so the scrub state and progress follow right away.
+        # TrueNAS already took the action, so a failed re-read is only logged;
+        # the entities keep the old state until the next poll catches up.
+        await self._refresh_pools()
+
+    async def _refresh_pools(self) -> str | None:
+        """Re-read the pools; return why that failed, or None if it worked."""
+        try:
+            await self.coordinator.async_refresh_pools()
+        except Exception as exc:  # any failure leaves the state unknown
+            error = str(exc) or type(exc).__name__
+        else:
+            # aiotruenas keeps the previous pools when pool.query fails
+            # without raising, and reports the pools as stale. Only this
+            # refresh counts here, not an earlier poll's failure.
+            if "pool" not in self.coordinator.state.stale_endpoints:
+                return None
+            error = "TrueNAS returned no usable pool data"
+        _LOGGER.warning(
+            "TrueNAS scrub button %s: could not re-read the pools: %s",
+            self.entity_id,
+            error,
+        )
+        return error
+
+    def _scrub_failed(self, pool_name: str, error: str) -> HomeAssistantError:
+        """Build the error for a scrub action TrueNAS did not take."""
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="scrub_failed",
+            translation_placeholders={
+                "pool": pool_name,
+                "host": self.coordinator.host,
+                "error": error,
+            },
+        )
+
+    def _scrub_state(self, pool_name: str) -> str | None:
+        """Return the pool's scrub state, or None if no scrub is on record.
+
+        A resilver also reports SCANNING but cannot be paused or stopped
+        through pool.scrub.scrub, so only a scan of function SCRUB counts.
+        """
+        pools = self.coordinator.data.get("pool")
+        if not isinstance(pools, dict):
+            return None
+        pool = next(
+            (
+                pool
+                for pool in pools.values()
+                if isinstance(pool, dict) and pool.get("name") == pool_name
+            ),
+            None,
+        )
+        if pool is None or pool.get("scan_function") != SCAN_FUNCTION_SCRUB:
+            return None
+        return pool_scrub_state(pool)
 
 
 # ---------------------------

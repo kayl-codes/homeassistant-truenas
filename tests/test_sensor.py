@@ -21,6 +21,8 @@ from custom_components.truenas_ce.sensor import (
     TrueNASCloudsyncSensor,
     TrueNASDatasetSensor,
     TrueNASDiskSensor,
+    TrueNASPoolScrubProgressSensor,
+    TrueNASPoolScrubStateSensor,
     TrueNASReplicationSensor,
     TrueNASRsyncSensor,
     TrueNASSensor,
@@ -382,6 +384,74 @@ def test_cert_expiry_years_when_over_a_year() -> None:
     sensor = _make_sensor(TrueNASCertExpirySensor, {"value": 730})
     assert sensor.native_value == 2.0
     assert sensor.native_unit_of_measurement.value == "y"
+
+
+# ---------------------------
+#   TrueNASPoolScrubStateSensor / TrueNASPoolScrubProgressSensor (#204)
+# ---------------------------
+def test_pool_scrub_sensor_descriptions_use_their_classes() -> None:
+    """Without its own class a scrub sensor would show TrueNAS's raw value."""
+    descriptions = {d.key: d for d in SENSOR_TYPES}
+    assert descriptions["pool_scrub_state"].func == "TrueNASPoolScrubStateSensor"
+    progress = descriptions["pool_scrub_progress"]
+    assert progress.func == "TrueNASPoolScrubProgressSensor"
+    assert progress.data_path == "pool"
+
+
+def test_aiotruenas_provides_the_pool_scrub_keys() -> None:
+    """The scrub buttons and sensors read these pool keys from aiotruenas >= 1.7.0.
+
+    A rename there would otherwise leave every scrub state check failing and
+    the progress sensor empty, with all hand-built test data still passing.
+    """
+    from aiotruenas.domain._specs import _POOL_VALS
+
+    keys = {spec["name"] for spec in _POOL_VALS}
+    assert {"scan_function", "scrub_state", "scrub_pause", "scrub_percentage"} <= keys
+
+
+def test_pool_scrub_state_sensor_reports_paused() -> None:
+    sensor = _make_sensor(
+        TrueNASPoolScrubStateSensor,
+        {"scrub_state": "SCANNING", "scrub_pause": "2026-10-25T21:00:00Z"},
+        path="pool",
+    )
+    assert sensor.native_value == "PAUSED"
+
+
+def test_pool_scrub_state_sensor_passes_truenas_state_through() -> None:
+    sensor = _make_sensor(
+        TrueNASPoolScrubStateSensor,
+        {"scrub_state": "SCANNING", "scrub_pause": None},
+        path="pool",
+    )
+    assert sensor.native_value == "SCANNING"
+
+
+def test_pool_scrub_progress_sensor_rounds_running_progress() -> None:
+    sensor = _make_sensor(
+        TrueNASPoolScrubProgressSensor,
+        {
+            "scan_function": "SCRUB",
+            "scrub_state": "SCANNING",
+            "scrub_percentage": 11.300981044769287,
+        },
+        path="pool",
+    )
+    assert sensor.native_value == 11.3
+
+
+def test_pool_scrub_progress_sensor_finished_reads_100() -> None:
+    sensor = _make_sensor(
+        TrueNASPoolScrubProgressSensor,
+        {
+            "scan_function": "SCRUB",
+            "scrub_state": "FINISHED",
+            "scrub_percentage": 99.95,
+        },
+        path="pool",
+    )
+    assert sensor.native_value == 100.0
 
 
 # ---------------------------
