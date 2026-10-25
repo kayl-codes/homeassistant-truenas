@@ -442,6 +442,7 @@ async def test_legacy_entry_orphaned_confirm_tolerates_removal_race() -> None:
         result = await flow.async_step_confirm({})
 
     assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_remove.assert_awaited_once_with("legacy-1")
     delete_issue.assert_called_once()
 
 

@@ -403,7 +403,7 @@ async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
         await coord._async_update_legacy_entry_issue()
         await coord._async_update_legacy_entry_issue()
 
-    # The files are checked once per coordinator, the issue kept up each poll.
+    # Missing files stay missing until a restart; the issue is kept up each poll.
     code_check.assert_awaited_once_with(coord.hass)
     assert create_mock.call_count == 2
     _, args, kwargs = create_mock.mock_calls[0]
@@ -427,12 +427,30 @@ async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
         await coord._async_update_legacy_entry_issue()
         await coord._async_update_legacy_entry_issue()
 
-    code_check.assert_awaited_once_with(coord.hass)
+    # Installed files are re-checked each poll to catch a later uninstall.
+    assert code_check.await_count == 2
     assert coord._legacy_code_installed is True
     create_mock.assert_not_called()
     assert delete_mock.call_count == 2
     delete_mock.assert_called_with(coord.hass, DOMAIN, "legacy_entry_orphaned_entry1")
     assert coord.rollback_possible() is True
+
+
+async def test_legacy_entry_issue_raised_after_uninstall_while_running() -> None:
+    """Uninstalled in HACS after startup: the next poll raises the issue."""
+    coord = _legacy_issue_coordinator(_OLD_NAS)
+    code_check = AsyncMock(side_effect=[True, False])
+    with (
+        patch.object(coordinator_module, "async_legacy_code_installed", code_check),
+        patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
+        patch.object(coordinator_module.ir, "async_delete_issue"),
+    ):
+        await coord._async_update_legacy_entry_issue()
+        assert coord.rollback_possible() is True
+        await coord._async_update_legacy_entry_issue()
+
+    create_mock.assert_called_once()
+    assert coord.rollback_possible() is False
 
 
 async def test_legacy_entry_issue_withdrawn_after_entry_removed() -> None:

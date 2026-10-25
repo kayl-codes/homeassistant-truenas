@@ -1249,16 +1249,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_legacy_entry_issue(self) -> None:
         """Offer to remove the legacy entry once its integration files are gone.
 
-        Runs each poll, but checks the files only once per coordinator: Home
+        Re-checks the files each poll while they are installed, so an uninstall
+        in HACS surfaces within one poll. Once missing they stay missing: Home
         Assistant caches the custom-component list at startup, so re-adding the
-        old integration takes a restart to show up anyway. An uninstall after
-        that first check surfaces after the restart HACS asks for; until then
-        the rollback paths re-check the files themselves before acting.
+        old integration takes a restart (and a new coordinator) to show up.
         """
         if DOMAIN == LEGACY_DOMAIN:
             return
         legacy_entry = self._legacy_entry()
-        if legacy_entry is not None and self._legacy_code_installed is None:
+        if legacy_entry is not None and self._legacy_code_installed is not False:
             self._legacy_code_installed = await async_legacy_code_installed(self.hass)
         if legacy_entry is None or self._legacy_code_installed:
             ir.async_delete_issue(self.hass, DOMAIN, self._legacy_entry_issue_id())
