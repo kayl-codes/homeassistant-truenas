@@ -16,6 +16,7 @@ from .api import SECRET_SCRUB_FILTER
 from .const import (
     DOMAIN,
     LEGACY_DOMAIN,
+    SCAN_FUNCTION_SCRUB,
     SCRUB_STATE_CANCELED,
     SCRUB_STATE_FINISHED,
     SCRUB_STATE_PAUSED,
@@ -200,8 +201,11 @@ def pool_scrub_progress(pool: Mapping[str, Any]) -> float | None:
 
     A finished scrub reads 100: TrueNAS leaves ``scan.percentage`` just below
     it (99.91-99.99). A canceled scrub keeps the value it was stopped at. With
-    no scrub (or an unknown state) there is no progress to report.
+    no scrub (or an unknown state) there is no progress to report, and a
+    resilver's progress is not a scrub's.
     """
+    if pool.get("scan_function") != SCAN_FUNCTION_SCRUB:
+        return None
     state = pool_scrub_state(pool)
     if state == SCRUB_STATE_FINISHED:
         return 100.0

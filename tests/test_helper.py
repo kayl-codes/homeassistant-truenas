@@ -159,4 +159,19 @@ def test_pool_scrub_state(pool: dict, expected: str | None) -> None:
     ],
 )
 def test_pool_scrub_progress(pool: dict, expected: float | None) -> None:
-    assert pool_scrub_progress(pool) == expected
+    assert pool_scrub_progress({"scan_function": "SCRUB", **pool}) == expected
+
+
+# aiotruenas reports "unknown" when a pool has no scan.
+@pytest.mark.parametrize("scan_function", ["RESILVER", "unknown", None])
+@pytest.mark.parametrize("scrub_state", ["SCANNING", "FINISHED"])
+def test_pool_scrub_progress_ignores_other_scans(
+    scan_function: str | None, scrub_state: str
+) -> None:
+    """A resilver's progress is not shown as scrub progress."""
+    pool = {
+        "scan_function": scan_function,
+        "scrub_state": scrub_state,
+        "scrub_percentage": 42.0,
+    }
+    assert pool_scrub_progress(pool) is None

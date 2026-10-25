@@ -9,6 +9,7 @@ and ``coordinator_context``, no hass access at construction time).
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -98,6 +99,7 @@ def make_coordinator(
         async_refresh=AsyncMock(),
         async_request_refresh=AsyncMock(),
         async_refresh_pools=AsyncMock(),
+        scrub_lock=asyncio.Lock(),
         async_run_task=AsyncMock(),
         set_optimistic_running=MagicMock(),
         note_expected_disconnect=MagicMock(),
@@ -109,5 +111,6 @@ def make_coordinator(
         supports_container_api=MagicMock(return_value=False),
         supports_service_control=MagicMock(return_value=False),
         is_data_path_failing=MagicMock(return_value=False),
+        state=SimpleNamespace(stale_endpoints=frozenset()),
         get_known_app_names=MagicMock(side_effect=_known_app_names),
     )

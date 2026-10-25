@@ -130,12 +130,21 @@ class TrueNASPoolScrubButton(TrueNASButton):
                 self.entity_id,
             )
             return
+        # One scrub action at a time: two overlapping presses could both pass
+        # the state check, and Stop followed by Resume would then start a new
+        # scrub on the pool just stopped.
+        async with self.coordinator.scrub_lock:
+            await self._send_scrub_action(pool_name, task_id)
+
+    async def _send_scrub_action(self, pool_name: str, task_id: object) -> None:
+        """Check the scrub state if this button needs one, then send its action."""
         action = self.entity_description.scrub_action
         required_states = self.entity_description.scrub_states
         if required_states:
             # Check the current state, not the last poll's (see
             # coordinator.async_refresh_pools).
-            await self.coordinator.async_refresh_pools()
+            if (error := await self._refresh_pools()) is not None:
+                raise self._scrub_failed(pool_name, error)
             if self._scrub_state(pool_name) not in required_states:
                 # One message per button, e.g. "scrub_pause_not_possible".
                 raise ServiceValidationError(
@@ -147,14 +156,8 @@ class TrueNASPoolScrubButton(TrueNASButton):
             API_POOL_SCRUB_SCRUB, [pool_name, action]
         )
         if result is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="scrub_failed",
-                translation_placeholders={
-                    "pool": pool_name,
-                    "host": self.coordinator.host,
-                    "error": str(self.coordinator.api.error or "unknown error"),
-                },
+            raise self._scrub_failed(
+                pool_name, str(self.coordinator.api.error or "unknown error")
             )
         _LOGGER.debug(
             "TrueNAS scrub button %s: sent %s for pool %r",
@@ -169,7 +172,41 @@ class TrueNASPoolScrubButton(TrueNASButton):
                 self.entity_description.data_path or "", task_id
             )
         # Re-read the pool so the scrub state and progress follow right away.
-        await self.coordinator.async_refresh_pools()
+        # TrueNAS already took the action, so a failed re-read is only logged;
+        # the entities keep the old state until the next poll catches up.
+        await self._refresh_pools()
+
+    async def _refresh_pools(self) -> str | None:
+        """Re-read the pools; return why that failed, or None if it worked."""
+        try:
+            await self.coordinator.async_refresh_pools()
+        except Exception as exc:  # any failure leaves the state unknown
+            error = str(exc) or type(exc).__name__
+        else:
+            # aiotruenas keeps the previous pools when pool.query fails
+            # without raising, and reports the pools as stale. Only this
+            # refresh counts here, not an earlier poll's failure.
+            if "pool" not in self.coordinator.state.stale_endpoints:
+                return None
+            error = "TrueNAS returned no usable pool data"
+        _LOGGER.warning(
+            "TrueNAS scrub button %s: could not re-read the pools: %s",
+            self.entity_id,
+            error,
+        )
+        return error
+
+    def _scrub_failed(self, pool_name: str, error: str) -> HomeAssistantError:
+        """Build the error for a scrub action TrueNAS did not take."""
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="scrub_failed",
+            translation_placeholders={
+                "pool": pool_name,
+                "host": self.coordinator.host,
+                "error": error,
+            },
+        )
 
     def _scrub_state(self, pool_name: str) -> str | None:
         """Return the pool's scrub state, or None if no scrub is on record.

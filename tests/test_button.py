@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -181,8 +182,85 @@ async def test_scrub_control_button_failure_raises(key: str, pool: dict) -> None
     with pytest.raises(HomeAssistantError) as exc_info:
         await button.async_press()
     assert exc_info.value.translation_key == "scrub_failed"
+    # The action was sent, and TrueNAS did not take it.
+    action = _SCRUB_DESCRIPTIONS[key].scrub_action
+    button.coordinator.api.query.assert_awaited_once_with(
+        "pool.scrub.scrub", ["tank", action]
+    )
     # Only the pre-check refresh ran; no result to show.
     button.coordinator.async_refresh_pools.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("stale", "error"),
+    [(True, "TrueNAS returned no usable pool data"), (False, "TimeoutError")],
+)
+@pytest.mark.parametrize(
+    ("key", "pool"),
+    [("scrub_pause", _RUNNING), ("scrub_resume", _PAUSED), ("scrub_stop", _PAUSED)],
+)
+async def test_scrub_control_button_refuses_unreadable_state(
+    key: str, pool: dict, stale: bool, error: str
+) -> None:
+    """Without a fresh pool state, no action is sent (#204)."""
+    button = _make_scrub_button(data=_TASK, key=key, pool=pool)
+    if stale:
+        # pool.query failed without raising: the old snapshot is kept.
+        button.coordinator.state.stale_endpoints = frozenset({"pool"})
+    else:
+        button.coordinator.async_refresh_pools.side_effect = TimeoutError
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await button.async_press()
+    assert exc_info.value.translation_key == "scrub_failed"
+    assert exc_info.value.translation_placeholders["pool"] == "tank"
+    assert exc_info.value.translation_placeholders["error"] == error
+    button.coordinator.api.query.assert_not_awaited()
+
+
+async def test_scrub_control_button_ignores_an_earlier_poll_failure() -> None:
+    """Only this refresh decides; a failed poll before it does not block."""
+    button = _make_scrub_button(data=_TASK, key="scrub_pause", pool=_RUNNING)
+    button.coordinator.is_data_path_failing.return_value = True
+    button.coordinator.api.query.return_value = 123
+    await button.async_press()
+    button.coordinator.api.query.assert_awaited_once()
+
+
+async def test_scrub_control_button_tolerates_failed_refresh_after_action() -> None:
+    """TrueNAS took the action; a failed re-read afterwards is no failed press."""
+    button = _make_scrub_button(data=_TASK, key="scrub_pause", pool=_RUNNING)
+    button.coordinator.api.query.return_value = 123
+    button.coordinator.async_refresh_pools.side_effect = [None, TimeoutError]
+    await button.async_press()
+    button.coordinator.api.query.assert_awaited_once_with(
+        "pool.scrub.scrub", ["tank", "PAUSE"]
+    )
+
+
+async def test_scrub_control_buttons_do_not_overlap() -> None:
+    """Stop and resume pressed together run one after the other (#204)."""
+    stop = _make_scrub_button(data=_TASK, key="scrub_stop", pool=_PAUSED)
+    coordinator = stop.coordinator
+    resume = TrueNASPoolScrubButton(
+        coordinator, _SCRUB_DESCRIPTIONS["scrub_resume"], "t1"
+    )
+    pool = coordinator.data["pool"]["guid1"]
+
+    async def _send(_method: str, params: list) -> int:
+        # Yield while the action is in flight, then let TrueNAS apply it.
+        await asyncio.sleep(0)
+        if params[1] == "STOP":
+            pool.update(scrub_state="CANCELED", scrub_pause=None)
+        return 123
+
+    coordinator.api.query.side_effect = _send
+    results = await asyncio.gather(
+        stop.async_press(), resume.async_press(), return_exceptions=True
+    )
+    assert results[0] is None
+    # Resume saw the stopped scrub and did not start a new one.
+    assert isinstance(results[1], ServiceValidationError)
+    coordinator.api.query.assert_awaited_once_with("pool.scrub.scrub", ["tank", "STOP"])
 
 
 async def test_scrub_resume_checks_the_refreshed_state() -> None:

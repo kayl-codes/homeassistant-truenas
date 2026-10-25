@@ -2270,6 +2270,8 @@ async def test_init_seeds_connection_failing_from_hass_data() -> None:
     # A fresh coordinator starts with an unknown version, not a fake (0, 0).
     assert coord._version is None
     assert coord._version_parse_warned is False
+    # The scrub buttons serialize on it (#204); the test fake has its own.
+    assert isinstance(coord.scrub_lock, asyncio.Lock)
 
 
 async def test_initial_alerts_defaults_match_aiotruenas_keys() -> None:

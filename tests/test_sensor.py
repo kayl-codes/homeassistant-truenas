@@ -431,7 +431,11 @@ def test_pool_scrub_state_sensor_passes_truenas_state_through() -> None:
 def test_pool_scrub_progress_sensor_rounds_running_progress() -> None:
     sensor = _make_sensor(
         TrueNASPoolScrubProgressSensor,
-        {"scrub_state": "SCANNING", "scrub_percentage": 11.300981044769287},
+        {
+            "scan_function": "SCRUB",
+            "scrub_state": "SCANNING",
+            "scrub_percentage": 11.300981044769287,
+        },
         path="pool",
     )
     assert sensor.native_value == 11.3
@@ -440,7 +444,11 @@ def test_pool_scrub_progress_sensor_rounds_running_progress() -> None:
 def test_pool_scrub_progress_sensor_finished_reads_100() -> None:
     sensor = _make_sensor(
         TrueNASPoolScrubProgressSensor,
-        {"scrub_state": "FINISHED", "scrub_percentage": 99.95},
+        {
+            "scan_function": "SCRUB",
+            "scrub_state": "FINISHED",
+            "scrub_percentage": 99.95,
+        },
         path="pool",
     )
     assert sensor.native_value == 100.0

@@ -650,6 +650,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._service_push = _PushSourceState()
         self._pool_push = _PushSourceState()
+        # Serializes the scrub buttons' check-then-act (#204), see
+        # TrueNASPoolScrubButton.async_press.
+        self.scrub_lock = asyncio.Lock()
         self._cloudsync_push = _PushSourceState()
         self._replication_push = _PushSourceState()
         self._rsync_push = _PushSourceState()
