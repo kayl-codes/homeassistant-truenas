@@ -11,7 +11,7 @@ This is a Home Assistant **custom integration** (HACS-distributed) that monitors
 Linting/formatting and tooling mirror CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)):
 
 ```bash
-ruff check .            # lint (rules E, F, W, I, UP, ASYNC; py313, line-length 88)
+ruff check .            # lint (rules E, F, W, I, UP, ASYNC, FURB, PERF, PIE, PLE, PLW, RET, RSE; py313, line-length 88)
 ruff format --check .   # formatting check; drop --check to auto-format
 bandit -r custom_components/truenas_ce   # security scan (part of CI)
 pytest                  # unit tests (tests/); pyproject.toml sets pythonpath=["."] so `custom_components` resolves
