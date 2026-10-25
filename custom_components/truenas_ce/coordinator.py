@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     ERR_INVALID_KEY,
+    ISSUE_LEGACY_ENTRY_ORPHANED,
     ISSUE_MIGRATION_ROLLBACK,
     ISSUE_STATISTICS_ORPHANED,
     LEGACY_DOMAIN,
@@ -62,6 +63,7 @@ from .const import (
     MONITOR_GROUP_VMS,
 )
 from .event_push import SubscriptionCircuitBreaker, SubscriptionPushConsumer
+from .helper import async_legacy_code_installed
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addFilter(SECRET_SCRUB_FILTER)
@@ -632,6 +634,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Orphaned recorder statistic_ids (no live entity) detected each poll.
         self.orphaned_statistics: list[str] = []
+        # Whether the old "truenas" integration's files are installed; None
+        # until first checked (see _async_update_legacy_entry_issue).
+        self._legacy_code_installed: bool | None = None
 
         self._app_stats_event_name: str | None = None
         self._app_stats_sub_id: str | None = None
@@ -1100,8 +1105,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # button and Repairs issue track the current state automatically.
         await self.async_detect_orphaned_statistics()
 
-        # Withdraw a lingering rollback issue once the old integration is gone.
-        # (The issue is only ever raised on demand by the diagnostic button.)
+        # Offer to remove a legacy entry whose integration files are gone, then
+        # withdraw a lingering rollback issue once the old integration is gone.
+        # (The rollback issue is only ever raised on demand by the button.)
+        await self._async_update_legacy_entry_issue()
         self._clear_stale_migration_rollback_issue()
 
         return self.ds
@@ -1216,12 +1223,53 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the per-entry Repairs issue id for the migration rollback."""
         return f"{ISSUE_MIGRATION_ROLLBACK}_{self.config_entry.entry_id}"
 
-    def _rollback_possible(self) -> bool:
-        """Whether a rollback to the disabled legacy entry is still possible."""
-        if DOMAIN == LEGACY_DOMAIN:
+    def rollback_possible(self) -> bool:
+        """Whether a rollback to the disabled legacy entry is still possible.
+
+        Needs the legacy entry *and* the old integration's files: uninstalling it
+        only in HACS keeps the entry, but a rollback would then re-enable an entry
+        that can never load (#201). Until the first poll has checked the files
+        this falls back to the entry check; the rollback itself re-checks them.
+        """
+        if DOMAIN == LEGACY_DOMAIN or self._legacy_code_installed is False:
             return False
+        return self._legacy_entry() is not None
+
+    def _legacy_entry(self) -> ConfigEntry | None:
+        """Return the disabled legacy entry recorded by the migration, if any."""
         legacy_id = self.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID)
-        return bool(legacy_id and self.hass.config_entries.async_get_entry(legacy_id))
+        if not legacy_id:
+            return None
+        return self.hass.config_entries.async_get_entry(legacy_id)
+
+    def _legacy_entry_issue_id(self) -> str:
+        """Return the per-entry Repairs issue id for an orphaned legacy entry."""
+        return f"{ISSUE_LEGACY_ENTRY_ORPHANED}_{self.config_entry.entry_id}"
+
+    async def _async_update_legacy_entry_issue(self) -> None:
+        """Offer to remove the legacy entry once its integration files are gone.
+
+        Runs each poll, but checks the files only once per coordinator: Home
+        Assistant caches the custom-component list at startup, so removing or
+        re-adding the old integration takes a restart to show up anyway.
+        """
+        if DOMAIN == LEGACY_DOMAIN:
+            return
+        legacy_entry = self._legacy_entry()
+        if legacy_entry is not None and self._legacy_code_installed is None:
+            self._legacy_code_installed = await async_legacy_code_installed(self.hass)
+        if legacy_entry is None or self._legacy_code_installed:
+            ir.async_delete_issue(self.hass, DOMAIN, self._legacy_entry_issue_id())
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._legacy_entry_issue_id(),
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_LEGACY_ENTRY_ORPHANED,
+            translation_placeholders={"title": legacy_entry.title},
+        )
 
     def raise_migration_rollback_issue(self) -> None:
         """Raise the rollback confirm issue on demand (from the diagnostic button).
@@ -1231,7 +1279,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         re-pressing after a dismiss simply re-opens it. No-op while a rollback is
         not possible.
         """
-        if not self._rollback_possible():
+        if not self.rollback_possible():
             return
         count = len(self.config_entry.data.get(MIGRATION_RECORDS, []))
         ir.async_create_issue(
@@ -1253,7 +1301,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if DOMAIN == LEGACY_DOMAIN:
             return
-        if not self._rollback_possible():
+        if not self.rollback_possible():
             ir.async_delete_issue(
                 self.hass, DOMAIN, self._migration_rollback_issue_id()
             )

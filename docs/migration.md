@@ -128,6 +128,14 @@ History is preserved in both directions.
 After you're satisfied, you can **delete the old (disabled) TrueNAS integration** to
 complete the move. There's no rush — leaving it disabled does no harm.
 
+Delete it in Home Assistant, **not only in HACS**: go to **Settings → Devices & Services**,
+show the disabled integrations, open the old **TrueNAS** entry and delete it. After that
+you can also uninstall the old integration in HACS. Uninstalling it in HACS alone removes
+only its files: the disabled entry stays behind, and Home Assistant logs
+`Unable to get manifest for integration truenas`. TrueNAS CE detects this after a restart
+and raises a Repairs issue (**Old TrueNAS integration left behind**) that removes the
+leftover entry for you.
+
 ---
 
 ## Troubleshooting
@@ -145,6 +153,11 @@ complete the move. There's no rush — leaving it disabled does no harm.
 - **I removed the old integration too early** — the automatic rollback is no longer
   available. Your TrueNAS CE entities and history are intact; only the one-click revert is
   gone.
+- **Log shows `Unable to get manifest for integration truenas`** — the old integration was
+  uninstalled in HACS, but its disabled entry is still configured. Fix the **Old TrueNAS
+  integration left behind** repair, or delete the old **TrueNAS** entry under
+  Settings → Devices & Services yourself. Your TrueNAS CE entities and history are not
+  affected. (#201)
 
 ---
 

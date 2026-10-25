@@ -5,8 +5,9 @@ from __future__ import annotations
 from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, UnknownEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
@@ -20,12 +21,16 @@ from .api import SECRET_SCRUB_FILTER
 from .const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
     DOMAIN,
+    ISSUE_LEGACY_ENTRY_ORPHANED,
     ISSUE_MIGRATION_ROLLBACK,
     ISSUE_MIGRATION_ROLLBACK_FAILED,
     ISSUE_STATISTICS_ORPHANED,
+    LEGACY_DOMAIN,
+    MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
 )
 from .coordinator import get_truenas_coordinator
+from .helper import async_legacy_code_installed
 from .migration import async_rollback_to_legacy
 
 _LOGGER = getLogger(__name__)
@@ -35,6 +40,9 @@ _LOGGER.addFilter(SECRET_SCRUB_FILTER)
 # leave dozens behind; the remainder is summarised so the dialog stays readable
 # (the full list goes to the debug log during detection).
 MAX_LISTED_ORPHANS = 20
+
+# Rollback flow abort reason: the old integration's files are gone (#201).
+ABORT_LEGACY_CODE_MISSING = "legacy_code_missing"
 
 
 def _format_statistic_ids(statistic_ids: list[str]) -> str:
@@ -177,6 +185,12 @@ class MigrationRollbackRepairFlow(RepairsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> RepairsFlowResult:
         """Hand the adopted entities (and history) back to the legacy entry."""
+        issue_id = f"{ISSUE_MIGRATION_ROLLBACK}_{self._entry_id}"
+        if not await async_legacy_code_installed(self.hass):
+            # Uninstalled only in HACS (#201): a rollback would re-enable an
+            # entry that can never load, so say why instead of trying.
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return self.async_abort(reason=ABORT_LEGACY_CODE_MISSING)
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is not None:
             # Scheduled, not awaited: the rollback removes this config entry,
@@ -184,9 +198,7 @@ class MigrationRollbackRepairFlow(RepairsFlow):
             self.hass.async_create_task(
                 _async_rollback_and_log_errors(self.hass, entry)
             )
-        ir.async_delete_issue(
-            self.hass, DOMAIN, f"{ISSUE_MIGRATION_ROLLBACK}_{self._entry_id}"
-        )
+        ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         return self.async_create_entry(title="", data={})
 
     async def async_step_ignore(
@@ -199,6 +211,61 @@ class MigrationRollbackRepairFlow(RepairsFlow):
         """
         ir.async_delete_issue(
             self.hass, DOMAIN, f"{ISSUE_MIGRATION_ROLLBACK}_{self._entry_id}"
+        )
+        return self.async_create_entry(title="", data={})
+
+
+class LegacyEntryOrphanedRepairFlow(RepairsFlow):
+    """Remove the disabled legacy entry whose integration files are gone (#201).
+
+    Uninstalling the old integration only in HACS leaves its config entry
+    behind, and Home Assistant then logs "Unable to get manifest for
+    integration truenas". Removing the entry is what the migration guide asks
+    for anyway; a rollback is no longer possible without the files.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        """Remember which config entry this issue belongs to."""
+        self._entry_id = entry_id
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> RepairsFlowResult:
+        """Go straight to the confirmation."""
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> RepairsFlowResult:
+        """Confirm, then remove the legacy entry."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        legacy_id = entry.data.get(MIGRATION_LEGACY_ENTRY_ID) if entry else None
+        legacy_entry = (
+            self.hass.config_entries.async_get_entry(legacy_id) if legacy_id else None
+        )
+        if user_input is None:
+            return self.async_show_form(
+                step_id="confirm",
+                data_schema=vol.Schema({}),
+                # Taken from the entry itself, not the issue: the issue may be
+                # gone by now, and {title} must never render unfilled.
+                description_placeholders={
+                    "title": legacy_entry.title if legacy_entry else LEGACY_DOMAIN
+                },
+            )
+
+        if legacy_entry is None:
+            _LOGGER.debug("Legacy TrueNAS entry %s is already gone", legacy_id)
+        else:
+            try:
+                # Another entry than this flow's own, so awaiting it is safe.
+                await self.hass.config_entries.async_remove(legacy_entry.entry_id)
+            except UnknownEntry:
+                _LOGGER.debug("Legacy TrueNAS entry %s already removed", legacy_id)
+            else:
+                _LOGGER.info("Removed the orphaned legacy TrueNAS entry %s", legacy_id)
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_LEGACY_ENTRY_ORPHANED}_{self._entry_id}"
         )
         return self.async_create_entry(title="", data={})
 
@@ -216,5 +283,8 @@ async def async_create_fix_flow(
     if issue_id.startswith(f"{ISSUE_MIGRATION_ROLLBACK}_"):
         entry_id = issue_id.removeprefix(f"{ISSUE_MIGRATION_ROLLBACK}_")
         return MigrationRollbackRepairFlow(entry_id)
+    if issue_id.startswith(f"{ISSUE_LEGACY_ENTRY_ORPHANED}_"):
+        entry_id = issue_id.removeprefix(f"{ISSUE_LEGACY_ENTRY_ORPHANED}_")
+        return LegacyEntryOrphanedRepairFlow(entry_id)
     entry_id = issue_id.removeprefix(f"{ISSUE_STATISTICS_ORPHANED}_")
     return StatisticsCleanupRepairFlow(entry_id)

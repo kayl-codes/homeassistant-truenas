@@ -149,12 +149,26 @@
                             "ignore": "Conservar TrueNAS CE (descartar)"
                         }
                     }
+                },
+                "abort": {
+                    "legacy_code_missing": "The old TrueNAS integration is no longer installed (it was probably uninstalled in HACS), so a rollback is not possible. TrueNAS CE stays in place. To roll back anyway, reinstall the old integration in HACS and restart Home Assistant; otherwise fix the \"Old TrueNAS integration left behind\" repair to remove its leftover entry."
                 }
             }
         },
         "migration_rollback_failed": {
             "title": "TrueNAS CE migration rollback failed",
             "description": "Rolling back the TrueNAS CE migration for {name} failed partway through. The integration may be left in an inconsistent state — check the Home Assistant logs for details, then try pressing the rollback button again or reinstalling the integration."
+        },
+        "legacy_entry_orphaned": {
+            "title": "Old TrueNAS integration left behind",
+            "fix_flow": {
+                "step": {
+                    "confirm": {
+                        "title": "Remove the old TrueNAS integration entry",
+                        "description": "The previous TrueNAS integration ({title}) is still configured — disabled since the TrueNAS CE migration — but its files are no longer installed, for example because it was uninstalled in HACS. Home Assistant therefore logs \"Unable to get manifest for integration truenas\".\n\nSubmit to remove the leftover entry. Your TrueNAS CE entities and their history are not affected. Rolling back the migration is no longer possible without the old integration's files."
+                    }
+                }
+            }
         }
     },
     "exceptions": {

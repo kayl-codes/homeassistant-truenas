@@ -3,21 +3,51 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import re
 from typing import TYPE_CHECKING
 
 from homeassistant.const import UnitOfInformation
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.loader import IntegrationNotFound, async_get_integration
 
-from .const import DOMAIN
+from .api import SECRET_SCRUB_FILTER
+from .const import DOMAIN, LEGACY_DOMAIN
 
 if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
     from .coordinator import TrueNASCoordinator
+
+_LOGGER = logging.getLogger(__name__)
+_LOGGER.addFilter(SECRET_SCRUB_FILTER)
 
 # Strip a leading URL scheme (e.g. "https://" or "http://") from the host.
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 # Everything from the first path/query/fragment delimiter is not part of host.
 _HOST_TAIL_RE = re.compile(r"[/?#]")
+
+
+# ---------------------------
+#   async_legacy_code_installed
+# ---------------------------
+async def async_legacy_code_installed(hass: HomeAssistant) -> bool:
+    """Whether the old ``truenas`` integration's files are still installed.
+
+    Uninstalling it in HACS deletes only ``custom_components/truenas/``; the
+    disabled legacy config entry stays behind, and Home Assistant then logs
+    "Unable to get manifest for integration truenas" (#201). Without the files a
+    rollback cannot work either: the re-enabled entry would never load.
+
+    Lives here so both ``coordinator`` and ``migration`` can use it without an
+    import cycle (``migration`` -> ``entity`` -> ``coordinator``).
+    """
+    try:
+        await async_get_integration(hass, LEGACY_DOMAIN)
+    except IntegrationNotFound:
+        _LOGGER.debug("The old '%s' integration is not installed", LEGACY_DOMAIN)
+        return False
+    return True
 
 
 # ---------------------------

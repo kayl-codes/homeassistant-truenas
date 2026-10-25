@@ -21,6 +21,11 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   answers. For networks where the announcement does not reach Home Assistant (e.g. VLANs), the new
   [wiki page](https://github.com/kayl-codes/homeassistant-truenas/wiki/On-Demand-NAS) shows an
   automation that does the same. Thanks @V4ler1an for the suggestion! (#196)
+- **"Unable to get manifest for integration truenas" after uninstalling the old integration in
+  HACS.** Uninstalling it in HACS removes only its files; its disabled entry stayed behind. A
+  Repairs issue now offers to remove that entry, and the migration guide explains where to delete
+  it. The rollback button also stays unavailable once the old integration's files are gone,
+  because a rollback could no longer work then. Thanks @bluemonkeysuit07 for the report! (#201)
 - **README fixes.** Actions are prefixed with `truenas_ce.`, not `truenas.`, and debug logging is
   enabled for `custom_components.truenas_ce`.
 - **"Config flow could not be loaded" (504) when adding the integration.** Before the setup form

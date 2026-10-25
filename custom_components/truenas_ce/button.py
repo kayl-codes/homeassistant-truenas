@@ -194,7 +194,7 @@ class TrueNASMigrationRollbackButton(
     Repairs issue (a confirm dialog), so an accidental press can never tear the
     integration down — the actual rollback happens only after the user confirms
     in Repairs. Available, and the issue re-raisable, only while the disabled
-    legacy "truenas" entry still exists.
+    legacy "truenas" entry and the old integration's files still exist.
     """
 
     _attr_has_entity_name = True
@@ -212,9 +212,8 @@ class TrueNASMigrationRollbackButton(
 
     @property
     def available(self) -> bool:
-        """Available only while the legacy entry to roll back to still exists."""
-        legacy_id = self.coordinator.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID)
-        return bool(legacy_id and self.hass.config_entries.async_get_entry(legacy_id))
+        """Available only while a rollback to the legacy entry is still possible."""
+        return self.coordinator.rollback_possible()
 
     async def async_press(self) -> None:
         """Open the rollback confirmation by raising its Repairs issue."""

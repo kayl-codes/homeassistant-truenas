@@ -49,7 +49,7 @@ from .const import (
     TO_REDACT,
 )
 from .entity import resolve_entry_identity
-from .helper import sanitize_host
+from .helper import async_legacy_code_installed, sanitize_host
 
 _LOGGER = getLogger(__name__)
 _LOGGER.addFilter(SECRET_SCRUB_FILTER)
@@ -665,6 +665,14 @@ async def async_rollback_to_legacy(
     if not legacy_entry_id:
         return False
     if hass.config_entries.async_get_entry(legacy_entry_id) is None:
+        return False
+    if not await async_legacy_code_installed(hass):
+        # Removing this entry now would leave no working integration at all.
+        _LOGGER.warning(
+            "Not rolling back '%s': the old '%s' integration is no longer installed",
+            DOMAIN,
+            LEGACY_DOMAIN,
+        )
         return False
 
     records = config_entry.data.get(MIGRATION_RECORDS, [])
