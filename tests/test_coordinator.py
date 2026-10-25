@@ -379,6 +379,9 @@ def test_rollback_possible_false_when_legacy_code_missing() -> None:
 # ---------------------------
 #   _async_update_legacy_entry_issue (#201)
 # ---------------------------
+_OLD_NAS = SimpleNamespace(entry_id="legacy-1", title="Old NAS")
+
+
 def _legacy_issue_coordinator(legacy_entry: object | None) -> TrueNASCoordinator:
     coord = _bare_coordinator()
     coord.config_entry = MagicMock()
@@ -390,7 +393,7 @@ def _legacy_issue_coordinator(legacy_entry: object | None) -> TrueNASCoordinator
 
 
 async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
-    coord = _legacy_issue_coordinator(SimpleNamespace(title="Old NAS"))
+    coord = _legacy_issue_coordinator(_OLD_NAS)
     code_check = AsyncMock(return_value=False)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
@@ -408,12 +411,13 @@ async def test_legacy_entry_issue_raised_when_legacy_code_missing() -> None:
     assert kwargs["is_fixable"] is True
     assert kwargs["translation_key"] == "legacy_entry_orphaned"
     assert kwargs["translation_placeholders"] == {"title": "Old NAS"}
+    assert kwargs["data"] == {MIGRATION_LEGACY_ENTRY_ID: "legacy-1"}
     delete_mock.assert_not_called()
     assert coord.rollback_possible() is False
 
 
 async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
-    coord = _legacy_issue_coordinator(SimpleNamespace(title="Old NAS"))
+    coord = _legacy_issue_coordinator(_OLD_NAS)
     code_check = AsyncMock(return_value=True)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
@@ -433,7 +437,7 @@ async def test_legacy_entry_issue_cleared_when_legacy_code_installed() -> None:
 
 async def test_legacy_entry_issue_withdrawn_after_entry_removed() -> None:
     """Fixed via Repairs: the next poll withdraws the issue without re-checking."""
-    coord = _legacy_issue_coordinator(SimpleNamespace(title="Old NAS"))
+    coord = _legacy_issue_coordinator(_OLD_NAS)
     code_check = AsyncMock(return_value=False)
     with (
         patch.object(coordinator_module, "async_legacy_code_installed", code_check),
@@ -453,7 +457,7 @@ async def test_legacy_entry_issue_withdrawn_after_entry_removed() -> None:
 
 def test_rollback_possible_before_first_file_check_follows_entry() -> None:
     """Until the first poll checked the files, only the entry decides."""
-    coord = _legacy_issue_coordinator(SimpleNamespace(title="Old NAS"))
+    coord = _legacy_issue_coordinator(_OLD_NAS)
     assert coord._legacy_code_installed is None
     assert coord.rollback_possible() is True
     coord._legacy_code_installed = True
@@ -480,7 +484,7 @@ async def test_legacy_entry_issue_inert_for_legacy_domain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(coordinator_module, "DOMAIN", LEGACY_DOMAIN)
-    coord = _legacy_issue_coordinator(SimpleNamespace(title="Old NAS"))
+    coord = _legacy_issue_coordinator(_OLD_NAS)
     with (
         patch.object(coordinator_module.ir, "async_create_issue") as create_mock,
         patch.object(coordinator_module.ir, "async_delete_issue") as delete_mock,
@@ -2627,6 +2631,8 @@ async def test_async_update_data_updates_legacy_issue_before_rollback_clear() ->
     await coord._async_update_data()
 
     assert order.mock_calls == [call.legacy(), call.clear()]
+    # Call order alone would pass for a never-awaited coroutine too.
+    order.legacy.assert_awaited_once()
 
 
 async def test_async_update_data_survives_get_app_stats_failure() -> None:

@@ -224,9 +224,22 @@ class LegacyEntryOrphanedRepairFlow(RepairsFlow):
     for anyway; a rollback is no longer possible without the files.
     """
 
-    def __init__(self, entry_id: str) -> None:
-        """Remember which config entry this issue belongs to."""
+    def __init__(self, entry_id: str, legacy_id: str | None = None) -> None:
+        """Remember the issue's config entry and the legacy entry id it names."""
         self._entry_id = entry_id
+        self._legacy_id = legacy_id
+
+    def _resolve_legacy_id(self) -> str | None:
+        """Prefer the id stored on the issue; fall back to this entry's data.
+
+        The issue's copy still works when the TrueNAS CE entry was removed after
+        the issue was raised (its data is gone with it then).
+        """
+        if self._legacy_id:
+            return self._legacy_id
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        legacy_id = entry.data.get(MIGRATION_LEGACY_ENTRY_ID) if entry else None
+        return legacy_id if isinstance(legacy_id, str) else None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -238,8 +251,7 @@ class LegacyEntryOrphanedRepairFlow(RepairsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> RepairsFlowResult:
         """Confirm, then remove the legacy entry."""
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        legacy_id = entry.data.get(MIGRATION_LEGACY_ENTRY_ID) if entry else None
+        legacy_id = self._resolve_legacy_id()
         legacy_entry = (
             self.hass.config_entries.async_get_entry(legacy_id) if legacy_id else None
         )
@@ -285,6 +297,9 @@ async def async_create_fix_flow(
         return MigrationRollbackRepairFlow(entry_id)
     if issue_id.startswith(f"{ISSUE_LEGACY_ENTRY_ORPHANED}_"):
         entry_id = issue_id.removeprefix(f"{ISSUE_LEGACY_ENTRY_ORPHANED}_")
-        return LegacyEntryOrphanedRepairFlow(entry_id)
+        legacy_id = (data or {}).get(MIGRATION_LEGACY_ENTRY_ID)
+        return LegacyEntryOrphanedRepairFlow(
+            entry_id, legacy_id if isinstance(legacy_id, str) else None
+        )
     entry_id = issue_id.removeprefix(f"{ISSUE_STATISTICS_ORPHANED}_")
     return StatisticsCleanupRepairFlow(entry_id)

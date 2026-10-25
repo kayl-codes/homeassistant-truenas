@@ -1237,10 +1237,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _legacy_entry(self) -> ConfigEntry | None:
         """Return the disabled legacy entry recorded by the migration, if any."""
-        legacy_id = self.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID)
-        if not legacy_id:
-            return None
-        return self.hass.config_entries.async_get_entry(legacy_id)
+        if legacy_id := self.config_entry.data.get(MIGRATION_LEGACY_ENTRY_ID):
+            return self.hass.config_entries.async_get_entry(legacy_id)
+        return None
 
     def _legacy_entry_issue_id(self) -> str:
         """Return the per-entry Repairs issue id for an orphaned legacy entry."""
@@ -1269,6 +1268,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             severity=ir.IssueSeverity.WARNING,
             translation_key=ISSUE_LEGACY_ENTRY_ORPHANED,
             translation_placeholders={"title": legacy_entry.title},
+            # Kept on the issue so the repair still finds the legacy entry if
+            # this TrueNAS CE entry is removed before the repair is submitted.
+            data={MIGRATION_LEGACY_ENTRY_ID: legacy_entry.entry_id},
         )
 
     def raise_migration_rollback_issue(self) -> None:
