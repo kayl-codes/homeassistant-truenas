@@ -468,7 +468,7 @@ failure mode visible instead of introducing a new one.
 
 ### A NAS that is not always on
 If your TrueNAS is only powered up when needed (for example for a nightly backup run), the
-integration reconnects as soon as the NAS announces itself on the network (since 2.12.1). If
+integration reconnects as soon as the NAS announces itself on the network (since 2.13.0). If
 Home Assistant cannot see those announcements, for example across VLANs, a small automation does
 the same. Both are explained, with ready-to-use automations, in the wiki:
 [A NAS That Is Not Always On](https://github.com/kayl-codes/homeassistant-truenas/wiki/On-Demand-NAS).
@@ -501,8 +501,10 @@ After setup you can fine-tune the integration via **Settings → Devices & Servi
 * **Run buttons don't show a "running" spinner state.** The Cron Job, Pool Scrub and Snapshot Task
   **Run** buttons trigger their action immediately, but a Home Assistant `ButtonEntity` has no
   persistent "active" state of its own — this is a standard HA UX limitation, not a bug. The
-  corresponding sensor (e.g. scrub state, snapshot task state) does reflect an optimistic `RUNNING`
-  state right away and re-syncs to the real TrueNAS state on the next poll.
+  sensors show the change right away: the **Scrub state** sensor reads the pool again
+  after every scrub button press and shows the real TrueNAS state, while the Snapshot Task sensor
+  shows an optimistic `RUNNING` state that re-syncs to TrueNAS on the next poll. Cron Jobs have no
+  state sensor.
 * **A background job that starts and finishes between two polls may only be sampled in its final
   state.** Since v2.8.0, VM/Container restarts and Replication/Rsync task runs are also pushed via
   TrueNAS event subscriptions (see [Live Push Updates](#live-push-updates)) and usually caught live,
