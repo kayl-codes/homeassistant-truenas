@@ -16,9 +16,11 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ### Added
 - **Pause, resume and stop a pool scrub.** Each pool's scrub task now has **Pause scrub**,
-  **Resume scrub** and **Stop scrub** buttons next to **Run scrub**. They only act when the scrub
-  is in a matching state (for example, Resume needs a paused scrub); otherwise Home Assistant shows
-  an error and nothing is sent to TrueNAS. Thanks @V4ler1an for the suggestion! (#204, #209)
+  **Resume scrub** and **Stop scrub** buttons next to **Run scrub**. They read the pool again first
+  and only act when the scrub is in a matching state (for example, Resume needs a paused scrub);
+  otherwise Home Assistant shows an error and nothing is sent to TrueNAS. A change made elsewhere,
+  for example in the TrueNAS web UI, in the moment between that check and the action cannot be
+  caught. Thanks @V4ler1an for the suggestion! (#204, #209)
 - **Scrub progress sensor and a `PAUSED` scrub state.** A new **Scrub progress** sensor shows the
   scrub's percentage (100 % once finished, the last value for a canceled scrub). The **Scrub state**
   sensor shows `PAUSED` for a paused scrub; TrueNAS itself keeps reporting `SCANNING`. (#204, #209)

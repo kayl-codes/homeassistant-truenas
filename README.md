@@ -71,8 +71,11 @@ Each pool also exposes **scrub controls** (start, pause, resume, stop) as button
 and **scrub diagnostics** (state, progress, start/end timestamps, errors) as sensors.
 
 The scrub buttons belong to the pool's scrub task, so a pool without one gets none. **Pause**,
-**Resume** and **Stop** only act when the scrub is in a matching state (for example, Resume needs
-a paused scrub); otherwise Home Assistant shows an error and nothing is sent to TrueNAS. The
+**Resume** and **Stop** read the pool again first and only act when the scrub is in a matching
+state (for example, Resume needs a paused scrub); otherwise Home Assistant shows an error and
+nothing is sent to TrueNAS. A change made elsewhere (for example in the TrueNAS web UI) between
+that check and the action cannot be caught: if the scrub was stopped there in that moment, Resume
+starts a new scrub. The
 **Scrub state** sensor shows `PAUSED` for a paused scrub (TrueNAS itself keeps reporting
 `SCANNING`), and **Scrub progress** shows the percentage, 100 % once finished and the last value
 for a canceled scrub.
