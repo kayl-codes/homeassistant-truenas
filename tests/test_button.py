@@ -247,6 +247,8 @@ async def test_scrub_run_button_tolerates_failed_refresh_after_start() -> None:
         "pool.scrub.scrub", ["tank", "START"]
     )
     button.coordinator.set_optimistic_running.assert_called_once_with("scrub", 5)
+    # The re-read ran and failed; the press still succeeded.
+    button.coordinator.async_refresh_pools.assert_awaited_once()
 
 
 async def test_scrub_control_button_tolerates_stale_pools_after_action(
@@ -271,16 +273,23 @@ async def test_scrub_control_button_tolerates_stale_pools_after_action(
 async def test_scrub_lock_is_released_after_a_failed_press() -> None:
     """A press that fails must not block the next one."""
     button = _make_scrub_button(data=_TASK, key="scrub_stop", pool=_RUNNING)
-    query = button.coordinator.api.query
-    query.return_value = None  # TrueNAS refuses the first STOP
+    lock = button.coordinator.scrub_lock
+    held: list[bool] = []
+    results = iter([None, 123])  # TrueNAS refuses the first STOP
+
+    async def _send(_method: str, _params: list) -> int | None:
+        held.append(lock.locked())
+        return next(results)
+
+    button.coordinator.api.query.side_effect = _send
     with pytest.raises(HomeAssistantError) as exc_info:
         await button.async_press()
     assert exc_info.value.translation_key == "scrub_failed"
-    assert not button.coordinator.scrub_lock.locked()
-    query.return_value = 123
+    assert not lock.locked()
     async with asyncio.timeout(1):
         await button.async_press()
-    assert query.await_count == 2
+    # Both actions were sent while holding the lock.
+    assert held == [True, True]
 
 
 async def test_scrub_control_buttons_do_not_overlap() -> None:
