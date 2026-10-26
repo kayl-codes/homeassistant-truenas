@@ -266,6 +266,9 @@ async def test_scrub_control_button_tolerates_stale_pools_after_action(
 
     coordinator.async_refresh_pools.side_effect = _stale_once_sent
     await button.async_press()
+    coordinator.api.query.assert_awaited_once_with(
+        "pool.scrub.scrub", ["tank", "PAUSE"]
+    )
     assert coordinator.async_refresh_pools.await_count == 2
     assert "could not re-read the pools" in caplog.text
 
