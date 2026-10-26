@@ -12,9 +12,29 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
 
-## [Unreleased]
+## [2.13.0] — Scrub Control, On-Demand NAS Reconnect & Setup Fixes
+
+### Added
+- **Pause, resume and stop a pool scrub.** Each pool's scrub task now has **Pause scrub**,
+  **Resume scrub** and **Stop scrub** buttons next to **Run scrub**. They read the pool again first
+  and only act when the scrub is in a matching state (for example, Resume needs a paused scrub);
+  otherwise Home Assistant shows an error and nothing is sent to TrueNAS. A change made elsewhere,
+  for example in the TrueNAS web UI, in the moment between that check and the action cannot be
+  caught. Thanks @V4ler1an for the suggestion! (#204, #209)
+- **Scrub progress sensor and a `PAUSED` scrub state.** A new **Scrub progress** sensor shows the
+  scrub's percentage (100 % once finished, the last value for a canceled scrub). The **Scrub state**
+  sensor shows `PAUSED` for a paused scrub; TrueNAS itself keeps reporting `SCANNING`. (#204, #209)
+
+### Changed
+- Requires `aiotruenas` 1.7.0 or later (installed automatically), which reports whether a scrub is
+  paused and how far it has progressed. (#209)
+- After a scrub button press, the pool data is read again right away, so the **Scrub state** sensor
+  shows the new state without waiting for the next poll. (#209)
 
 ### Fixed
+- **The Run scrub button did nothing when the scrub schedule was disabled.** The button skipped
+  disabled scrub tasks. It now starts a scrub on the pool regardless of the schedule. Thanks
+  @V4ler1an for the report! (#203, #208)
 - **A NAS that was offline when Home Assistant started took up to 10 minutes to show up.** Home
   Assistant retries a failed setup with a growing delay of up to 10 minutes. The integration now
   retries right away when the NAS announces itself on the network (zeroconf), once its API
