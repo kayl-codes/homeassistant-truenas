@@ -1101,10 +1101,14 @@ async def async_add_entities(
             )
             if new_entities:
                 _LOGGER.debug("Adding %d new TrueNAS entities", len(new_entities))
-                await platform.async_add_entities(new_entities)
-                await remove_entities_added_during_unload(
-                    config_entry, coordinator, new_entities
-                )
+                try:
+                    await platform.async_add_entities(new_entities)
+                finally:
+                    # Also after a cancelled add: entities attached before it
+                    # stopped would otherwise stay behind.
+                    await remove_entities_added_during_unload(
+                        config_entry, coordinator, new_entities
+                    )
 
     await async_update_controller(this_coordinator)
 

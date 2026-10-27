@@ -118,9 +118,14 @@ async def async_setup_entry(
     async def _async_add_app_stats_sensors(
         entities: list[TrueNASAppStatsSensor],
     ) -> None:
-        await platform.async_add_entities(entities)
-        # The unload may begin while the batch is being added (#212).
-        await remove_entities_added_during_unload(config_entry, coordinator, entities)
+        try:
+            await platform.async_add_entities(entities)
+        finally:
+            # The unload may begin while the batch is being added (#212), also
+            # when the add is cancelled after attaching part of the batch.
+            await remove_entities_added_during_unload(
+                config_entry, coordinator, entities
+            )
 
     pending_adds: set[asyncio.Task[None]] = set()
 
