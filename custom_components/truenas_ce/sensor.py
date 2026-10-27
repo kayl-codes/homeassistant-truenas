@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from logging import getLogger
@@ -39,6 +39,7 @@ from .entity import (
     async_add_entities,
     entry_accepts_entities,
     format_unique_id,
+    remove_entities_added_during_unload,
     resolve_entry_identity,
 )
 from .helper import (
@@ -110,11 +111,37 @@ async def async_setup_entry(
             return
         # A refresh during the unload would re-add the sensors to the already
         # reset platform (#212).
-        if not entry_accepts_entities(config_entry):
+        if not entry_accepts_entities(config_entry, coordinator):
             return
-        _discover_app_stats(platform, coordinator, _async_add_entities)
+        _discover_app_stats(platform, coordinator, _add_app_stats_sensors)
+
+    async def _async_add_app_stats_sensors(
+        entities: list[TrueNASAppStatsSensor],
+    ) -> None:
+        await platform.async_add_entities(entities)
+        # The unload may begin while the batch is being added (#212).
+        await remove_entities_added_during_unload(config_entry, coordinator, entities)
+
+    pending_adds: set[asyncio.Task[None]] = set()
+
+    @callback
+    def _add_app_stats_sensors(entities: list[TrueNASAppStatsSensor]) -> None:
+        # Scheduled like Home Assistant's own add callback, but awaits the add so
+        # a batch that completes after the platform reset can be removed again.
+        task = config_entry.async_create_task(
+            hass,
+            _async_add_app_stats_sensors(entities),
+            "truenas_ce add app-stats sensors",
+            eager_start=True,
+        )
+        pending_adds.add(task)
+        task.add_done_callback(pending_adds.discard)
 
     _discover_app_stats_sensors()
+    # Like Home Assistant's own add callback, the platform setup waits for the
+    # initial batch.
+    if pending_adds:
+        await asyncio.gather(*pending_adds)
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass, SIGNAL_UPDATE_SENSORS, _discover_app_stats_sensors
@@ -142,7 +169,7 @@ async def async_setup_entry(
 def _discover_app_stats(
     platform: Any,
     coord: TrueNASCoordinator,
-    add_entities: AddEntitiesCallback,
+    add_entities: Callable[[list[TrueNASAppStatsSensor]], None],
 ) -> None:
     """Discover dynamic app stats sensors for the current coordinator state.
 

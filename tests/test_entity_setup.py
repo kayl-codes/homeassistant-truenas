@@ -1102,10 +1102,15 @@ async def test_refresh_during_unload_leaves_no_stale_entities(
     )
 
 
+@pytest.mark.parametrize("next_setup_started", [False, True])
 async def test_batch_added_while_unload_begins_is_removed(
-    hass: HomeAssistant,
+    hass: HomeAssistant, next_setup_started: bool
 ) -> None:
-    """A batch whose add finishes after the unload began is removed again (#212)."""
+    """A batch whose add finishes after the unload began is removed again (#212).
+
+    With ``next_setup_started`` the unload has already finished and the next
+    setup stored a new coordinator, so the entry state alone looks live again.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -1134,25 +1139,97 @@ async def test_batch_added_while_unload_begins_is_removed(
         # Drop one entity so the next refresh re-creates it in a new batch.
         await entity.async_remove()
         original_add = platform.async_add_entities
+        coordinator = entry.runtime_data
         added_ids: list[str] = []
 
         async def _add_then_begin_unload(*args: Any, **kwargs: Any) -> None:
             await original_add(*args, **kwargs)
             added_ids.extend(entity.entity_id for entity in args[0])
-            entry.mock_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS)
+            if next_setup_started:
+                entry.runtime_data = SimpleNamespace()
+            else:
+                entry.mock_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS)
 
         try:
             with patch.object(
                 platform, "async_add_entities", side_effect=_add_then_begin_unload
             ):
-                entry.runtime_data.async_update_listeners()
+                coordinator.async_update_listeners()
                 await hass.async_block_till_done()
         finally:
+            entry.runtime_data = coordinator
             entry.mock_state(hass, ConfigEntryState.LOADED)
 
     # The entity was re-added in a batch of its own and then removed again.
     assert entity_id in added_ids
     assert entity_id not in platform.entities
+
+
+@pytest.mark.parametrize("phase", ["loaded", "unloading", "next_setup_started"])
+async def test_app_stats_batch_added_while_unload_begins_is_removed(
+    hass: HomeAssistant, phase: str
+) -> None:
+    """App-stats sensors whose add finishes after the unload began are removed (#212).
+
+    They are added from a dispatcher callback rather than from
+    ``entity.async_add_entities``, so they need the same cleanup after the add.
+    In the ``loaded`` phase nothing happens during the add and they stay.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "TrueNAS",
+            CONF_HOST: "truenas.local",
+            CONF_API_KEY: "test-key",
+            CONF_VERIFY_SSL: False,
+        },
+        options={CONF_MONITORED_GROUPS: []},
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.truenas_ce.coordinator.TrueNASAPI",
+        return_value=_fake_api(),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = entry.runtime_data
+        platform = next(
+            p for p in ep.async_get_platforms(hass, DOMAIN) if p.domain == "sensor"
+        )
+        original_add = platform.async_add_entities
+        added: list[tuple[str, str | None]] = []
+
+        async def _add_then_change_phase(*args: Any, **kwargs: Any) -> None:
+            await original_add(*args, **kwargs)
+            # The add itself succeeded before the phase changes.
+            assert all(entity.entity_id in platform.entities for entity in args[0])
+            added.extend((entity.entity_id, entity.unique_id) for entity in args[0])
+            if phase == "unloading":
+                entry.mock_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS)
+            elif phase == "next_setup_started":
+                entry.runtime_data = SimpleNamespace()
+
+        try:
+            with (
+                # A newly known app makes the next refresh discover its sensors.
+                patch.object(coordinator, "get_known_app_names", return_value={"plex"}),
+                patch.object(
+                    platform, "async_add_entities", side_effect=_add_then_change_phase
+                ),
+            ):
+                coordinator.async_update_listeners()
+                await hass.async_block_till_done()
+        finally:
+            entry.runtime_data = coordinator
+            entry.mock_state(hass, ConfigEntryState.LOADED)
+
+    assert added
+    assert all(unique_id and "plex" in unique_id for _, unique_id in added)
+    added_ids = {entity_id for entity_id, _ in added}
+    expected = added_ids if phase == "loaded" else set()
+    assert added_ids & set(platform.entities) == expected
 
 
 def _loaded_entity_ids(hass: HomeAssistant) -> set[str]:
