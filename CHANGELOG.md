@@ -12,6 +12,18 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
 
+## [Unreleased]
+
+### Fixed
+- **Entities stayed unavailable after reloading the integration.** A poll result or a push event
+  that arrived while the integration was unloading added the entities again to the platforms that
+  had just been reset. These leftover entities stayed `unavailable` and kept their entity IDs, so
+  after the reload the log showed "Platform truenas_ce does not generate unique IDs" and the real
+  entities were not added until Home Assistant restarted. A reload while the NAS itself was still
+  starting up hit this easily. Entities are no longer added while the integration unloads, and an
+  add that was already running is undone. Existing leftover entities disappear with one Home
+  Assistant restart. Thanks @V4ler1an for the report! (#212, #213)
+
 ## [2.13.0] — Scrub Control, On-Demand NAS Reconnect & Setup Fixes
 
 ### Added
