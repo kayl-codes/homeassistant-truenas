@@ -5,11 +5,13 @@ on:
     branches: [master]
     paths:
       - 'Pipfile.lock'
+      - 'osv-scanner.toml'
       - '.github/workflows/osv-scanner.yml'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - 'Pipfile.lock'
+      - 'osv-scanner.toml'
       - '.github/workflows/osv-scanner.yml'
   schedule:
     - cron: '17 3 * * 1'
