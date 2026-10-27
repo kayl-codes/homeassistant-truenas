@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _fakes import make_config_entry, make_coordinator
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -27,8 +29,10 @@ from custom_components.truenas_ce.entity import (
     _new_referenced_entities,
     _referenced_id_pairs,
     _skip_keyless_description,
+    entry_accepts_entities,
     format_device_identifier,
     format_unique_id,
+    remove_entities_added_during_unload,
     resolve_entry_identity,
     shorten_free_text_name,
 )
@@ -1079,3 +1083,98 @@ def test_is_shared_device_falls_back_on_pre_2026_8_registry(
     device = SimpleNamespace(id="dev1", config_entries=config_entries)
 
     assert _is_shared_device(device) is expected
+
+
+@pytest.mark.parametrize(
+    ("state", "same_coordinator", "removed"),
+    [
+        (ConfigEntryState.LOADED, True, False),
+        (ConfigEntryState.SETUP_IN_PROGRESS, True, False),
+        (ConfigEntryState.UNLOAD_IN_PROGRESS, True, True),
+        (ConfigEntryState.NOT_LOADED, True, True),
+        # The unload finished and the next setup stored a new coordinator.
+        (ConfigEntryState.SETUP_IN_PROGRESS, False, True),
+        (ConfigEntryState.LOADED, False, True),
+    ],
+)
+async def test_remove_entities_added_during_unload(
+    state: ConfigEntryState, same_coordinator: bool, removed: bool
+) -> None:
+    """A batch that finished adding after the unload began is removed again (#212).
+
+    The platform reset has already run by then, so these entities would stay
+    behind bound to the old coordinator; an entity whose add was aborted has no
+    ``hass`` and must not be touched.
+    """
+    added = SimpleNamespace(hass=object(), async_remove=AsyncMock())
+    aborted = SimpleNamespace(hass=None, async_remove=AsyncMock())
+    coordinator = object()
+    entry = SimpleNamespace(
+        state=state, runtime_data=coordinator if same_coordinator else object()
+    )
+
+    await remove_entities_added_during_unload(entry, coordinator, [added, aborted])
+
+    assert added.async_remove.await_count == int(removed)
+    aborted.async_remove.assert_not_awaited()
+
+
+async def test_remove_entities_added_during_unload_continues_after_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One failing removal is logged and does not leave the rest behind (#212)."""
+    failing = SimpleNamespace(
+        hass=object(),
+        entity_id="sensor.failing",
+        async_remove=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    remaining = SimpleNamespace(
+        hass=object(), entity_id="sensor.remaining", async_remove=AsyncMock()
+    )
+    coordinator = object()
+    entry = SimpleNamespace(
+        state=ConfigEntryState.UNLOAD_IN_PROGRESS, runtime_data=coordinator
+    )
+
+    await remove_entities_added_during_unload(entry, coordinator, [failing, remaining])
+
+    remaining.async_remove.assert_awaited_once()
+    (record,) = [r for r in caplog.records if r.exc_info]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == (
+        "Error removing TrueNAS entity sensor.failing added during unload"
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "same_coordinator", "accepted", "reason"),
+    [
+        (ConfigEntryState.LOADED, True, True, None),
+        (ConfigEntryState.UNLOAD_IN_PROGRESS, True, False, "unload_in_progress"),
+        (ConfigEntryState.LOADED, False, False, "replaced"),
+    ],
+)
+def test_entry_accepts_entities(
+    caplog: pytest.LogCaptureFixture,
+    state: ConfigEntryState,
+    same_coordinator: bool,
+    accepted: bool,
+    reason: str | None,
+) -> None:
+    """Entities are refused once the entry unloads or moved on to a new coordinator."""
+    coordinator = object()
+    entry = SimpleNamespace(
+        title="TrueNAS",
+        state=state,
+        runtime_data=coordinator if same_coordinator else object(),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.truenas_ce"):
+        assert entry_accepts_entities(entry, coordinator) is accepted
+
+    refusals = [r.getMessage() for r in caplog.records if "Not adding" in r.message]
+    if reason is None:
+        assert not refusals
+    else:
+        (message,) = refusals
+        assert reason in message.lower()

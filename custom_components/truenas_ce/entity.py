@@ -10,7 +10,7 @@ from functools import lru_cache
 from logging import getLogger
 from typing import Any, cast
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -954,6 +954,75 @@ def _cleanup_orphaned_entities(
             dev_reg.async_remove_device(device_entry.id)
 
 
+# Entry states in which the platforms are live and may take new entities.
+# Home Assistant resets the platforms inside async_unload_entry
+# (UNLOAD_IN_PROGRESS) but only releases the coordinator listener and the
+# dispatcher connection after it returns, so a refresh landing in that window
+# would otherwise re-add every entity to the already-reset platform (#212).
+_ENTITY_ADD_STATES = frozenset(
+    {ConfigEntryState.SETUP_IN_PROGRESS, ConfigEntryState.LOADED}
+)
+
+
+def _entry_serves(config_entry: ConfigEntry, coordinator: TrueNASCoordinator) -> bool:
+    """Return whether the entry's live platforms still belong to this coordinator.
+
+    The state alone is not enough: an add that is still running when the entry
+    finishes unloading and starts its next setup sees SETUP_IN_PROGRESS or
+    LOADED again. The unload clears ``runtime_data`` and the next setup stores a
+    new coordinator, so the identity check catches that case.
+    """
+    return (
+        config_entry.state in _ENTITY_ADD_STATES
+        and get_truenas_coordinator(config_entry) is coordinator
+    )
+
+
+def entry_accepts_entities(
+    config_entry: ConfigEntry, coordinator: TrueNASCoordinator
+) -> bool:
+    """Return whether entities of this coordinator may still be added."""
+    if _entry_serves(config_entry, coordinator):
+        return True
+    _LOGGER.debug(
+        "Not adding TrueNAS entities for %s: config entry is %s, coordinator %s",
+        config_entry.title,
+        config_entry.state,
+        "current"
+        if get_truenas_coordinator(config_entry) is coordinator
+        else "replaced",
+    )
+    return False
+
+
+async def remove_entities_added_during_unload(
+    config_entry: ConfigEntry,
+    coordinator: TrueNASCoordinator,
+    entities: Sequence[TrueNASEntity],
+) -> None:
+    """Remove a batch's entities when the entry began unloading during the add.
+
+    The platform reset only removes the entities it finds when it starts; an
+    entity whose add completes afterwards stays behind on the discarded
+    platform, bound to the old coordinator. It keeps its state "unavailable"
+    and holds its entity_id, so every later setup logs "does not generate
+    unique IDs" and ignores the new entity until Home Assistant restarts
+    (#212). Entities whose add was aborted have no ``hass`` and are skipped.
+    """
+    if _entry_serves(config_entry, coordinator):
+        return
+    added = [entity for entity in entities if entity.hass is not None]
+    for entity in added:
+        # One failing removal must not leave the rest of the batch behind.
+        try:
+            await entity.async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Error removing TrueNAS entity %s added during unload",
+                entity.entity_id,
+            )
+
+
 async def async_add_entities(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -1013,10 +1082,15 @@ async def async_add_entities(
         # does not generate unique IDs … already exists" spam (#33).
         if coordinator is not this_coordinator:
             return
+        if not entry_accepts_entities(config_entry, coordinator):
+            return
 
         _cleanup_orphaned_entities(hass, config_entry, coordinator)
 
         async with add_lock:
+            # The unload may have started while this refresh waited for the lock.
+            if not entry_accepts_entities(config_entry, coordinator):
+                return
             loaded = {
                 entity.unique_id
                 for entity in platform.entities.values()
@@ -1027,7 +1101,14 @@ async def async_add_entities(
             )
             if new_entities:
                 _LOGGER.debug("Adding %d new TrueNAS entities", len(new_entities))
-                await platform.async_add_entities(new_entities)
+                try:
+                    await platform.async_add_entities(new_entities)
+                finally:
+                    # Also after a cancelled add: entities attached before it
+                    # stopped would otherwise stay behind.
+                    await remove_entities_added_during_unload(
+                        config_entry, coordinator, new_entities
+                    )
 
     await async_update_controller(this_coordinator)
 
