@@ -37,6 +37,7 @@ from .coordinator import TrueNASCoordinator, get_truenas_coordinator
 from .entity import (
     TrueNASEntity,
     async_add_entities,
+    entry_accepts_entities,
     format_unique_id,
     resolve_entry_identity,
 )
@@ -106,6 +107,10 @@ async def async_setup_entry(
                 coordinator.name,
                 coordinator.config_entry.entry_id,
             )
+            return
+        # A refresh during the unload would re-add the sensors to the already
+        # reset platform (#212).
+        if not entry_accepts_entities(config_entry):
             return
         _discover_app_stats(platform, coordinator, _async_add_entities)
 

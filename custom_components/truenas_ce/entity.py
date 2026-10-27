@@ -10,7 +10,7 @@ from functools import lru_cache
 from logging import getLogger
 from typing import Any, cast
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_ATTRIBUTION, CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -954,6 +954,54 @@ def _cleanup_orphaned_entities(
             dev_reg.async_remove_device(device_entry.id)
 
 
+# Entry states in which the platforms are live and may take new entities.
+# Home Assistant resets the platforms inside async_unload_entry
+# (UNLOAD_IN_PROGRESS) but only releases the coordinator listener and the
+# dispatcher connection after it returns, so a refresh landing in that window
+# would otherwise re-add every entity to the already-reset platform (#212).
+_ENTITY_ADD_STATES = frozenset(
+    {ConfigEntryState.SETUP_IN_PROGRESS, ConfigEntryState.LOADED}
+)
+
+
+def entry_accepts_entities(config_entry: ConfigEntry) -> bool:
+    """Return whether entities may still be added for this config entry."""
+    if config_entry.state in _ENTITY_ADD_STATES:
+        return True
+    _LOGGER.debug(
+        "Not adding TrueNAS entities for %s: config entry is %s",
+        config_entry.title,
+        config_entry.state,
+    )
+    return False
+
+
+async def _remove_entities_added_during_unload(
+    config_entry: ConfigEntry, entities: Sequence[TrueNASEntity]
+) -> None:
+    """Remove a batch's entities when the entry began unloading during the add.
+
+    The platform reset only removes the entities it finds when it starts; an
+    entity whose add completes afterwards stays behind on the discarded
+    platform, bound to the old coordinator. It keeps its state "unavailable"
+    and holds its entity_id, so every later setup logs "does not generate
+    unique IDs" and ignores the new entity until Home Assistant restarts
+    (#212). Entities whose add was aborted have no ``hass`` and are skipped.
+    """
+    if config_entry.state in _ENTITY_ADD_STATES:
+        return
+    added = [entity for entity in entities if entity.hass is not None]
+    for entity in added:
+        # One failing removal must not leave the rest of the batch behind.
+        try:
+            await entity.async_remove()
+        except Exception:
+            _LOGGER.exception(
+                "Error removing TrueNAS entity %s added during unload",
+                entity.entity_id,
+            )
+
+
 async def async_add_entities(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -1013,10 +1061,15 @@ async def async_add_entities(
         # does not generate unique IDs … already exists" spam (#33).
         if coordinator is not this_coordinator:
             return
+        if not entry_accepts_entities(config_entry):
+            return
 
         _cleanup_orphaned_entities(hass, config_entry, coordinator)
 
         async with add_lock:
+            # The unload may have started while this refresh waited for the lock.
+            if not entry_accepts_entities(config_entry):
+                return
             loaded = {
                 entity.unique_id
                 for entity in platform.entities.values()
@@ -1028,6 +1081,7 @@ async def async_add_entities(
             if new_entities:
                 _LOGGER.debug("Adding %d new TrueNAS entities", len(new_entities))
                 await platform.async_add_entities(new_entities)
+                await _remove_entities_added_during_unload(config_entry, new_entities)
 
     await async_update_controller(this_coordinator)
 

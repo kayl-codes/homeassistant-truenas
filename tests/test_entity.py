@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _fakes import make_config_entry, make_coordinator
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -26,6 +28,7 @@ from custom_components.truenas_ce.entity import (
     _lowercased_unique_id,
     _new_referenced_entities,
     _referenced_id_pairs,
+    _remove_entities_added_during_unload,
     _skip_keyless_description,
     format_device_identifier,
     format_unique_id,
@@ -1079,3 +1082,55 @@ def test_is_shared_device_falls_back_on_pre_2026_8_registry(
     device = SimpleNamespace(id="dev1", config_entries=config_entries)
 
     assert _is_shared_device(device) is expected
+
+
+@pytest.mark.parametrize(
+    ("state", "removed"),
+    [
+        (ConfigEntryState.LOADED, False),
+        (ConfigEntryState.SETUP_IN_PROGRESS, False),
+        (ConfigEntryState.UNLOAD_IN_PROGRESS, True),
+        (ConfigEntryState.NOT_LOADED, True),
+    ],
+)
+async def test_remove_entities_added_during_unload(
+    state: ConfigEntryState, removed: bool
+) -> None:
+    """A batch that finished adding after the unload began is removed again (#212).
+
+    The platform reset has already run by then, so these entities would stay
+    behind bound to the old coordinator; an entity whose add was aborted has no
+    ``hass`` and must not be touched.
+    """
+    added = SimpleNamespace(hass=object(), async_remove=AsyncMock())
+    aborted = SimpleNamespace(hass=None, async_remove=AsyncMock())
+    entry = SimpleNamespace(state=state)
+
+    await _remove_entities_added_during_unload(entry, [added, aborted])
+
+    assert added.async_remove.await_count == int(removed)
+    aborted.async_remove.assert_not_awaited()
+
+
+async def test_remove_entities_added_during_unload_continues_after_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One failing removal is logged and does not leave the rest behind (#212)."""
+    failing = SimpleNamespace(
+        hass=object(),
+        entity_id="sensor.failing",
+        async_remove=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    remaining = SimpleNamespace(
+        hass=object(), entity_id="sensor.remaining", async_remove=AsyncMock()
+    )
+    entry = SimpleNamespace(state=ConfigEntryState.UNLOAD_IN_PROGRESS)
+
+    await _remove_entities_added_during_unload(entry, [failing, remaining])
+
+    remaining.async_remove.assert_awaited_once()
+    (record,) = [r for r in caplog.records if r.exc_info]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == (
+        "Error removing TrueNAS entity sensor.failing added during unload"
+    )
