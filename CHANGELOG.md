@@ -14,6 +14,11 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+### Changed
+- Requires `aiotruenas` 1.8.0 or later (installed automatically). Nothing changes in the
+  integration yet; the new version prepares the switch of the system sensors to the library's
+  typed system reader. (#217)
+
 ### Fixed
 - **Entities stayed unavailable after reloading the integration.** A poll result or a push event
   that arrived while the integration was unloading added the entities again to the platforms that
