@@ -28,6 +28,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   starting up hit this easily. Entities are no longer added while the integration unloads, and an
   add that was already running is undone. Existing leftover entities disappear with one Home
   Assistant restart. Thanks @V4ler1an for the report! (#212, #213)
+- **TrueNAS logged a warning every poll while the SMB connections sensor was disabled.** The
+  integration called `smb.status` on every poll even with that sensor disabled. On TrueNAS 25.10
+  this is a private, full-admin-only method: a read-only API key gets "Not authorized" each time,
+  and TrueNAS writes "Private method 'smb.status' called on a connection without private_methods
+  enabled" to its middleware log for every call. The call is now skipped while the sensor is
+  disabled, and re-enabling the sensor brings it back on the next poll. (#218)
 
 ## [2.13.0] — Scrub Control, On-Demand NAS Reconnect & Setup Fixes
 
