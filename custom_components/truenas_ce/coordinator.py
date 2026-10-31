@@ -22,6 +22,7 @@ from homeassistant.const import (
     CONF_HOST,
     CONF_NAME,
     CONF_VERIFY_SSL,
+    Platform,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -2066,8 +2067,40 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stale_endpoints``) mark just the smb_connections entity unavailable
         on a stuck fetch, rather than every system_info entity (hostname,
         version, uptime, ...).
+
+        Skipped while the SMB connections sensor is disabled: it is the only
+        reader of ``ds["smb"]``, and ``smb.status`` is a private, full-admin-only
+        method on TrueNAS 25.10, so each call from a read-only key fails with
+        EACCES and TrueNAS logs a "Private method ... called on a connection
+        without private_methods enabled" warning for every call.
         """
+        if self._smb_sensor_disabled():
+            return
         self.ds["smb"] = await self.state.get_smb()
+
+    def _smb_sensor_disabled(self) -> bool:
+        """Return True when the SMB connections sensor is registered and disabled.
+
+        Checked on every poll (a registry lookup), so re-enabling the sensor
+        resumes polling without a reload. No registry entry yet (first setup)
+        means poll, so the sensor is created with data.
+        """
+        config_entry = getattr(self, "config_entry", None)
+        if config_entry is None:
+            return False
+        # Local import: entity.py imports this module.
+        from .entity import format_unique_id, resolve_entry_identity
+
+        ent_reg = er.async_get(self.hass)
+        entity_id = ent_reg.async_get_entity_id(
+            Platform.SENSOR,
+            DOMAIN,
+            format_unique_id(
+                resolve_entry_identity(config_entry), "system_smb_connections"
+            ),
+        )
+        entry = ent_reg.async_get(entity_id) if entity_id else None
+        return entry is not None and entry.disabled_by is not None
 
     # ---------------------------
     #   get_ups

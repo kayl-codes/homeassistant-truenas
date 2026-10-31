@@ -25,6 +25,7 @@ from aiotruenas import TrueNASState
 from aiotruenas.exceptions import TrueNASCallError
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
 from custom_components.truenas_ce import coordinator as coordinator_module
@@ -779,13 +780,65 @@ async def test_stop_alerts_noop_when_not_subscribed() -> None:
 # tests used to exercise directly now live in and are tested by aiotruenas's
 # own TrueNASState.get_smb(). get_smb just stores the result under its own
 # "smb" ds key, so this only needs to lock in that plumbing.
+def _smb_registry(disabled_by: object = None, *, registered: bool = True) -> MagicMock:
+    """Fake entity registry holding (or not) the SMB connections sensor."""
+    reg = MagicMock()
+    reg.async_get_entity_id.return_value = (
+        "sensor.truenas_smb_connections" if registered else None
+    )
+    reg.async_get.return_value = (
+        SimpleNamespace(disabled_by=disabled_by) if registered else None
+    )
+    return reg
+
+
 async def test_get_smb_stores_result_under_own_ds_key() -> None:
     coord = _bare_coordinator()
     coord.ds = {"smb": {}}
     coord.state = MagicMock()
     coord.state.get_smb = AsyncMock(return_value={"connections": 2})
-    await coord.get_smb()
+    with patch.object(coordinator_module.er, "async_get", return_value=_smb_registry()):
+        await coord.get_smb()
     assert coord.ds["smb"] == {"connections": 2}
+
+
+async def test_get_smb_skipped_while_sensor_disabled() -> None:
+    """A disabled SMB sensor means no smb.status call (private on TrueNAS 25.10)."""
+    coord = _bare_coordinator()
+    coord.ds = {"smb": {}}
+    coord.state = MagicMock()
+    coord.state.get_smb = AsyncMock(return_value={"connections": 2})
+    reg = _smb_registry(disabled_by=er.RegistryEntryDisabler.USER)
+    with patch.object(coordinator_module.er, "async_get", return_value=reg):
+        await coord.get_smb()
+    coord.state.get_smb.assert_not_awaited()
+    assert coord.ds["smb"] == {}
+    reg.async_get_entity_id.assert_called_once_with(
+        "sensor", DOMAIN, "test-entry-system_smb_connections"
+    )
+
+
+async def test_get_smb_polls_before_sensor_is_registered() -> None:
+    """First setup: no registry entry yet, so poll and let the sensor get data."""
+    coord = _bare_coordinator()
+    coord.ds = {"smb": {}}
+    coord.state = MagicMock()
+    coord.state.get_smb = AsyncMock(return_value={"connections": 1})
+    reg = _smb_registry(registered=False)
+    with patch.object(coordinator_module.er, "async_get", return_value=reg):
+        await coord.get_smb()
+    coord.state.get_smb.assert_awaited_once()
+    assert coord.ds["smb"] == {"connections": 1}
+
+
+async def test_get_smb_polls_without_config_entry() -> None:
+    coord = _bare_coordinator()
+    coord.config_entry = None
+    coord.ds = {"smb": {}}
+    coord.state = MagicMock()
+    coord.state.get_smb = AsyncMock(return_value={"connections": 3})
+    await coord.get_smb()
+    assert coord.ds["smb"] == {"connections": 3}
 
 
 # ---------------------------
