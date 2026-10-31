@@ -12,7 +12,7 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
 
-## [Unreleased]
+## [2.13.1] — Reload & SMB Polling Fixes
 
 ### Changed
 - Requires `aiotruenas` 1.8.0 or later (installed automatically). Nothing changes in the
@@ -33,7 +33,9 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   this is a private, full-admin-only method: a read-only API key gets "Not authorized" each time,
   and TrueNAS writes "Private method 'smb.status' called on a connection without private_methods
   enabled" to its middleware log for every call. The call is now skipped while the sensor is
-  disabled, and re-enabling the sensor brings it back on the next poll. (#218)
+  disabled, and re-enabling the sensor brings it back on the next poll. The README's permissions
+  note now explains this for monitoring-only setups with a read-only key. Thanks @cdgraham for the
+  report and the fix! (#218, #219)
 
 ## [2.13.0] — Scrub Control, On-Demand NAS Reconnect & Setup Fixes
 
