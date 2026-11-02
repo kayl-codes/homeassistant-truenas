@@ -6,12 +6,23 @@ import asyncio
 import hashlib
 import logging
 import re
-from collections.abc import Awaitable, Callable, Hashable
+from collections.abc import Awaitable, Callable, Hashable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from aiotruenas import TrueNASState
-from aiotruenas.exceptions import TrueNASCallError
+from aiotruenas import (
+    InterfaceTraffic,
+    SystemInfo,
+    SystemStats,
+    TrueNASState,
+    TrueNASSystem,
+)
+from aiotruenas.exceptions import (
+    TrueNASCallError,
+    TrueNASError,
+    TrueNASMalformedResponseError,
+)
 from homeassistant.components.recorder.statistics import (
     get_last_statistics,
     list_statistic_ids,
@@ -250,6 +261,168 @@ def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, dict[str, A
     return {str(uid): values for uid, values in data.items()}
 
 
+# TrueNASSystem reports interface throughput in kilobits/s; the rx/tx sensors
+# still read KiB/s, the unit TrueNASState used.
+_KILOBITS_TO_KIBIBYTES = 1000 / 8192
+
+# A boot time recomputed from uptime_seconds only replaces the stored one when
+# it moved by more than this many seconds, so per-poll timing jitter does not
+# make the uptime sensor jump by a few seconds on every refresh.
+_UPTIME_EPOCH_TOLERANCE = 300
+
+_UNKNOWN = "unknown"
+
+# Resting values of the netdata-backed ds["system_info"] keys until
+# get_systemstats() (or, for the load averages, get_systeminfo()) fills them.
+_SYSTEM_STATS_DEFAULTS: dict[str, Any] = {
+    "uptimeEpoch": 0,
+    "cpu_temperature": None,
+    "cpu_usage": 0.0,
+    "load_shortterm": 0.0,
+    "load_midterm": 0.0,
+    "load_longterm": 0.0,
+    "cache_size-arc_value": 0.0,
+    "memory-free_value": 0.0,
+    "memory-total_value": 0.0,
+    "memory-usage_percent": 0,
+}
+
+# Netdata graphs get_system_stats() queries; cputemp only on a system not
+# known to be virtual (see _systemstats_graphs).
+_SYSTEMSTATS_GRAPHS = ("cpu", "memory", "arcsize", "interface")
+_GRAPH_CPUTEMP = "cputemp"
+
+
+def _stable_uptime_epoch(previous: Any, uptime_seconds: float, now_epoch: int) -> int:
+    """Return the boot-time epoch for ``uptime_seconds``, damped against jitter."""
+    previous_epoch = (
+        int(previous)
+        if isinstance(previous, (int, float)) and not isinstance(previous, bool)
+        else 0
+    )
+    new_epoch = int(now_epoch - uptime_seconds)
+    if abs(new_epoch - previous_epoch) > _UPTIME_EPOCH_TOLERANCE:
+        return new_epoch
+    return previous_epoch
+
+
+def _apply_system_info(info: dict[str, Any], system_info: SystemInfo) -> None:
+    """Write a ``SystemInfo`` snapshot onto the ``ds["system_info"]`` keys.
+
+    Keeps the keys and resting values of the former ``TrueNASState`` endpoint
+    (unknown text -> "unknown", unknown number -> 0), so entities read what
+    they read before. A load average or memory size TrueNAS did not report
+    keeps its previous value.
+    """
+    info["version"] = system_info.version or _UNKNOWN
+    info["hostname"] = system_info.hostname or _UNKNOWN
+    info["system_serial"] = system_info.serial or _UNKNOWN
+    info["system_product"] = system_info.product or _UNKNOWN
+    info["system_manufacturer"] = system_info.manufacturer or _UNKNOWN
+    info["uptime_seconds"] = system_info.uptime_seconds or 0
+    info["physmem"] = system_info.physical_memory or 0
+    for key, default in _SYSTEM_STATS_DEFAULTS.items():
+        info.setdefault(key, default)
+
+    if system_info.physical_memory:
+        info["memory-total_value"] = system_info.physical_memory
+    for key, load in (
+        ("load_shortterm", system_info.load_1m),
+        ("load_midterm", system_info.load_5m),
+        ("load_longterm", system_info.load_15m),
+    ):
+        if load is not None:
+            info[key] = round(load, 2)
+    if system_info.uptime_seconds is not None:
+        now_epoch = int(datetime.now(UTC).replace(microsecond=0).timestamp())
+        info["uptimeEpoch"] = _stable_uptime_epoch(
+            info.get("uptimeEpoch"), system_info.uptime_seconds, now_epoch
+        )
+
+
+def _retain_known_system_info(
+    previous: SystemInfo | None, current: SystemInfo
+) -> SystemInfo:
+    """Return ``current`` with the stats inputs ``previous`` already knew.
+
+    ``get_system_stats`` reads ``is_virtual`` (whether to query ``cputemp``)
+    and ``physical_memory`` (memory usage percent) from the snapshot. The
+    former ``TrueNASState`` endpoint kept both once known, so a later
+    ``system.info`` that lacks them does not flip the stats to a VM-less or
+    memory-less view.
+    """
+    if previous is None:
+        return current
+    return replace(
+        current,
+        is_virtual=(
+            previous.is_virtual if current.is_virtual is None else current.is_virtual
+        ),
+        physical_memory=current.physical_memory or previous.physical_memory,
+    )
+
+
+def _systemstats_graphs(system_info: SystemInfo | None) -> tuple[str, ...]:
+    """Return the netdata graphs ``get_system_stats(system_info)`` queries."""
+    if system_info is not None and system_info.is_virtual is True:
+        return _SYSTEMSTATS_GRAPHS
+    return (*_SYSTEMSTATS_GRAPHS, _GRAPH_CPUTEMP)
+
+
+def _apply_system_stats(
+    info: dict[str, Any], stats: SystemStats, graphs: tuple[str, ...]
+) -> set[str]:
+    """Write CPU/memory/ARC readings onto ``ds["system_info"]``.
+
+    Uses the keys and rounding of the former ``TrueNASState`` endpoint. A
+    reading that is missing keeps its previous value; returns the queried
+    ``graphs`` that answered without failing but had no reading, so the
+    caller can report them as stale like failed ones.
+    """
+    no_reading: set[str] = set()
+    for graph, key, value in (
+        ("cpu", "cpu_usage", stats.cpu_usage_percent),
+        ("arcsize", "cache_size-arc_value", stats.arc_size),
+        ("memory", "memory-free_value", stats.memory_available),
+    ):
+        if value is None:
+            no_reading.add(graph)
+        else:
+            info[key] = round(value, 2)
+    if stats.memory_usage_percent is not None:
+        info["memory-usage_percent"] = round(stats.memory_usage_percent)
+    if stats.cpu_temperature is None:
+        no_reading.add(_GRAPH_CPUTEMP)
+    else:
+        info["cpu_temperature"] = stats.cpu_temperature
+    return no_reading.intersection(graphs) - stats.failed_graphs.keys()
+
+
+def _stale_graph_reason(error: TrueNASError | None) -> str:
+    """Describe why a netdata graph is stale, for the staleness warning."""
+    return "no usable reading" if error is None else str(scrub_exception(error))
+
+
+def _apply_interface_traffic(
+    interfaces: dict[str, dict[str, Any]], traffic: Mapping[str, InterfaceTraffic]
+) -> bool:
+    """Write rx/tx (KiB/s) onto the ``ds["interface"]`` entries.
+
+    A missing reading keeps its previous value. Returns whether any reading
+    was applied.
+    """
+    applied = False
+    for interface_id, reading in traffic.items():
+        entry = interfaces.get(interface_id)
+        if entry is None:
+            continue
+        for key, kbps in (("rx", reading.rx_kbps), ("tx", reading.tx_kbps)):
+            if kbps is not None:
+                entry[key] = round(kbps * _KILOBITS_TO_KIBIBYTES, 2)
+                applied = True
+    return applied
+
+
 def _upgrade_job_app(job: Any) -> str | None:
     """App name of a still-active ``app.upgrade`` job, else ``None``.
 
@@ -392,16 +565,12 @@ _JOB_DATA_PATHS: dict[str, tuple[str, ...]] = {
 # Checked by is_data_path_failing() in addition to _JOB_DATA_PATHS so these
 # entities don't stay "available" forever on a stuck upstream fetch.
 # Deliberately an explicit allowlist, not "any name state.stale_endpoints
-# returns": every one of the eleven names stale_endpoints can report is
-# listed below. "system_info" IS included even though get_systeminfo()
-# above performs no validation of its own on the returned dict: only
-# _async_update_data's own hostname check guards against a system_info that
-# has *never* had a valid hostname (the very first poll); once one poll has
-# cached a real hostname, a later malformed/empty 'system.info' response is
-# swallowed inside TrueNASState.get_systeminfo() itself (returns the
-# previous cached dict, hostname included, without raising), so that check
-# passes silently on every subsequent occurrence -- stale_endpoints is the
-# only signal for that case. Unlike the ha-core fork of this integration,
+# returns": every name stale_endpoints can report for an endpoint this
+# coordinator still reads through TrueNASState is listed below. "system_info"
+# is not: it comes from TrueNASSystem, which raises on a malformed response;
+# get_systeminfo() then keeps the previous values and sets
+# self._system_info_stale instead, which is_data_path_failing() checks
+# directly. Unlike the ha-core fork of this integration,
 # "interface"/"service"/"vm" are ALSO included below: this coordinator
 # (unlike that fork) already calls TrueNASState.get_interface()/
 # get_service()/get_vm() directly, and their malformed-but-non-raising
@@ -451,7 +620,6 @@ _STALE_ENDPOINT_DATA_PATHS: frozenset[str] = frozenset(
         "interface",
         "service",
         "vm",
-        "system_info",
     }
 )
 
@@ -551,6 +719,17 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # aiotruenas repo. Endpoints not yet migrated still compute their own
         # self.ds[...] entries directly below.
         self.state = TrueNASState(self.api.client)
+        # Typed reader for system info and netdata stats (aiotruenas
+        # TrueNASSystem); get_systeminfo/get_systemstats map its snapshots
+        # onto the ds keys the entities read.
+        self.system = TrueNASSystem(self.api.client)
+        # Last valid system.info snapshot, needed by get_system_stats() for
+        # the memory percentage and to skip cputemp on a VM.
+        self._system_info: SystemInfo | None = None
+        # True while system.info keeps answering malformed: the previous
+        # ds["system_info"] values are kept and its entities go unavailable
+        # (see is_data_path_failing).
+        self._system_info_stale = False
 
         self.datasets_hass_device_id = None
         self.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
@@ -569,7 +748,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Netdata graph names already warned about as stale (deduped so a
         # persistently-failing graph doesn't re-log every 60s poll) -- see
-        # get_systemstats()/TrueNASState.systemstats_stale_graphs.
+        # get_systemstats()/_log_systemstats_staleness().
         self._systemstats_stale_graphs_logged: frozenset[str] = frozenset()
 
         # Job names (see _run_job) currently failing, deduped so a
@@ -988,10 +1167,14 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         job-level check alone (``self._job_failing``, populated by
         ``_run_job``) can't see a domain method that swallows a failed/
         malformed primary RPC result and returns the previous snapshot
-        instead of raising. Used by TrueNASEntity.available (entity.py) to
-        mark entities unavailable once their backing data has gone stale,
-        not merely once it has gone empty.
+        instead of raising -- or, for ``system_info``, while get_systeminfo()
+        keeps the previous values over a malformed ``system.info`` response.
+        Used by TrueNASEntity.available (entity.py) to mark entities
+        unavailable once their backing data has gone stale, not merely once
+        it has gone empty.
         """
+        if data_path == "system_info" and self._system_info_stale:
+            return True
         if (
             data_path in _STALE_ENDPOINT_DATA_PATHS
             and data_path in self.state.stale_endpoints
@@ -1041,14 +1224,11 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ]
 
         if self.api.connected():
-            # get_interface (not get_systeminfo) now populates ds["interface"],
-            # and virtualization detection now lives inside TrueNASState itself
-            # rather than a local self._is_virtual. get_systemstats still needs
-            # both ds["system_info"] and a populated ds["interface"] before it
-            # runs (its rx/tx enrichment is a no-op on an empty interface map),
-            # so both are run before the concurrent jobs -- otherwise the first
-            # cycle would skip the interface graph, leaving RX/TX at 0 until
-            # the next poll.
+            # get_systemstats needs the system.info snapshot (memory
+            # percentage, cputemp skipped on a VM) and a populated
+            # ds["interface"] (rx/tx are written onto its entries), so both
+            # are fetched before the concurrent jobs -- otherwise the first
+            # cycle would leave RX/TX at 0 until the next poll.
             await self._run_job(self.get_systeminfo)
 
             # A middleware error leaves ds["system_info"] at its empty initial
@@ -1057,13 +1237,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # right after the first refresh, so failing fast here -- instead of
             # returning ds with that key missing -- is what turns this into a
             # retried setup instead of a crash. Checking mere key-presence is
-            # not enough: TrueNASState.get_systeminfo() runs its raw response
-            # through parse_api's ensure_vals, which backfills a "hostname":
-            # "unknown" default -- but only when the key is absent entirely;
-            # a dict-shaped reply that explicitly sends "hostname": null or ""
-            # keeps that literal value instead of being backfilled, so the
-            # sentinel check alone would miss it. Rejecting any falsy/non-str
-            # value (not just the sentinel) catches both cases. Accepted
+            # not enough: get_systeminfo() stores a missing or blank hostname
+            # as the "unknown" sentinel. Rejecting any falsy/non-str value as
+            # well keeps the check independent of that mapping. Accepted
             # residual risk: a host actually named "unknown" would collide
             # with the sentinel and fail every poll -- judged not worth a
             # second-field check for a name TrueNAS itself never assigns by
@@ -1337,40 +1513,43 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---------------------------
     #   get_systeminfo
     # ---------------------------
-    _SYSTEM_INFO_CARRY_FIELDS = (
-        "update_available",
-        "update_progress",
-        "update_jobid",
-        "update_state",
-        "update_version",
-    )
     _SYSTEM_INFO_CARRY_DEFAULTS: dict[str, Any] = {
         "update_available": False,
         "update_progress": 0,
         "update_jobid": 0,
-        "update_state": "unknown",
-        "update_version": "unknown",
+        "update_state": _UNKNOWN,
+        "update_version": _UNKNOWN,
     }
 
     async def get_systeminfo(self) -> None:
-        """Get system info via the aiotruenas domain layer.
+        """Get system info via aiotruenas ``TrueNASSystem``.
 
-        Carries forward the update-job fields that ``TrueNASState.
-        get_systeminfo()`` intentionally does not own (see
-        ``get_updatecheck``). In practice ``TrueNASState`` keeps returning
-        the same dict object it mutates in place, so these fields already
-        survive between polls on their own; this loop is a defensive
-        safety net against relying on that object-identity detail, which is
-        an implementation detail of ``TrueNASState``, not a documented
-        contract -- exactly the bug already fixed for per-app upgrade jobs
-        in ``_refresh_app``.
+        Updates ``ds["system_info"]`` in place, so the update-job fields
+        (owned by ``get_updatecheck``/``_handle_update_job``) and the netdata
+        stats (owned by ``get_systemstats``) keep their values between polls.
+        A malformed ``system.info`` response keeps the previous values and
+        marks ``system_info`` stale (see ``is_data_path_failing``), as the
+        former ``TrueNASState`` endpoint did; any other error is raised.
         """
-        previous = self.ds["system_info"]
-        self.ds["system_info"] = await self.state.get_systeminfo()
-        for field in self._SYSTEM_INFO_CARRY_FIELDS:
-            self.ds["system_info"][field] = previous.get(
-                field, self._SYSTEM_INFO_CARRY_DEFAULTS[field]
+        info = self.ds["system_info"]
+        try:
+            system_info = await self.system.get_system_info()
+        except TrueNASMalformedResponseError as err:
+            if not self._system_info_stale:
+                _LOGGER.warning(
+                    "Malformed 'system.info' response: %s", scrub_exception(err)
+                )
+            self._system_info_stale = True
+        else:
+            if self._system_info_stale:
+                _LOGGER.info("'system.info' response recovered")
+            self._system_info_stale = False
+            self._system_info = _retain_known_system_info(
+                self._system_info, system_info
             )
+            _apply_system_info(info, system_info)
+        for field, default in self._SYSTEM_INFO_CARRY_DEFAULTS.items():
+            info.setdefault(field, default)
 
         if not self.api.connected():
             return
@@ -1386,6 +1565,21 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         self._parse_version()
+        self._sync_state_version()
+
+    def _sync_state_version(self) -> None:
+        """Hand the parsed TrueNAS version to ``TrueNASState``.
+
+        ``TrueNASState.get_container()`` picks the container API (26.0+ or
+        legacy) by version, which it caches from its first ``system.info``
+        call. Its own ``get_systeminfo()`` used to refresh that cache every
+        poll; with system info now read through ``TrueNASSystem`` it is set
+        here, so an upgrade to TrueNAS 26 while Home Assistant keeps running
+        still switches to the new container API. aiotruenas has no public
+        setter for it yet, hence the private attribute.
+        """
+        if self._version is not None:
+            self.state._version = self._version
 
     # ---------------------------
     #   get_interface
@@ -1557,36 +1751,66 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   get_systemstats
     # ---------------------------
     async def get_systemstats(self) -> None:
-        """Get system statistics via the aiotruenas domain layer.
+        """Get system statistics via aiotruenas ``TrueNASSystem`` (partial mode).
 
-        Mutates the same dict objects already assigned to
-        ``ds["system_info"]``/``ds["interface"]`` in place (CPU/load/
-        memory/ARC stats, interface rx/tx), so no explicit re-sync is
-        needed here.
+        Writes CPU/memory/ARC readings onto ``ds["system_info"]`` and rx/tx
+        onto the ``ds["interface"]`` entries, with the keys, units and
+        rounding of the former ``TrueNASState`` endpoint. As before, a graph
+        that fails or has no reading keeps its previous values and is
+        reported by ``_log_systemstats_staleness`` -- so is every graph when
+        the whole call fails (e.g. the connection drops mid-poll).
         """
-        await self.state.get_systemstats()
-        self._log_systemstats_staleness()
+        interfaces = self.ds["interface"]
+        graphs = _systemstats_graphs(self._system_info)
+        stale: dict[str, TrueNASError | None]
+        try:
+            stats = await self.system.get_system_stats(self._system_info, partial=True)
+        except TrueNASError as err:
+            stale = dict.fromkeys(graphs, err)
+        else:
+            stale = dict(stats.failed_graphs)
+            for graph in _apply_system_stats(self.ds["system_info"], stats, graphs):
+                stale[graph] = None
+            if (
+                interfaces
+                and "interface" not in stale
+                and not _apply_interface_traffic(interfaces, stats.interfaces)
+            ):
+                stale["interface"] = None
+        if not interfaces:
+            # No interfaces to attribute throughput to yet: as with the former
+            # TrueNASState endpoint, "interface" is neither stale nor recovered
+            # (dropping it from the logged set first suppresses the recovery log).
+            stale.pop("interface", None)
+            self._systemstats_stale_graphs_logged -= {"interface"}
+        self._log_systemstats_staleness(stale)
 
-    def _log_systemstats_staleness(self) -> None:
+    def _log_systemstats_staleness(
+        self, stale: Mapping[str, TrueNASError | None]
+    ) -> None:
         """Warn once when a netdata graph starts failing (staying silent
         while it keeps failing), and log once when it recovers, so a stuck
         graph (stale field values every poll) is visible in the log instead
         of silently never refreshing.
+
+        ``stale`` maps each stale graph to its error, or ``None`` when the
+        graph answered without a usable reading.
         """
-        stale = self.state.systemstats_stale_graphs
-        newly_stale = stale - self._systemstats_stale_graphs_logged
-        if newly_stale:
+        stale_graphs = frozenset(stale)
+        if newly_stale := stale_graphs - self._systemstats_stale_graphs_logged:
             _LOGGER.warning(
                 "TrueNAS system stats graph(s) failed, values may be stale: %s",
-                ", ".join(sorted(newly_stale)),
+                ", ".join(
+                    f"{graph} ({_stale_graph_reason(stale[graph])})"
+                    for graph in sorted(newly_stale)
+                ),
             )
-        recovered = self._systemstats_stale_graphs_logged - stale
-        if recovered:
+        if recovered := self._systemstats_stale_graphs_logged - stale_graphs:
             _LOGGER.info(
                 "TrueNAS system stats graph(s) recovered: %s",
                 ", ".join(sorted(recovered)),
             )
-        self._systemstats_stale_graphs_logged = stale
+        self._systemstats_stale_graphs_logged = stale_graphs
 
     # ---------------------------
     #   get_service

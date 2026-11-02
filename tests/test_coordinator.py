@@ -21,8 +21,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-from aiotruenas import TrueNASState
-from aiotruenas.exceptions import TrueNASCallError
+from aiotruenas import InterfaceTraffic, SystemInfo, SystemStats, TrueNASState
+from aiotruenas.exceptions import (
+    TrueNASCallError,
+    TrueNASConnectionError,
+    TrueNASMalformedResponseError,
+)
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_NAME, CONF_VERIFY_SSL
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -88,6 +92,8 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._version_parse_warned = False
     coord._poisoned_certificate_commons = set()
     coord._systemstats_stale_graphs_logged = frozenset()
+    coord._system_info = None
+    coord._system_info_stale = False
     coord._job_failing = set()
     coord._job_permission_denied = set()
     coord._connection_failing = False
@@ -2608,16 +2614,18 @@ def test_is_data_path_failing_true_for_a_stale_endpoint() -> None:
     assert coord.is_data_path_failing("ups") is False
 
 
-def test_is_data_path_failing_true_for_system_info_stale_endpoint() -> None:
-    """Included in _STALE_ENDPOINT_DATA_PATHS: "system_info" -- get_systeminfo()
-    performs no validation of its own -- a malformed/empty
-    'system.info' response is swallowed inside TrueNASState.get_systeminfo()
-    itself (it returns the previously cached snapshot without raising), so
-    stale_endpoints is the only signal for that case once one poll has
-    already cached a valid hostname."""
+def test_is_data_path_failing_true_while_system_info_is_stale() -> None:
+    """system_info comes from TrueNASSystem now: get_systeminfo() keeps the
+    previous values over a malformed response and sets _system_info_stale,
+    which is the signal here -- TrueNASState's stale_endpoints no longer
+    covers it."""
     coord = _bare_coordinator()
     coord.state = MagicMock(stale_endpoints=frozenset({"system_info"}))
+    assert coord.is_data_path_failing("system_info") is False
+
+    coord._system_info_stale = True
     assert coord.is_data_path_failing("system_info") is True
+    assert coord.is_data_path_failing("interface") is False
 
 
 def test_is_data_path_failing_ignores_a_data_path_outside_the_allowlist() -> None:
@@ -3274,49 +3282,265 @@ async def test_async_clear_orphaned_statistics_clears_and_refreshes() -> None:
 # ---------------------------
 #   get_systeminfo / _handle_update_job
 # ---------------------------
-# The system.info parsing, uptime-epoch derivation and virtualization
-# detection these tests used to exercise directly now live in and are tested
-# by aiotruenas's own TrueNASState.get_systeminfo() (see
-# tests/test_domain_state.py in that repo). get_systeminfo just delegates,
-# carries forward the update-job/SMB fields TrueNASState intentionally
-# doesn't own, and drives the update-job/version-parsing pipeline, so this
-# only needs to lock in that plumbing.
-async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
+# get_systeminfo maps aiotruenas TrueNASSystem's SystemInfo onto the
+# ds["system_info"] keys the former TrueNASState endpoint produced (parsing
+# itself is tested in aiotruenas), carries the update-job fields and drives
+# the update-job/version-parsing pipeline.
+def _system_info(**overrides: object) -> SystemInfo:
+    values: dict[str, object] = {
+        "hostname": "nas1",
+        "version": "TrueNAS-SCALE-25.04.1",
+        "manufacturer": "Supermicro",
+        "product": "X11",
+        "serial": "S123",
+        "physical_memory": 34359738368,
+        "boot_time": None,
+        "uptime_seconds": 100.0,
+        "load_1m": 0.123,
+        "load_5m": 0.456,
+        "load_15m": 0.789,
+        "is_virtual": False,
+    } | overrides
+    return SystemInfo(**values)  # type: ignore[arg-type]
+
+
+def _systeminfo_coordinator(
+    system_info: SystemInfo | BaseException, *, connected: bool = True
+) -> TrueNASCoordinator:
     coord = _bare_coordinator()
     coord.ds = {"system_info": {}, "interface": {}}
     coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=True)
+    coord.api.connected = MagicMock(return_value=connected)
     coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(
-        return_value={
-            "version": "TrueNAS-SCALE-25.04.1",
-            "hostname": "nas1",
-            "uptime_seconds": 100,
-        }
-    )
+    coord.system = MagicMock()
+    if isinstance(system_info, BaseException):
+        coord.system.get_system_info = AsyncMock(side_effect=system_info)
+    else:
+        coord.system.get_system_info = AsyncMock(return_value=system_info)
     coord._handle_update_job = AsyncMock()
+    return coord
+
+
+_NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+_NOW_EPOCH = int(_NOW.timestamp())
+
+
+async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
+    coord = _systeminfo_coordinator(_system_info())
 
     await coord.get_systeminfo()
 
     assert coord.ds["system_info"]["hostname"] == "nas1"
     assert coord.ds["system_info"]["update_version"] == "TrueNAS-SCALE-25.04.1"
     assert coord._version == (25, 4)
+    assert coord._system_info == _system_info()
     coord._handle_update_job.assert_awaited_once()
+
+
+async def test_get_systeminfo_maps_system_info_onto_legacy_keys() -> None:
+    """Same keys, rounding and resting values as TrueNASState's endpoint."""
+    coord = _systeminfo_coordinator(_system_info())
+    coord.ds["system_info"] = {"cpu_usage": 42.0}
+
+    with patch.object(coordinator_module, "datetime") as datetime_mock:
+        datetime_mock.now.return_value = _NOW
+        await coord.get_systeminfo()
+
+    info = coord.ds["system_info"]
+    assert info["version"] == "TrueNAS-SCALE-25.04.1"
+    assert info["system_serial"] == "S123"
+    assert info["system_product"] == "X11"
+    assert info["system_manufacturer"] == "Supermicro"
+    assert info["uptime_seconds"] == 100.0
+    assert info["physmem"] == 34359738368
+    assert info["memory-total_value"] == 34359738368
+    assert info["load_shortterm"] == 0.12
+    assert info["load_midterm"] == 0.46
+    assert info["load_longterm"] == 0.79
+    assert info["uptimeEpoch"] == _NOW_EPOCH - 100
+    # A stats reading written by get_systemstats survives; the other stats
+    # keys get their resting value.
+    assert info["cpu_usage"] == 42.0
+    assert info["cpu_temperature"] is None
+    assert info["memory-usage_percent"] == 0
+
+
+async def test_get_systeminfo_maps_missing_fields_to_resting_values() -> None:
+    coord = _systeminfo_coordinator(
+        _system_info(
+            hostname=None,
+            version=None,
+            manufacturer=None,
+            product=None,
+            serial=None,
+            physical_memory=None,
+            uptime_seconds=None,
+            load_1m=None,
+            load_5m=None,
+            load_15m=None,
+        )
+    )
+    coord.ds["system_info"] = {"load_shortterm": 1.5, "memory-total_value": 8}
+
+    await coord.get_systeminfo()
+
+    info = coord.ds["system_info"]
+    assert info["hostname"] == "unknown"
+    assert info["version"] == "unknown"
+    assert info["system_serial"] == "unknown"
+    assert info["system_product"] == "unknown"
+    assert info["system_manufacturer"] == "unknown"
+    assert info["uptime_seconds"] == 0
+    assert info["physmem"] == 0
+    # A load average or memory size TrueNAS did not report keeps its value.
+    assert info["load_shortterm"] == 1.5
+    assert info["load_midterm"] == 0.0
+    assert info["memory-total_value"] == 8
+    assert info["uptimeEpoch"] == 0
+
+
+@pytest.mark.parametrize(
+    ("stored_shift", "expected_shift"),
+    [
+        # Within the 300 s tolerance: keep the stored boot time.
+        (300, 300),
+        # Beyond it (e.g. after a reboot): adopt the new boot time.
+        (301, 0),
+    ],
+)
+async def test_get_systeminfo_damps_uptime_epoch_jitter(
+    stored_shift: int, expected_shift: int
+) -> None:
+    coord = _systeminfo_coordinator(_system_info(uptime_seconds=100.0))
+    coord.ds["system_info"] = {"uptimeEpoch": _NOW_EPOCH - 100 + stored_shift}
+
+    with patch.object(coordinator_module, "datetime") as datetime_mock:
+        datetime_mock.now.return_value = _NOW
+        await coord.get_systeminfo()
+
+    assert coord.ds["system_info"]["uptimeEpoch"] == (_NOW_EPOCH - 100 + expected_shift)
+
+
+@pytest.mark.parametrize("stored", [None, "unknown", True])
+async def test_get_systeminfo_derives_uptime_epoch_from_zero_uptime(
+    stored: object,
+) -> None:
+    """A just-booted box (uptime 0) boots "now"; a stored value that is not
+    a number does not count as a previous boot time."""
+    coord = _systeminfo_coordinator(_system_info(uptime_seconds=0.0))
+    coord.ds["system_info"] = {"uptimeEpoch": stored}
+
+    with patch.object(coordinator_module, "datetime") as datetime_mock:
+        datetime_mock.now.return_value = _NOW
+        await coord.get_systeminfo()
+
+    assert coord.ds["system_info"]["uptimeEpoch"] == _NOW_EPOCH
+
+
+async def test_get_systeminfo_retains_known_stats_inputs() -> None:
+    """A later system.info without hardware/memory data keeps the snapshot's
+    is_virtual and physical_memory, so get_systemstats does not start asking
+    a VM for cputemp or lose the memory usage percent."""
+    coord = _systeminfo_coordinator(
+        _system_info(is_virtual=None, physical_memory=None, hostname="nas2")
+    )
+    coord._system_info = _system_info(is_virtual=True)
+
+    await coord.get_systeminfo()
+
+    assert coord._system_info is not None
+    assert coord._system_info.hostname == "nas2"
+    assert coord._system_info.is_virtual is True
+    assert coord._system_info.physical_memory == 34359738368
+    # ds keeps the raw resting value, as with TrueNASState.
+    assert coord.ds["system_info"]["physmem"] == 0
+
+
+async def test_get_systeminfo_adopts_reported_stats_inputs() -> None:
+    coord = _systeminfo_coordinator(
+        _system_info(is_virtual=False, physical_memory=1024)
+    )
+    coord._system_info = _system_info(is_virtual=True)
+
+    await coord.get_systeminfo()
+
+    assert coord._system_info == _system_info(is_virtual=False, physical_memory=1024)
+
+
+def test_truenas_state_still_caches_version_in_private_attribute() -> None:
+    """_sync_state_version() writes TrueNASState._version; pin that the
+    installed aiotruenas still has it, so a rename cannot silently create a
+    new attribute and leave get_container() on a stale version."""
+    assert hasattr(TrueNASState(MagicMock()), "_version")
+
+
+async def test_get_systeminfo_keeps_values_and_marks_stale_on_malformed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A malformed system.info keeps the previous snapshot (warning once) and
+    marks system_info stale until a valid response recovers it, as the former
+    TrueNASState endpoint did."""
+    coord = _systeminfo_coordinator(TrueNASMalformedResponseError("bad"))
+    coord._system_info = _system_info()
+    coord.ds["system_info"] = {"hostname": "nas1", "version": "25.04.1"}
+
+    with caplog.at_level(logging.INFO, logger=coordinator_module.__name__):
+        await coord.get_systeminfo()
+        assert "Malformed 'system.info' response" in caplog.text
+        assert coord.ds["system_info"]["hostname"] == "nas1"
+        assert coord._system_info == _system_info()
+        assert coord.is_data_path_failing("system_info") is True
+
+        caplog.clear()
+        await coord.get_systeminfo()
+        assert "Malformed" not in caplog.text
+
+        coord.system.get_system_info = AsyncMock(
+            return_value=_system_info(hostname="nas2")
+        )
+        await coord.get_systeminfo()
+
+    assert "'system.info' response recovered" in caplog.text
+    assert coord.ds["system_info"]["hostname"] == "nas2"
+    assert coord.is_data_path_failing("system_info") is False
+
+
+async def test_get_systeminfo_propagates_call_errors() -> None:
+    """Only a malformed response is kept; any other error reaches _run_job
+    (permission-denied tracking, job-failing unavailability)."""
+    coord = _systeminfo_coordinator(TrueNASCallError("denied", errname="EACCES"))
+
+    with pytest.raises(TrueNASCallError):
+        await coord.get_systeminfo()
+
+    assert coord._system_info_stale is False
+
+
+async def test_get_systeminfo_hands_parsed_version_to_state() -> None:
+    """TrueNASState.get_container() picks its API by the cached version;
+    get_systeminfo keeps that cache current (e.g. after an upgrade to 26)."""
+    coord = _systeminfo_coordinator(_system_info(version="TrueNAS-26.04.0"))
+    coord.state._version = (25, 10)
+
+    await coord.get_systeminfo()
+
+    assert coord.state._version == (26, 4)
+
+
+async def test_get_systeminfo_keeps_state_version_while_version_unknown() -> None:
+    coord = _systeminfo_coordinator(_system_info(version=None))
+    coord.state._version = (25, 10)
+
+    await coord.get_systeminfo()
+
+    assert coord.state._version == (25, 10)
 
 
 async def test_get_systeminfo_keeps_last_known_version_on_missing_version(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
+    coord = _systeminfo_coordinator(_system_info(version=None))
     coord._version = (25, 10)
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=True)
-    coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(
-        return_value={"version": "unknown", "hostname": "nas1"}
-    )
-    coord._handle_update_job = AsyncMock()
 
     with caplog.at_level(logging.WARNING):
         await coord.get_systeminfo()
@@ -3328,27 +3552,16 @@ async def test_get_systeminfo_keeps_last_known_version_on_missing_version(
 
 async def test_get_systeminfo_carries_forward_update_fields() -> None:
     """An in-progress system-update job's tracking state must survive across
-    a poll, even though TrueNASState.get_systeminfo() returns a freshly-built
-    dict that never carries these HA-specific fields (the same #101-style
-    regression already fixed for per-app upgrade jobs in ``_refresh_app``)."""
-    coord = _bare_coordinator()
-    coord.ds = {
-        "system_info": {
-            "update_available": True,
-            "update_progress": 42,
-            "update_jobid": 5,
-            "update_state": "RUNNING",
-            "update_version": "25.04.2",
-        },
-        "interface": {},
+    a poll: get_systeminfo updates ds["system_info"] in place and never
+    touches these HA-specific fields."""
+    coord = _systeminfo_coordinator(_system_info())
+    coord.ds["system_info"] = {
+        "update_available": True,
+        "update_progress": 42,
+        "update_jobid": 5,
+        "update_state": "RUNNING",
+        "update_version": "25.04.2",
     }
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=True)
-    coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(
-        return_value={"version": "TrueNAS-SCALE-25.04.1", "hostname": "nas1"}
-    )
-    coord._handle_update_job = AsyncMock()
 
     await coord.get_systeminfo()
 
@@ -3360,15 +3573,7 @@ async def test_get_systeminfo_carries_forward_update_fields() -> None:
 
 
 async def test_get_systeminfo_defaults_carried_fields_on_first_run() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=True)
-    coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(
-        return_value={"version": "25.04.1", "hostname": "nas1"}
-    )
-    coord._handle_update_job = AsyncMock()
+    coord = _systeminfo_coordinator(_system_info(version="25.04.1"))
 
     await coord.get_systeminfo()
 
@@ -3377,13 +3582,7 @@ async def test_get_systeminfo_defaults_carried_fields_on_first_run() -> None:
 
 
 async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
-    coord.api = MagicMock()
-    coord.api.connected = MagicMock(return_value=False)
-    coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(return_value={"version": "25.04.1"})
-    coord._handle_update_job = AsyncMock()
+    coord = _systeminfo_coordinator(_system_info(version="25.04.1"), connected=False)
 
     await coord.get_systeminfo()
 
@@ -3391,14 +3590,9 @@ async def test_get_systeminfo_returns_early_when_disconnected_after_parse() -> N
 
 
 async def test_get_systeminfo_returns_early_disconnected_after_update_job() -> None:
-    coord = _bare_coordinator()
-    coord.ds = {"system_info": {}, "interface": {}}
-    coord.api = MagicMock()
+    coord = _systeminfo_coordinator(_system_info(version="25.04.1"))
     # Connected for the pre-update-job check, disconnected right after.
     coord.api.connected = MagicMock(side_effect=[True, False])
-    coord.state = MagicMock()
-    coord.state.get_systeminfo = AsyncMock(return_value={"version": "25.04.1"})
-    coord._handle_update_job = AsyncMock()
     coord._parse_version = MagicMock()
 
     await coord.get_systeminfo()
@@ -3480,35 +3674,236 @@ async def test_get_interface_delegates_to_state() -> None:
 # ---------------------------
 #   get_systemstats
 # ---------------------------
-# The netdata-graph fetching/parsing these tests used to exercise directly
-# now lives in and is tested by aiotruenas's own TrueNASState.get_systemstats(),
-# which mutates ds["system_info"]/ds["interface"] in place as a documented
-# side effect. get_systemstats just delegates, so this only needs to lock in
-# that plumbing.
-async def test_get_systemstats_delegates_to_state() -> None:
+# get_systemstats maps aiotruenas TrueNASSystem's partial-mode SystemStats
+# onto the ds["system_info"]/ds["interface"] keys, units and rounding the
+# former TrueNASState endpoint produced; graph fetching/parsing itself is
+# tested in aiotruenas.
+def _stats(**overrides: object) -> SystemStats:
+    values: dict[str, object] = {
+        "cpu_usage_percent": 12.3456,
+        "cpu_temperature": 47.25,
+        "memory_available": 8589934592,
+        "memory_usage_percent": 74.6,
+        "arc_size": 4294967296,
+        "interfaces": {"eth0": InterfaceTraffic(rx_kbps=8192.0, tx_kbps=81.92)},
+    } | overrides
+    return SystemStats(**values)  # type: ignore[arg-type]
+
+
+def _systemstats_coordinator(
+    stats: SystemStats | BaseException,
+) -> TrueNASCoordinator:
     coord = _bare_coordinator()
-    system_info = {"cpu_usage": 0}
-    interface = {"eth0": {"rx": 0}}
-    coord.ds = {"system_info": system_info, "interface": interface}
+    coord.ds = {
+        "system_info": {
+            "cpu_usage": 1.0,
+            "cpu_temperature": 30.0,
+            "memory-free_value": 2.0,
+            "memory-usage_percent": 3,
+            "cache_size-arc_value": 4.0,
+        },
+        "interface": {"eth0": {"rx": 5.0, "tx": 6.0}},
+    }
+    coord._system_info = _system_info()
+    coord.system = MagicMock()
+    if isinstance(stats, BaseException):
+        coord.system.get_system_stats = AsyncMock(side_effect=stats)
+    else:
+        coord.system.get_system_stats = AsyncMock(return_value=stats)
+    return coord
 
-    def _mutate_in_place() -> dict[str, object]:
-        system_info["cpu_usage"] = 42
-        interface["eth0"]["rx"] = 123
-        return {}
 
-    coord.state = MagicMock()
-    coord.state.get_systemstats = AsyncMock(side_effect=_mutate_in_place)
-    coord.state.systemstats_stale_graphs = frozenset()
+async def test_get_systemstats_maps_readings_onto_legacy_keys() -> None:
+    coord = _systemstats_coordinator(_stats())
+    system_info = coord.ds["system_info"]
+    interface = coord.ds["interface"]
+
     await coord.get_systemstats()
-    coord.state.get_systemstats.assert_awaited_once()
-    # get_systemstats() doesn't clobber ds["system_info"]/ds["interface"] with
-    # its own return value -- the mutate-in-place contract from TrueNASState is
-    # what actually updates them. Staleness logging (_log_systemstats_staleness)
-    # is exercised separately below.
+
+    coord.system.get_system_stats.assert_awaited_once_with(
+        coord._system_info, partial=True
+    )
+    # Updated in place: other jobs keep using the same dict objects.
     assert coord.ds["system_info"] is system_info
     assert coord.ds["interface"] is interface
-    assert system_info["cpu_usage"] == 42
-    assert interface["eth0"]["rx"] == 123
+    assert system_info["cpu_usage"] == 12.35
+    assert system_info["cpu_temperature"] == 47.25
+    assert system_info["memory-free_value"] == 8589934592
+    assert system_info["memory-usage_percent"] == 75
+    assert system_info["cache_size-arc_value"] == 4294967296
+    # kbit/s -> KiB/s (x 1000 / 8192), rounded to two decimals.
+    assert interface["eth0"]["rx"] == 1000.0
+    assert interface["eth0"]["tx"] == 10.0
+    assert coord._systemstats_stale_graphs_logged == frozenset()
+
+
+async def test_get_systemstats_keeps_values_of_a_failed_graph(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A graph reported in failed_graphs keeps its previous values (not None)
+    and is logged with its error."""
+    coord = _systemstats_coordinator(
+        _stats(
+            cpu_usage_percent=None,
+            interfaces={},
+            failed_graphs={
+                "cpu": TrueNASCallError("no", errname="EFAULT"),
+                "interface": TrueNASMalformedResponseError("bad"),
+            },
+        )
+    )
+
+    with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
+        await coord.get_systemstats()
+
+    assert coord.ds["system_info"]["cpu_usage"] == 1.0
+    assert coord.ds["interface"]["eth0"] == {"rx": 5.0, "tx": 6.0}
+    assert coord.ds["system_info"]["cache_size-arc_value"] == 4294967296
+    assert coord._systemstats_stale_graphs_logged == {"cpu", "interface"}
+    assert "cpu (" in caplog.text
+    assert "interface (" in caplog.text
+    assert "no usable reading" not in caplog.text
+
+
+async def test_get_systemstats_reports_a_graph_without_reading(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A graph that answered without a reading keeps its previous values and
+    counts as stale, as with TrueNASState."""
+    coord = _systemstats_coordinator(
+        _stats(arc_size=None, cpu_temperature=None, memory_usage_percent=None)
+    )
+
+    with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
+        await coord.get_systemstats()
+
+    assert coord.ds["system_info"]["cache_size-arc_value"] == 4.0
+    assert coord.ds["system_info"]["cpu_temperature"] == 30.0
+    assert coord.ds["system_info"]["memory-usage_percent"] == 3
+    assert coord._systemstats_stale_graphs_logged == {"arcsize", "cputemp"}
+    assert "arcsize (no usable reading)" in caplog.text
+
+
+async def test_get_systemstats_does_not_expect_cputemp_on_a_vm() -> None:
+    coord = _systemstats_coordinator(_stats(cpu_temperature=None))
+    coord._system_info = _system_info(is_virtual=True)
+
+    await coord.get_systemstats()
+
+    assert coord._systemstats_stale_graphs_logged == frozenset()
+
+
+async def test_get_systemstats_reports_interface_without_matching_reading() -> None:
+    coord = _systemstats_coordinator(
+        _stats(interfaces={"eth9": InterfaceTraffic(rx_kbps=1.0, tx_kbps=1.0)})
+    )
+
+    await coord.get_systemstats()
+
+    assert coord.ds["interface"]["eth0"] == {"rx": 5.0, "tx": 6.0}
+    assert "eth9" not in coord.ds["interface"]
+    assert coord._systemstats_stale_graphs_logged == {"interface"}
+
+
+async def test_get_systemstats_applies_a_partial_interface_match() -> None:
+    """One interface with a reading is enough: the others and a missing
+    direction keep their values, and the graph is not stale."""
+    coord = _systemstats_coordinator(
+        _stats(
+            interfaces={
+                "eth0": InterfaceTraffic(rx_kbps=8192.0, tx_kbps=None),
+                "eth9": InterfaceTraffic(rx_kbps=1.0, tx_kbps=1.0),
+            }
+        )
+    )
+    coord.ds["interface"]["eth1"] = {"rx": 7.0, "tx": 8.0}
+
+    await coord.get_systemstats()
+
+    assert coord.ds["interface"]["eth0"] == {"rx": 1000.0, "tx": 6.0}
+    assert coord.ds["interface"]["eth1"] == {"rx": 7.0, "tx": 8.0}
+    assert coord._systemstats_stale_graphs_logged == frozenset()
+
+
+@pytest.mark.parametrize(
+    "stats",
+    [
+        _stats(interfaces={}),
+        _stats(
+            interfaces={},
+            failed_graphs={"interface": TrueNASMalformedResponseError("bad")},
+        ),
+        TrueNASConnectionError("gone"),
+    ],
+)
+async def test_get_systemstats_skips_interface_without_known_interfaces(
+    stats: SystemStats | BaseException, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without ds["interface"] entries there is nothing to attribute
+    throughput to: the interface graph is neither stale nor recovered."""
+    coord = _systemstats_coordinator(stats)
+    coord.ds["interface"] = {}
+    coord._systemstats_stale_graphs_logged = frozenset({"interface"})
+
+    with caplog.at_level(logging.INFO, logger=coordinator_module.__name__):
+        await coord.get_systemstats()
+
+    assert "interface" not in coord._systemstats_stale_graphs_logged
+    assert "interface" not in caplog.text
+
+
+async def test_get_systemstats_without_system_info_queries_cputemp() -> None:
+    """Before the first valid system.info there is no snapshot: aiotruenas
+    then queries cputemp too, so a missing reading counts as stale."""
+    coord = _systemstats_coordinator(_stats(cpu_temperature=None))
+    coord._system_info = None
+
+    await coord.get_systemstats()
+
+    coord.system.get_system_stats.assert_awaited_once_with(None, partial=True)
+    assert coord._systemstats_stale_graphs_logged == {"cputemp"}
+
+
+@pytest.mark.parametrize(
+    ("is_virtual", "expected"),
+    [(True, False), (False, True), (None, True)],
+)
+def test_systemstats_graphs_skips_cputemp_only_on_a_vm(
+    is_virtual: bool | None, expected: bool
+) -> None:
+    graphs = coordinator_module._systemstats_graphs(_system_info(is_virtual=is_virtual))
+    assert ("cputemp" in graphs) is expected
+    assert "cputemp" in coordinator_module._systemstats_graphs(None)
+
+
+async def test_get_systemstats_keeps_everything_when_the_call_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A connection-wide error fails the whole stats call: every queried
+    graph keeps its values and is reported, like the per-graph handling of
+    the former TrueNASState endpoint -- the poll's other jobs still run."""
+    coord = _systemstats_coordinator(TrueNASConnectionError("gone"))
+    before = {key: dict(value) for key, value in coord.ds.items()}
+
+    with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
+        await coord.get_systemstats()
+
+    assert coord.ds == before
+    assert coord._systemstats_stale_graphs_logged == {
+        "cpu",
+        "cputemp",
+        "memory",
+        "arcsize",
+        "interface",
+    }
+    assert "gone" in caplog.text
+
+
+async def test_get_systemstats_propagates_cancellation() -> None:
+    coord = _systemstats_coordinator(asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await coord.get_systemstats()
 
 
 async def test_log_systemstats_staleness_warns_once_then_silent_then_recovers(
@@ -3517,28 +3912,24 @@ async def test_log_systemstats_staleness_warns_once_then_silent_then_recovers(
     """New-stale graphs warn once, stay silent while still stale, then log an
     info once recovered -- and warn again if they go stale a second time."""
     coord = _bare_coordinator()
-    coord.state = MagicMock()
 
     with caplog.at_level("DEBUG", logger=coordinator_module.__name__):
-        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
-        coord._log_systemstats_staleness()
-        assert "cpu" in caplog.text
+        coord._log_systemstats_staleness({"cpu": None})
+        assert "cpu (no usable reading)" in caplog.text
         assert "failed" in caplog.text
 
         caplog.clear()
-        coord._log_systemstats_staleness()
+        coord._log_systemstats_staleness({"cpu": None})
         assert caplog.text == ""
 
         caplog.clear()
-        coord.state.systemstats_stale_graphs = frozenset()
-        coord._log_systemstats_staleness()
+        coord._log_systemstats_staleness({})
         assert "cpu" in caplog.text
         assert "recovered" in caplog.text
 
         caplog.clear()
-        coord.state.systemstats_stale_graphs = frozenset({"cpu"})
-        coord._log_systemstats_staleness()
-        assert "cpu" in caplog.text
+        coord._log_systemstats_staleness({"cpu": TrueNASMalformedResponseError("x")})
+        assert "cpu (x)" in caplog.text
         assert "failed" in caplog.text
 
 
