@@ -16,12 +16,12 @@
     "default": {
         "aiotruenas": {
             "hashes": [
-                "sha256:06e2fc8f09d1a1c9e3962bd4e58a84a92d95a48aa4f06faf886335b2b79f3552",
-                "sha256:5d59684c3672043ff8553b664982ef2edf14398eac54bef563be682555af86e0"
+                "sha256:82e7364efddc196b974a526ef5dc357835d7785e0564a1fa58fac8adc09f5c95",
+                "sha256:8ac1146d83f49bd3c4c5010836b0f6df497a3314f90783a1e03057dc69b2e71b"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.13'",
-            "version": "==1.8.0"
+            "version": "==1.9.0"
         },
         "websockets": {
             "hashes": [

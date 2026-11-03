@@ -2068,11 +2068,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         on a stuck fetch, rather than every system_info entity (hostname,
         version, uptime, ...).
 
+        ``smb.status`` is a private, full-admin-only method on TrueNAS 25.10.
+        aiotruenas (1.9.0+) enables private methods on the connection first,
+        so TrueNAS no longer logs a "Private method ... called on a connection
+        without private_methods enabled" warning per call; a read-only key's
+        EACCES makes it stop querying until the next reload (the sensor then
+        stays unavailable).
+
         Skipped while the SMB connections sensor is disabled: it is the only
-        reader of ``ds["smb"]``, and ``smb.status`` is a private, full-admin-only
-        method on TrueNAS 25.10, so each call from a read-only key fails with
-        EACCES and TrueNAS logs a "Private method ... called on a connection
-        without private_methods enabled" warning for every call.
+        reader of ``ds["smb"]``, so the call would be wasted.
         """
         if self._smb_sensor_disabled():
             return
