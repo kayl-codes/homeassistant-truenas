@@ -12,6 +12,24 @@ Items reference the related issue/PR as `(#NN)` where applicable.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNAS 25.04**.
 
+## [Unreleased]
+
+### Changed
+- Requires `aiotruenas` 1.9.0 or later (installed automatically). (#220)
+- The system sensors (CPU, CPU temperature, memory, ZFS ARC, load, uptime, network traffic)
+  now read their data through aiotruenas' typed system reader. Entities and units are
+  unchanged; the load averages now come from `system.info` instead of a separate reporting
+  graph. (#222)
+
+### Fixed
+- **TrueNAS logged a warning every poll while the SMB connections sensor was enabled.** Even
+  with a Full Admin key, every `smb.status` call wrote "Private method 'smb.status' called on a
+  connection without private_methods enabled" to the TrueNAS middleware log, because the call
+  went over a connection that had not enabled private methods. The connection now enables them
+  first, so the sensor keeps working without the warning; you no longer need to disable the
+  sensor to keep the log clean. With a read-only key, the first refused call stops the query
+  until the next reload, and the sensor stays unavailable. (#220)
+
 ## [2.13.1] — Reload & SMB Polling Fixes
 
 ### Changed
