@@ -4241,6 +4241,7 @@ async def test_system_data_merges_interface_traffic_per_interface() -> None:
         )
     )
     coord.ds["interface"]["eth1"] = {"rx": 0, "tx": 0}
+    coord.ds["interface"]["eth2"] = {"rx": 0, "tx": 0}
     coord._system_stats = _stats(
         interfaces={
             "eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0),
@@ -4277,6 +4278,34 @@ async def test_system_data_drops_traffic_of_interfaces_truenas_dropped() -> None
     assert stats.interfaces == {"eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0)}
 
 
+@pytest.mark.parametrize(
+    "previous",
+    [None, _stats(interfaces={"veth0": InterfaceTraffic(rx_kbps=9.0, tx_kbps=9.0)})],
+    ids=["first_poll", "later_poll"],
+)
+async def test_system_data_ignores_traffic_of_interfaces_truenas_does_not_report(
+    previous: SystemStats | None,
+) -> None:
+    """Like ds["interface"], the snapshot skips a netdata interface that
+    interface.query does not report, so a later interface with that id does
+    not start from its old reading."""
+    coord = _systemstats_coordinator(
+        _stats(
+            interfaces={
+                "eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0),
+                "veth0": InterfaceTraffic(rx_kbps=None, tx_kbps=4.0),
+            }
+        )
+    )
+    coord._system_stats = previous
+
+    await coord.get_systemstats()
+
+    stats = coord.system_data.stats
+    assert stats is not None
+    assert stats.interfaces == {"eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0)}
+
+
 async def test_system_data_treats_zero_physical_memory_as_missing() -> None:
     coord = _systeminfo_coordinator(_system_info(physical_memory=0), connected=False)
     coord._system_info = _system_info(physical_memory=1024)
@@ -4286,6 +4315,18 @@ async def test_system_data_treats_zero_physical_memory_as_missing() -> None:
     info = coord.system_data.info
     assert info is not None
     assert info.physical_memory == 1024
+
+
+async def test_system_data_treats_zero_physical_memory_as_missing_on_first_poll() -> (
+    None
+):
+    coord = _systeminfo_coordinator(_system_info(physical_memory=0), connected=False)
+
+    await coord.get_systeminfo()
+
+    info = coord.system_data.info
+    assert info is not None
+    assert info.physical_memory is None
 
 
 async def test_system_data_keeps_system_info_values_not_reported() -> None:

@@ -388,12 +388,9 @@ def _retain_known_system_info(
     the stats to a VM-less or memory-less view; a ``physical_memory`` of 0
     counts as missing too.
     """
-    if previous is None:
-        return current
-    return replace(
-        _keep_known(previous, current),
-        physical_memory=current.physical_memory or previous.physical_memory,
-    )
+    if current.physical_memory == 0:
+        current = replace(current, physical_memory=None)
+    return _keep_known(previous, current)
 
 
 def _retain_known_system_stats(
@@ -406,19 +403,18 @@ def _retain_known_system_stats(
     A graph that failed or had no reading leaves its fields ``None``; like
     the former ``ds`` keys, they keep their previous reading, and so does
     the throughput of an interface missing from ``current`` while TrueNAS
-    still reports that interface (``interface_ids``).
+    still reports that interface. Like ``ds["interface"]``, the result only
+    holds throughput of the interfaces TrueNAS reports (``interface_ids``).
     """
-    if previous is None:
-        return current
+    known = previous.interfaces if previous else {}
     interfaces = {
         interface_id: traffic
-        for interface_id, traffic in previous.interfaces.items()
+        for interface_id, traffic in known.items()
         if interface_id in interface_ids
     }
     for interface_id, traffic in current.interfaces.items():
-        interfaces[interface_id] = _keep_known(
-            previous.interfaces.get(interface_id), traffic
-        )
+        if interface_id in interface_ids:
+            interfaces[interface_id] = _keep_known(known.get(interface_id), traffic)
     return replace(_keep_known(previous, current), interfaces=interfaces)
 
 
