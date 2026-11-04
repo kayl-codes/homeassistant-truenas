@@ -28,7 +28,7 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   aiotruenas' typed data. A value TrueNAS has not reported yet (right after a restart, or
   for a newly added interface) shows as unknown instead of 0; a reading that drops out
   later keeps its last known value. The traffic sensors now report kbit/s natively and are
-  still shown in MB/s.
+  still shown in MB/s. (#226)
 
 ### Fixed
 - **TrueNAS logged a warning every poll while the SMB connections sensor was enabled.** Even
