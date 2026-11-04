@@ -16,6 +16,10 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ### Changed
 - Requires `aiotruenas` 1.9.0 or later (installed automatically). (#220)
+- The system sensors (CPU, CPU temperature, memory, ZFS ARC, load, uptime, network traffic)
+  now read their data through aiotruenas' typed system reader. Entities and units are
+  unchanged; the load averages now come from `system.info` instead of a separate reporting
+  graph. (#222)
 
 ### Fixed
 - **TrueNAS logged a warning every poll while the SMB connections sensor was enabled.** Even
