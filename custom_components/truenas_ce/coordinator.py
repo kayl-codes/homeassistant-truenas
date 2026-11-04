@@ -13,6 +13,7 @@ from typing import Any
 
 from aiotruenas import (
     InterfaceTraffic,
+    NetworkInterface,
     SystemInfo,
     SystemStats,
     TrueNASState,
@@ -93,6 +94,12 @@ _DATA_CONNECTION_FAILING = "connection_failing_by_entry"
 # Shown when system.info itself is denied (EACCES) -- typically an API key
 # whose user lost its TrueNAS role after setup. The config flow catches the
 # same condition at setup time (see TrueNASAPI.connection_test).
+_INTERFACE_QUERY_MALFORMED = "Malformed 'interface.query' response: %s"
+_INTERFACE_QUERY_NO_USABLE_ENTRY = (
+    "'interface.query' returned no usable interface; keeping the previous interfaces"
+)
+_INTERFACE_QUERY_RECOVERED = "'interface.query' response recovered"
+
 _SYSTEM_INFO_PERMISSION_DENIED = (
     "The TrueNAS API key's user is not allowed to read system information"
     " (EACCES). Give that user at least the Read-Only Administrator privilege"
@@ -403,6 +410,39 @@ def _stale_graph_reason(error: TrueNASError | None) -> str:
     return "no usable reading" if error is None else str(scrub_exception(error))
 
 
+def _apply_network_interfaces(
+    current: dict[str, dict[str, Any]], interfaces: Mapping[str, NetworkInterface]
+) -> dict[str, dict[str, Any]]:
+    """Build ``ds["interface"]`` from a ``get_network_interfaces`` result.
+
+    Keeps the keys and values of the former ``TrueNASState`` endpoint, which
+    passed TrueNAS's values through: TrueNAS always sends the text keys,
+    blank when unset (e.g. most descriptions), and aiotruenas maps blank to
+    ``None``, so ``None`` text becomes ``""`` again; an unknown MTU stays
+    ``None``. An interface that is still reported keeps its entry dict, so
+    the rx/tx ``get_systemstats`` wrote onto it survive a missing reading;
+    one TrueNAS no longer reports is dropped.
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for interface_id, interface in interfaces.items():
+        entry = current.get(interface_id)
+        if entry is None:
+            entry = {"rx": 0, "tx": 0}
+        entry.update(
+            id=interface.id,
+            name=interface.name or "",
+            description=interface.description or "",
+            mtu=interface.mtu,
+            link_state=interface.link_state or "",
+            active_media_type=interface.active_media_type or "",
+            active_media_subtype=interface.active_media_subtype or "",
+            link_address=interface.link_address or "",
+            link_up=interface.link_up is True,
+        )
+        result[interface_id] = entry
+    return result
+
+
 def _apply_interface_traffic(
     interfaces: dict[str, dict[str, Any]], traffic: Mapping[str, InterfaceTraffic]
 ) -> bool:
@@ -566,14 +606,14 @@ _JOB_DATA_PATHS: dict[str, tuple[str, ...]] = {
 # entities don't stay "available" forever on a stuck upstream fetch.
 # Deliberately an explicit allowlist, not "any name state.stale_endpoints
 # returns": every name stale_endpoints can report for an endpoint this
-# coordinator still reads through TrueNASState is listed below. "system_info"
-# is not: it comes from TrueNASSystem, which raises on a malformed response;
-# get_systeminfo() then keeps the previous values and sets
-# self._system_info_stale instead, which is_data_path_failing() checks
-# directly. Unlike the ha-core fork of this integration,
-# "interface"/"service"/"vm" are ALSO included below: this coordinator
-# (unlike that fork) already calls TrueNASState.get_interface()/
-# get_service()/get_vm() directly, and their malformed-but-non-raising
+# coordinator still reads through TrueNASState is listed below.
+# "system_info" and "interface" are not: they come from TrueNASSystem, which
+# raises on a malformed response; get_systeminfo()/get_interface() then keep
+# the previous values and set self._system_info_stale/self._interface_stale
+# instead, which is_data_path_failing() checks directly. Unlike the ha-core
+# fork of this integration, "service"/"vm" are ALSO included below: this
+# coordinator (unlike that fork) already calls TrueNASState.get_service()/
+# get_vm() directly, and their malformed-but-non-raising
 # primary responses are tracked by aiotruenas the same way as pool/dataset/
 # etc. Endpoints aiotruenas deliberately never reports here (disk-temp,
 # interface-throughput, the systemstats netdata graphs, TrueNAS version/
@@ -617,7 +657,6 @@ _STALE_ENDPOINT_DATA_PATHS: frozenset[str] = frozenset(
         "smb",
         "ups",
         "scrub",
-        "interface",
         "service",
         "vm",
     }
@@ -730,6 +769,8 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ds["system_info"] values are kept and its entities go unavailable
         # (see is_data_path_failing).
         self._system_info_stale = False
+        # Same for interface.query and the ds["interface"] entries.
+        self._interface_stale = False
 
         self.datasets_hass_device_id = None
         self.last_updatecheck_update = datetime(1970, 1, 1, tzinfo=UTC)
@@ -1167,13 +1208,15 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         job-level check alone (``self._job_failing``, populated by
         ``_run_job``) can't see a domain method that swallows a failed/
         malformed primary RPC result and returns the previous snapshot
-        instead of raising -- or, for ``system_info``, while get_systeminfo()
-        keeps the previous values over a malformed ``system.info`` response.
-        Used by TrueNASEntity.available (entity.py) to mark entities
-        unavailable once their backing data has gone stale, not merely once
-        it has gone empty.
+        instead of raising -- or, for ``system_info``/``interface``, while
+        get_systeminfo()/get_interface() keep the previous values over a
+        malformed ``system.info``/``interface.query`` response. Used by
+        TrueNASEntity.available (entity.py) to mark entities unavailable once
+        their backing data has gone stale, not merely once it has gone empty.
         """
         if data_path == "system_info" and self._system_info_stale:
+            return True
+        if data_path == "interface" and self._interface_stale:
             return True
         if (
             data_path in _STALE_ENDPOINT_DATA_PATHS
@@ -1585,8 +1628,35 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     #   get_interface
     # ---------------------------
     async def get_interface(self) -> None:
-        """Get network interfaces via the aiotruenas domain layer."""
-        self.ds["interface"] = _as_str_keyed(await self.state.get_interface())
+        """Get network interfaces via aiotruenas ``TrueNASSystem``.
+
+        A malformed ``interface.query`` response keeps the previous entries
+        and marks ``interface`` stale (see ``is_data_path_failing``), as the
+        former ``TrueNASState`` endpoint did; any other error is raised.
+        """
+        try:
+            interfaces = await self.system.get_network_interfaces()
+        except TrueNASMalformedResponseError as err:
+            self._mark_interface_stale(_INTERFACE_QUERY_MALFORMED, scrub_exception(err))
+            return
+        if not interfaces and self.ds["interface"]:
+            # TrueNAS is reached over one of its interfaces, so it always has
+            # one: an empty result after earlier ones means its entries were
+            # unusable (e.g. without an id, which aiotruenas warns about), and
+            # TrueNASState treated a list without usable entries as malformed.
+            self._mark_interface_stale(_INTERFACE_QUERY_NO_USABLE_ENTRY)
+            return
+        current = _apply_network_interfaces(self.ds["interface"], interfaces)
+        if self._interface_stale:
+            _LOGGER.info(_INTERFACE_QUERY_RECOVERED)
+        self._interface_stale = False
+        self.ds["interface"] = current
+
+    def _mark_interface_stale(self, message: str, *args: object) -> None:
+        """Keep the previous ``ds["interface"]`` and mark it stale, warning once."""
+        if not self._interface_stale:
+            _LOGGER.warning(message, *args)
+        self._interface_stale = True
 
     # ---------------------------
     #   _handle_update_job
