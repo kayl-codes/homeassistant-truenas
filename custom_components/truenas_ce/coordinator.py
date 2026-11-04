@@ -6,8 +6,9 @@ import asyncio
 import hashlib
 import logging
 import re
-from collections.abc import Awaitable, Callable, Hashable, Mapping
-from dataclasses import replace
+from collections.abc import Awaitable, Callable, Collection, Hashable, Mapping
+from dataclasses import dataclass, fields, replace
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -268,8 +269,36 @@ def _as_str_keyed(data: dict[Hashable, dict[str, Any]]) -> dict[str, dict[str, A
     return {str(uid): values for uid, values in data.items()}
 
 
-# TrueNASSystem reports interface throughput in kilobits/s; the rx/tx sensors
-# still read KiB/s, the unit TrueNASState used.
+@dataclass(frozen=True, slots=True)
+class TrueNASData:
+    """Typed system snapshot the system sensors' ``value_fn`` read.
+
+    Built from the last valid ``TrueNASSystem`` results. A value TrueNAS did
+    not report keeps the one it reported before, as the ``ds`` keys these
+    sensors read before did, and stays ``None`` until it is first known.
+    """
+
+    info: SystemInfo | None = None
+    interfaces: Mapping[str, NetworkInterface] = dataclass_field(default_factory=dict)
+    stats: SystemStats | None = None
+
+
+def _keep_known[T: (SystemInfo, SystemStats, InterfaceTraffic)](
+    previous: T | None, current: T
+) -> T:
+    """Return ``current`` with every ``None`` field filled in from ``previous``."""
+    if previous is None:
+        return current
+    known = {
+        item.name: getattr(previous, item.name)
+        for item in fields(current)
+        if getattr(current, item.name) is None
+    }
+    return replace(current, **known)
+
+
+# TrueNASSystem reports interface throughput in kilobits/s; ds["interface"]
+# keeps the KiB/s TrueNASState used.
 _KILOBITS_TO_KIBIBYTES = 1000 / 8192
 
 # A boot time recomputed from uptime_seconds only replaces the stored one when
@@ -350,23 +379,47 @@ def _apply_system_info(info: dict[str, Any], system_info: SystemInfo) -> None:
 def _retain_known_system_info(
     previous: SystemInfo | None, current: SystemInfo
 ) -> SystemInfo:
-    """Return ``current`` with the stats inputs ``previous`` already knew.
+    """Return ``current`` with the values ``previous`` already knew.
 
-    ``get_system_stats`` reads ``is_virtual`` (whether to query ``cputemp``)
-    and ``physical_memory`` (memory usage percent) from the snapshot. The
-    former ``TrueNASState`` endpoint kept both once known, so a later
-    ``system.info`` that lacks them does not flip the stats to a VM-less or
-    memory-less view.
+    A field ``system.info`` did not report keeps its previous value, as the
+    former ``ds`` keys did. That includes ``is_virtual`` (whether
+    ``get_system_stats`` queries ``cputemp``) and ``physical_memory`` (memory
+    usage percent), so a later ``system.info`` that lacks them does not flip
+    the stats to a VM-less or memory-less view; a ``physical_memory`` of 0
+    counts as missing too.
     """
     if previous is None:
         return current
     return replace(
-        current,
-        is_virtual=(
-            previous.is_virtual if current.is_virtual is None else current.is_virtual
-        ),
+        _keep_known(previous, current),
         physical_memory=current.physical_memory or previous.physical_memory,
     )
+
+
+def _retain_known_system_stats(
+    previous: SystemStats | None,
+    current: SystemStats,
+    interface_ids: Collection[str],
+) -> SystemStats:
+    """Return ``current`` with the readings ``previous`` already had.
+
+    A graph that failed or had no reading leaves its fields ``None``; like
+    the former ``ds`` keys, they keep their previous reading, and so does
+    the throughput of an interface missing from ``current`` while TrueNAS
+    still reports that interface (``interface_ids``).
+    """
+    if previous is None:
+        return current
+    interfaces = {
+        interface_id: traffic
+        for interface_id, traffic in previous.interfaces.items()
+        if interface_id in interface_ids
+    }
+    for interface_id, traffic in current.interfaces.items():
+        interfaces[interface_id] = _keep_known(
+            previous.interfaces.get(interface_id), traffic
+        )
+    return replace(_keep_known(previous, current), interfaces=interfaces)
 
 
 def _systemstats_graphs(system_info: SystemInfo | None) -> tuple[str, ...]:
@@ -765,6 +818,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Last valid system.info snapshot, needed by get_system_stats() for
         # the memory percentage and to skip cputemp on a VM.
         self._system_info: SystemInfo | None = None
+        # Last valid interface.query and netdata snapshots; together with
+        # _system_info they make up system_data.
+        self._network_interfaces: Mapping[str, NetworkInterface] = {}
+        self._system_stats: SystemStats | None = None
         # True while system.info keeps answering malformed: the previous
         # ds["system_info"] values are kept and its entities go unavailable
         # (see is_data_path_failing).
@@ -1196,6 +1253,13 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._job_failing.discard(name)
             self._job_permission_denied.discard(name)
             return True
+
+    @property
+    def system_data(self) -> TrueNASData:
+        """Typed system snapshot the system sensors' ``value_fn`` read."""
+        return TrueNASData(
+            self._system_info, self._network_interfaces, self._system_stats
+        )
 
     # ---------------------------
     #   is_data_path_failing
@@ -1651,6 +1715,7 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info(_INTERFACE_QUERY_RECOVERED)
         self._interface_stale = False
         self.ds["interface"] = current
+        self._network_interfaces = interfaces
 
     def _mark_interface_stale(self, message: str, *args: object) -> None:
         """Keep the previous ``ds["interface"]`` and mark it stale, warning once."""
@@ -1826,9 +1891,10 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Writes CPU/memory/ARC readings onto ``ds["system_info"]`` and rx/tx
         onto the ``ds["interface"]`` entries, with the keys, units and
         rounding of the former ``TrueNASState`` endpoint. As before, a graph
-        that fails or has no reading keeps its previous values and is
-        reported by ``_log_systemstats_staleness`` -- so is every graph when
-        the whole call fails (e.g. the connection drops mid-poll).
+        that fails or has no reading keeps its previous values, in ``ds`` and
+        in ``system_data``, and is reported by ``_log_systemstats_staleness``
+        -- so is every graph when the whole call fails (e.g. the connection
+        drops mid-poll).
         """
         interfaces = self.ds["interface"]
         graphs = _systemstats_graphs(self._system_info)
@@ -1838,6 +1904,9 @@ class TrueNASCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except TrueNASError as err:
             stale = dict.fromkeys(graphs, err)
         else:
+            self._system_stats = _retain_known_system_stats(
+                self._system_stats, stats, interfaces.keys()
+            )
             stale = dict(stats.failed_graphs)
             for graph in _apply_system_stats(self.ds["system_info"], stats, graphs):
                 stale[graph] = None

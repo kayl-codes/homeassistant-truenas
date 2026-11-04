@@ -20,6 +20,15 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   now read their data through aiotruenas' typed system reader. Entities and units are
   unchanged; the load averages now come from `system.info` instead of a separate reporting
   graph. (#222)
+- The network link sensors now read the interface list through the same system reader.
+  Entities and attributes are unchanged. If TrueNAS suddenly reports no interfaces at all,
+  the integration now keeps the last known interfaces and shows their sensors as unavailable
+  until the list is back, instead of dropping the interfaces. (#225)
+- The system sensors and the network traffic sensors now take their state straight from
+  aiotruenas' typed data. A value TrueNAS has not reported yet (right after a restart, or
+  for a newly added interface) shows as unknown instead of 0; a reading that drops out
+  later keeps its last known value. The traffic sensors now report kbit/s natively and are
+  still shown in MB/s.
 
 ### Fixed
 - **TrueNAS logged a warning every poll while the SMB connections sensor was enabled.** Even

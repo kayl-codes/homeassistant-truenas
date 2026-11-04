@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.const import CONF_HOST, CONF_NAME
 
+from custom_components.truenas_ce.coordinator import TrueNASData
+
 DEFAULT_SYSTEM_INFO: dict[str, Any] = {
     "hostname": "truenas.local",
     "system_product": "TrueNAS Mini",
@@ -57,6 +59,7 @@ def make_coordinator(
     api_error: str = "",
     api_scheme: str = "ws",
     host: str = "truenas.local",
+    system_data: TrueNASData | None = None,
 ) -> SimpleNamespace:
     """Build a minimal stand-in for TrueNASCoordinator.
 
@@ -113,4 +116,5 @@ def make_coordinator(
         is_data_path_failing=MagicMock(return_value=False),
         state=SimpleNamespace(stale_endpoints=frozenset()),
         get_known_app_names=MagicMock(side_effect=_known_app_names),
+        system_data=system_data or TrueNASData(),
     )

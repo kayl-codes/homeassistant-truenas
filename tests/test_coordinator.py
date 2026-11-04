@@ -66,6 +66,7 @@ from custom_components.truenas_ce.const import (
 from custom_components.truenas_ce.coordinator import (
     SubscriptionCircuitBreaker,
     TrueNASCoordinator,
+    TrueNASData,
     _count_statistics_with_data,
     _is_truenas_sensor_id,
     _PushSourceState,
@@ -101,6 +102,8 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._system_info = None
     coord._system_info_stale = False
     coord._interface_stale = False
+    coord._network_interfaces = {}
+    coord._system_stats = None
     coord._job_failing = set()
     coord._job_permission_denied = set()
     coord._connection_failing = False
@@ -4165,6 +4168,149 @@ async def test_get_systemstats_propagates_cancellation() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await coord.get_systemstats()
+
+
+# ---------------------------
+#   system_data (typed snapshot read by the sensors' value_fn)
+# ---------------------------
+def test_system_data_is_empty_before_the_first_poll() -> None:
+    assert _bare_coordinator().system_data == TrueNASData()
+
+
+async def test_system_data_holds_the_polled_snapshots() -> None:
+    coord = _interface_coordinator({"eth0": _interface()})
+    coord.ds["system_info"] = {}
+    coord.api = MagicMock()
+    coord.api.connected = MagicMock(return_value=False)
+    coord.system.get_system_info = AsyncMock(return_value=_system_info())
+    coord.system.get_system_stats = AsyncMock(return_value=_stats())
+
+    await coord.get_systeminfo()
+    await coord.get_interface()
+    await coord.get_systemstats()
+
+    assert coord.system_data == TrueNASData(
+        info=_system_info(),
+        interfaces={"eth0": _interface()},
+        stats=_stats(),
+    )
+
+
+async def test_system_data_keeps_readings_of_a_failed_graph() -> None:
+    """A failed graph leaves its fields None; system_data keeps the previous
+    reading for them, as ds does, and takes every other new reading."""
+    coord = _systemstats_coordinator(
+        _stats(
+            cpu_usage_percent=None,
+            arc_size=1,
+            interfaces={},
+            failed_graphs={"cpu": TrueNASCallError("no", errname="EFAULT")},
+        )
+    )
+    coord._system_stats = _stats()
+
+    await coord.get_systemstats()
+
+    stats = coord.system_data.stats
+    assert stats is not None
+    assert stats.cpu_usage_percent == 12.3456
+    assert stats.arc_size == 1
+    assert stats.interfaces == _stats().interfaces
+    assert stats.failed_graphs.keys() == {"cpu"}
+
+
+async def test_system_data_keeps_the_stats_when_the_call_fails() -> None:
+    coord = _systemstats_coordinator(TrueNASConnectionError("gone"))
+    coord._system_stats = _stats()
+
+    await coord.get_systemstats()
+
+    assert coord.system_data.stats == _stats()
+
+
+async def test_system_data_merges_interface_traffic_per_interface() -> None:
+    """A missing rx or tx reading keeps the previous one; an interface
+    without any reading this poll keeps its previous traffic; a new one
+    takes its first reading."""
+    coord = _systemstats_coordinator(
+        _stats(
+            interfaces={
+                "eth0": InterfaceTraffic(rx_kbps=None, tx_kbps=5.0),
+                "eth2": InterfaceTraffic(rx_kbps=7.0, tx_kbps=None),
+            }
+        )
+    )
+    coord.ds["interface"]["eth1"] = {"rx": 0, "tx": 0}
+    coord._system_stats = _stats(
+        interfaces={
+            "eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0),
+            "eth1": InterfaceTraffic(rx_kbps=3.0, tx_kbps=4.0),
+        }
+    )
+
+    await coord.get_systemstats()
+
+    stats = coord.system_data.stats
+    assert stats is not None
+    assert stats.interfaces == {
+        "eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=5.0),
+        "eth1": InterfaceTraffic(rx_kbps=3.0, tx_kbps=4.0),
+        "eth2": InterfaceTraffic(rx_kbps=7.0, tx_kbps=None),
+    }
+
+
+async def test_system_data_drops_traffic_of_interfaces_truenas_dropped() -> None:
+    """Like ds["interface"], the snapshot keeps no throughput for an
+    interface interface.query no longer reports."""
+    coord = _systemstats_coordinator(_stats(interfaces={}))
+    coord._system_stats = _stats(
+        interfaces={
+            "eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0),
+            "eth1": InterfaceTraffic(rx_kbps=3.0, tx_kbps=4.0),
+        }
+    )
+
+    await coord.get_systemstats()
+
+    stats = coord.system_data.stats
+    assert stats is not None
+    assert stats.interfaces == {"eth0": InterfaceTraffic(rx_kbps=1.0, tx_kbps=2.0)}
+
+
+async def test_system_data_treats_zero_physical_memory_as_missing() -> None:
+    coord = _systeminfo_coordinator(_system_info(physical_memory=0), connected=False)
+    coord._system_info = _system_info(physical_memory=1024)
+
+    await coord.get_systeminfo()
+
+    info = coord.system_data.info
+    assert info is not None
+    assert info.physical_memory == 1024
+
+
+async def test_system_data_keeps_system_info_values_not_reported() -> None:
+    boot_time = datetime(2026, 11, 1, tzinfo=UTC)
+    coord = _systeminfo_coordinator(
+        _system_info(load_1m=None, load_5m=0.5, boot_time=None), connected=False
+    )
+    coord._system_info = _system_info(load_1m=0.1, boot_time=boot_time)
+
+    await coord.get_systeminfo()
+
+    info = coord.system_data.info
+    assert info is not None
+    assert info.load_1m == 0.1
+    assert info.load_5m == 0.5
+    assert info.boot_time == boot_time
+
+
+async def test_system_data_keeps_interfaces_while_stale() -> None:
+    coord = _interface_coordinator(TrueNASMalformedResponseError("bad"))
+    coord._network_interfaces = {"eth0": _interface()}
+
+    await coord.get_interface()
+
+    assert coord.system_data.interfaces == {"eth0": _interface()}
 
 
 async def test_log_systemstats_staleness_warns_once_then_silent_then_recovers(
