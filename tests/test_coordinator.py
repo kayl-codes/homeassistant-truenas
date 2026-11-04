@@ -21,7 +21,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-from aiotruenas import InterfaceTraffic, SystemInfo, SystemStats, TrueNASState
+from aiotruenas import (
+    InterfaceTraffic,
+    NetworkInterface,
+    SystemInfo,
+    SystemStats,
+    TrueNASState,
+)
 from aiotruenas.exceptions import (
     TrueNASCallError,
     TrueNASConnectionError,
@@ -94,6 +100,7 @@ def _bare_coordinator() -> TrueNASCoordinator:
     coord._systemstats_stale_graphs_logged = frozenset()
     coord._system_info = None
     coord._system_info_stale = False
+    coord._interface_stale = False
     coord._job_failing = set()
     coord._job_permission_denied = set()
     coord._connection_failing = False
@@ -3656,19 +3663,273 @@ async def test_handle_update_job_returns_early_when_disconnected() -> None:
 # ---------------------------
 #   get_interface
 # ---------------------------
-# The interface.query parsing/link_up derivation these tests used to
-# exercise directly now lives in and is tested by aiotruenas's own
-# TrueNASState.get_interface(). get_interface just delegates and assigns
-# the result, so this only needs to lock in that plumbing.
-async def test_get_interface_delegates_to_state() -> None:
+# get_interface maps aiotruenas TrueNASSystem's NetworkInterface records
+# onto the ds["interface"] keys and resting values the former TrueNASState
+# endpoint produced; interface.query parsing itself is tested in aiotruenas.
+def _interface(**overrides: object) -> NetworkInterface:
+    values: dict[str, object] = {
+        "id": "eth0",
+        "name": "eth0",
+        "description": "uplink",
+        "mtu": 1500,
+        "link_state": "LINK_STATE_UP",
+        "link_up": True,
+        "active_media_type": "Ethernet",
+        "active_media_subtype": "10000Mb/s Other",
+        "link_address": "aa:bb:cc:dd:ee:ff",
+    } | overrides
+    return NetworkInterface(**values)  # type: ignore[arg-type]
+
+
+def _interface_coordinator(
+    result: dict[str, NetworkInterface] | BaseException,
+) -> TrueNASCoordinator:
     coord = _bare_coordinator()
     coord.ds = {"interface": {}}
-    coord.state = MagicMock()
-    coord.state.get_interface = AsyncMock(
-        return_value={"eth0": {"name": "eth0", "link_up": True}}
-    )
+    coord.system = MagicMock()
+    if isinstance(result, BaseException):
+        coord.system.get_network_interfaces = AsyncMock(side_effect=result)
+    else:
+        coord.system.get_network_interfaces = AsyncMock(return_value=result)
+    return coord
+
+
+async def test_get_interface_maps_interfaces_onto_legacy_keys() -> None:
+    coord = _interface_coordinator({"eth0": _interface()})
+
     await coord.get_interface()
-    assert coord.ds["interface"]["eth0"]["link_up"] is True
+
+    assert coord.ds["interface"] == {
+        "eth0": {
+            "id": "eth0",
+            "name": "eth0",
+            "description": "uplink",
+            "mtu": 1500,
+            "link_state": "LINK_STATE_UP",
+            "active_media_type": "Ethernet",
+            "active_media_subtype": "10000Mb/s Other",
+            "link_address": "aa:bb:cc:dd:ee:ff",
+            "link_up": True,
+            "rx": 0,
+            "tx": 0,
+        }
+    }
+
+
+async def test_get_interface_maps_blank_fields_to_former_values() -> None:
+    """TrueNAS sends the text keys blank when unset (aiotruenas: None); the
+    former TrueNASState endpoint passed them through as "" and an unknown
+    MTU as None."""
+    coord = _interface_coordinator(
+        {
+            "eth0": _interface(),
+            "eth1": _interface(
+                id="eth1",
+                name=None,
+                description=None,
+                mtu=None,
+                link_state=None,
+                link_up=None,
+                active_media_type=None,
+                active_media_subtype=None,
+                link_address=None,
+            ),
+        }
+    )
+
+    await coord.get_interface()
+
+    assert coord.ds["interface"]["eth0"]["description"] == "uplink"
+    assert coord.ds["interface"]["eth1"] == {
+        "id": "eth1",
+        "name": "",
+        "description": "",
+        "mtu": None,
+        "link_state": "",
+        "active_media_type": "",
+        "active_media_subtype": "",
+        "link_address": "",
+        "link_up": False,
+        "rx": 0,
+        "tx": 0,
+    }
+
+
+async def test_get_interface_keeps_traffic_and_drops_removed_interfaces() -> None:
+    """An interface still reported keeps its entry dict (and so the rx/tx
+    get_systemstats wrote onto it); one TrueNAS no longer reports is dropped."""
+    coord = _interface_coordinator(
+        {"eth0": _interface(link_state="LINK_STATE_DOWN", link_up=False)}
+    )
+    eth0 = {"id": "eth0", "rx": 12.5, "tx": 3.25, "link_up": True}
+    coord.ds["interface"] = {"eth0": eth0, "eth9": {"id": "eth9", "rx": 1, "tx": 1}}
+
+    await coord.get_interface()
+
+    assert set(coord.ds["interface"]) == {"eth0"}
+    assert coord.ds["interface"]["eth0"] is eth0
+    assert eth0["rx"] == 12.5
+    assert eth0["tx"] == 3.25
+    assert eth0["link_up"] is False
+    assert eth0["link_state"] == "LINK_STATE_DOWN"
+
+
+async def test_get_interface_and_systemstats_keep_traffic_across_polls() -> None:
+    """get_systemstats writes rx/tx onto the entries get_interface built in
+    the same poll, and the next get_interface keeps them."""
+    coord = _interface_coordinator({"eth0": _interface()})
+    coord.ds["system_info"] = {}
+    coord._system_info = _system_info()
+    coord.system.get_system_stats = AsyncMock(return_value=_stats())
+
+    await coord.get_interface()
+    await coord.get_systemstats()
+    await coord.get_interface()
+
+    assert coord.ds["interface"]["eth0"]["rx"] == 1000.0
+    assert coord.ds["interface"]["eth0"]["tx"] == 10.0
+
+
+async def test_get_interface_empty_result_on_first_poll() -> None:
+    """Without earlier interfaces an empty result simply stays empty."""
+    coord = _interface_coordinator({})
+
+    await coord.get_interface()
+
+    assert coord.ds["interface"] == {}
+    assert coord.is_data_path_failing("interface") is False
+
+
+def _integration_records(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name.startswith("custom_components.truenas_ce")
+    ]
+
+
+async def test_get_interface_empty_result_keeps_previous_and_marks_stale(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After earlier interfaces, an empty result means its entries were
+    unusable: the previous entries are kept and marked stale (warning once),
+    as TrueNASState did for a list without usable entries, until a usable
+    result recovers them."""
+    coord = _interface_coordinator({})
+    eth0 = {"id": "eth0", "rx": 1, "tx": 1}
+    previous = {"eth0": eth0}
+    coord.ds["interface"] = previous
+
+    with caplog.at_level(logging.INFO, logger=coordinator_module.__name__):
+        await coord.get_interface()
+        assert coord.ds["interface"] is previous
+        assert coord.is_data_path_failing("interface") is True
+        records = _integration_records(caplog)
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.WARNING, coordinator_module._INTERFACE_QUERY_NO_USABLE_ENTRY)
+        ]
+        assert not any(r.exc_info for r in records)
+
+        caplog.clear()
+        await coord.get_interface()
+        assert _integration_records(caplog) == []
+
+        coord.system.get_network_interfaces = AsyncMock(
+            return_value={"eth0": _interface()}
+        )
+        await coord.get_interface()
+
+    assert [(r.levelno, r.getMessage()) for r in _integration_records(caplog)] == [
+        (logging.INFO, coordinator_module._INTERFACE_QUERY_RECOVERED)
+    ]
+    assert coord.ds["interface"]["eth0"] is eth0
+    assert eth0["rx"] == 1
+    assert eth0["description"] == "uplink"
+    assert coord.is_data_path_failing("interface") is False
+
+
+async def test_get_interface_malformed_keeps_previous_and_marks_stale(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A malformed interface.query keeps the previous entries (warning once)
+    and marks interface stale until a valid response recovers it, then warns
+    again on the next malformed response, as the former TrueNASState endpoint
+    did."""
+    coord = _interface_coordinator(TrueNASMalformedResponseError("bad"))
+    previous = {"eth0": {"id": "eth0", "name": "eth0", "rx": 1.0, "tx": 2.0}}
+    coord.ds["interface"] = previous
+    malformed = (
+        logging.WARNING,
+        coordinator_module._INTERFACE_QUERY_MALFORMED % "bad",
+    )
+
+    with caplog.at_level(logging.INFO, logger=coordinator_module.__name__):
+        await coord.get_interface()
+        assert coord.ds["interface"] is previous
+        assert coord.is_data_path_failing("interface") is True
+        assert coord.is_data_path_failing("system_info") is False
+        assert [(r.levelno, r.getMessage()) for r in _integration_records(caplog)] == [
+            malformed
+        ]
+
+        caplog.clear()
+        await coord.get_interface()
+        assert _integration_records(caplog) == []
+
+        coord.system.get_network_interfaces = AsyncMock(
+            return_value={"eth0": _interface()}
+        )
+        await coord.get_interface()
+        assert [(r.levelno, r.getMessage()) for r in _integration_records(caplog)] == [
+            (logging.INFO, coordinator_module._INTERFACE_QUERY_RECOVERED)
+        ]
+        assert coord.ds["interface"]["eth0"]["rx"] == 1.0
+        assert coord.ds["interface"]["eth0"]["description"] == "uplink"
+        assert coord.is_data_path_failing("interface") is False
+
+        caplog.clear()
+        coord.system.get_network_interfaces = AsyncMock(
+            side_effect=TrueNASMalformedResponseError("bad")
+        )
+        await coord.get_interface()
+        records = _integration_records(caplog)
+        assert [(r.levelno, r.getMessage()) for r in records] == [malformed]
+        assert not any(r.exc_info for r in records)
+
+
+async def test_get_interface_malformed_on_first_poll() -> None:
+    coord = _interface_coordinator(TrueNASMalformedResponseError("bad"))
+
+    await coord.get_interface()
+
+    assert coord.ds["interface"] == {}
+    assert coord.is_data_path_failing("interface") is True
+
+
+async def test_get_interface_call_errors_fail_the_job() -> None:
+    """Only a malformed response is kept by get_interface itself; any other
+    error reaches _run_job, which marks interface failing."""
+    coord = _interface_coordinator(TrueNASCallError("denied", errname="EACCES"))
+    previous = {"eth0": {"id": "eth0"}}
+    coord.ds["interface"] = previous
+
+    with pytest.raises(TrueNASCallError):
+        await coord.get_interface()
+    assert coord._interface_stale is False
+
+    assert await coord._run_job(coord.get_interface) is False
+    assert coord.ds["interface"] is previous
+    assert coord.is_data_path_failing("interface") is True
+
+
+def test_is_data_path_failing_ignores_stale_interface_from_state() -> None:
+    """interface comes from TrueNASSystem now: TrueNASState's stale_endpoints
+    no longer covers it, only get_interface()'s own _interface_stale does."""
+    coord = _bare_coordinator()
+    coord.state = MagicMock(stale_endpoints=frozenset({"interface"}))
+    assert coord.is_data_path_failing("interface") is False
 
 
 # ---------------------------
