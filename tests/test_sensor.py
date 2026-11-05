@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _fakes import make_config_entry, make_coordinator
+from aiotruenas import InterfaceTraffic, SystemInfo, SystemStats
 from homeassistant.components.sensor import SensorExtraStoredData, SensorStateClass
-from homeassistant.const import PERCENTAGE, UnitOfInformation
+from homeassistant.const import PERCENTAGE, UnitOfDataRate, UnitOfInformation
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.truenas_ce import sensor as sensor_mod
 from custom_components.truenas_ce.const import CONF_DATA_UNIT
+from custom_components.truenas_ce.coordinator import TrueNASData
 from custom_components.truenas_ce.sensor import (
     TrueNASAlertSensor,
     TrueNASAppStatsSensor,
@@ -475,14 +478,135 @@ def test_disk_sensor_icon(devname: str, disk_type: str, expected: str) -> None:
 # ---------------------------
 #   TrueNASUptimeSensor
 # ---------------------------
-def test_uptime_native_value_positive() -> None:
-    sensor = _make_sensor(TrueNASUptimeSensor, {"value": 1735689600})
-    assert isinstance(sensor.native_value, datetime)
+_BOOT_TIME = datetime(2026, 11, 1, 8, 30, tzinfo=UTC)
+_SYSTEM_DATA = TrueNASData(
+    info=SystemInfo(
+        hostname="nas1",
+        version="25.10.1",
+        manufacturer=None,
+        product=None,
+        serial=None,
+        physical_memory=34359738368,
+        boot_time=_BOOT_TIME,
+        uptime_seconds=100.0,
+        load_1m=0.11,
+        load_5m=0.22,
+        load_15m=0.33,
+        is_virtual=False,
+    ),
+    stats=SystemStats(
+        cpu_usage_percent=12.5,
+        cpu_temperature=47.0,
+        memory_available=8589934592,
+        memory_usage_percent=74.6,
+        arc_size=4294967296,
+        interfaces={"eth0": InterfaceTraffic(rx_kbps=8192.0, tx_kbps=81.92)},
+    ),
+)
 
 
-def test_uptime_native_value_zero_is_none() -> None:
-    sensor = _make_sensor(TrueNASUptimeSensor, {"value": 0})
-    assert sensor.native_value is None
+@pytest.mark.parametrize(
+    ("key", "uid", "expected"),
+    [
+        ("system_uptime", None, _BOOT_TIME),
+        ("system_cpu_temperature", None, 47.0),
+        ("system_load_shortterm", None, 0.11),
+        ("system_load_midterm", None, 0.22),
+        ("system_load_longterm", None, 0.33),
+        ("system_cpu_usage", None, 12.5),
+        ("system_memory_usage", None, 75),
+        ("system_cache_size-arc_value", None, 4294967296),
+        ("system_memory_total", None, 34359738368),
+        ("system_memory_free", None, 8589934592),
+        ("traffic_rx", "eth0", 8192.0),
+        ("traffic_tx", "eth0", 81.92),
+    ],
+)
+def test_system_sensor_value_fn_reads_the_typed_snapshot(
+    key: str, uid: str | None, expected: object
+) -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == key)
+    assert desc.value_fn is not None
+    assert desc.value_fn(_SYSTEM_DATA, uid) == expected
+    # Unknown until TrueNAS first reports it, instead of a resting default.
+    assert desc.value_fn(TrueNASData(), uid) is None
+
+
+@pytest.mark.parametrize("uid", [None, "eth1"])
+@pytest.mark.parametrize("key", ["traffic_rx", "traffic_tx"])
+def test_traffic_value_fn_is_none_without_a_reading(key: str, uid: str | None) -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == key)
+    assert desc.value_fn is not None
+    assert desc.value_fn(_SYSTEM_DATA, uid) is None
+
+
+def test_system_sensor_value_fn_rounds_like_the_former_ds_keys() -> None:
+    """Loads, CPU usage and throughput keep two decimals and memory usage is
+    a whole percent, so the state does not change on noise alone."""
+    data = TrueNASData(
+        info=replace(
+            _SYSTEM_DATA.info, load_1m=0.4521484375, load_5m=0.126, load_15m=0.333
+        ),
+        stats=replace(
+            _SYSTEM_DATA.stats,
+            cpu_usage_percent=12.3456,
+            memory_usage_percent=74.4,
+            interfaces={"eth0": InterfaceTraffic(rx_kbps=1.23456, tx_kbps=9.87654)},
+        ),
+    )
+    values = {
+        d.key: d.value_fn(data, "eth0") for d in SENSOR_TYPES if d.value_fn is not None
+    }
+
+    assert values["system_load_shortterm"] == 0.45
+    assert values["system_load_midterm"] == 0.13
+    assert values["system_load_longterm"] == 0.33
+    assert values["system_cpu_usage"] == 12.35
+    assert values["system_memory_usage"] == 74
+    assert isinstance(values["system_memory_usage"], int)
+    assert values["traffic_rx"] == 1.23
+    assert values["traffic_tx"] == 9.88
+
+
+def test_traffic_sensor_native_value_reads_its_interface() -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == "traffic_rx")
+    coordinator = make_coordinator(
+        data={"interface": {"eth0": {"id": "eth0", "name": "eth0", "rx": 0}}},
+        system_data=_SYSTEM_DATA,
+    )
+    sensor = TrueNASSensor(coordinator, desc, "eth0")
+
+    assert sensor.native_value == 8192.0
+
+
+def test_traffic_sensors_report_kilobits_per_second() -> None:
+    """TrueNASSystem reports kbit/s; the suggested unit keeps the display."""
+    for key in ("traffic_rx", "traffic_tx"):
+        desc = next(d for d in SENSOR_TYPES if d.key == key)
+        assert desc.native_unit_of_measurement == UnitOfDataRate.KILOBITS_PER_SECOND
+        assert desc.suggested_unit_of_measurement == UnitOfDataRate.MEGABYTES_PER_SECOND
+
+
+def test_sensor_native_value_uses_value_fn_with_snapshot_and_uid() -> None:
+    value_fn = MagicMock(return_value=42)
+    desc = TrueNASSensorEntityDescription(
+        key="k", name="N", data_path="disk", data_attribute="value", value_fn=value_fn
+    )
+    coordinator = make_coordinator(
+        data={"disk": {"o1": {"value": 7}}}, system_data=_SYSTEM_DATA
+    )
+    sensor = TrueNASSensor(coordinator, desc, "o1")
+
+    assert sensor.native_value == 42
+    value_fn.assert_called_once_with(_SYSTEM_DATA, "o1")
+
+
+def test_uptime_sensor_reads_boot_time() -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == "system_uptime")
+    coordinator = make_coordinator(system_data=_SYSTEM_DATA)
+    sensor = TrueNASUptimeSensor(coordinator, desc)
+
+    assert sensor.native_value == _BOOT_TIME
 
 
 async def test_uptime_restart_calls_reboot() -> None:

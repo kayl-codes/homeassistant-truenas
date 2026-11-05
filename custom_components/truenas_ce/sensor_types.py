@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, NamedTuple
 
+from aiotruenas import InterfaceTraffic
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntityDescription,
@@ -20,6 +23,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
+from homeassistant.helpers.typing import StateType
 
 try:
     from homeassistant.const import UnitOfRatio
@@ -57,6 +61,7 @@ from .const import (
     SERVICE_SYSTEM_REFRESH,
     SERVICE_SYSTEM_SHUTDOWN,
 )
+from .coordinator import TrueNASData
 from .entity import TrueNASEntityDescription
 
 DEVICE_ATTRIBUTES_NETWORK = (
@@ -231,7 +236,42 @@ class TrueNASSensorEntityDescription(SensorEntityDescription, TrueNASEntityDescr
     # whose data[key] == value (e.g. don't create traffic sensors for a
     # network interface whose link is down).
     data_exclude: tuple[str, Any] | None = None
+    # Reads the state from the typed system snapshot (coordinator.system_data)
+    # and the entity's uid, instead of data_attribute; data_path and
+    # data_attribute still decide which entities are created.
+    value_fn: Callable[[TrueNASData, str | None], StateType | datetime] | None = None
     func: str = "TrueNASSensor"
+
+
+def _rounded(value: float | None, digits: int = 2) -> float | None:
+    """Round a reading as the former ``ds`` keys did; ``None`` stays unknown."""
+    return None if value is None else round(value, digits)
+
+
+def _memory_usage_percent(data: TrueNASData, _: str | None) -> int | None:
+    """Return the memory usage as a whole percent, as the former ``ds`` key did."""
+    if data.stats is None or data.stats.memory_usage_percent is None:
+        return None
+    return round(data.stats.memory_usage_percent)
+
+
+def _traffic(data: TrueNASData, interface_id: str | None) -> InterfaceTraffic | None:
+    """Return the throughput reading of ``interface_id``, if known."""
+    if data.stats is None or interface_id is None:
+        return None
+    return data.stats.interfaces.get(interface_id)
+
+
+def _rx_kbps(data: TrueNASData, interface_id: str | None) -> float | None:
+    """Return the receive rate of ``interface_id`` in kbit/s, if known."""
+    traffic = _traffic(data, interface_id)
+    return _rounded(traffic.rx_kbps) if traffic else None
+
+
+def _tx_kbps(data: TrueNASData, interface_id: str | None) -> float | None:
+    """Return the transmit rate of ``interface_id`` in kbit/s, if known."""
+    traffic = _traffic(data, interface_id)
+    return _rounded(traffic.tx_kbps) if traffic else None
 
 
 SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
@@ -279,6 +319,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         func="TrueNASUptimeSensor",
+        value_fn=lambda data, _: data.info.boot_time if data.info else None,
     ),
     TrueNASSensorEntityDescription(
         key="system_cpu_temperature",
@@ -295,6 +336,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_name=None,
         data_uid=None,
         data_reference=None,
+        value_fn=lambda data, _: data.stats.cpu_temperature if data.stats else None,
     ),
     TrueNASSensorEntityDescription(
         key="system_load_shortterm",
@@ -309,6 +351,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_name=None,
         data_uid=None,
         data_reference=None,
+        value_fn=lambda data, _: _rounded(data.info.load_1m if data.info else None),
     ),
     TrueNASSensorEntityDescription(
         key="system_load_midterm",
@@ -323,6 +366,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_name=None,
         data_uid=None,
         data_reference=None,
+        value_fn=lambda data, _: _rounded(data.info.load_5m if data.info else None),
     ),
     TrueNASSensorEntityDescription(
         key="system_load_longterm",
@@ -337,6 +381,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_name=None,
         data_uid=None,
         data_reference=None,
+        value_fn=lambda data, _: _rounded(data.info.load_15m if data.info else None),
     ),
     TrueNASSensorEntityDescription(
         key="system_cpu_usage",
@@ -352,6 +397,9 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_CPU,
+        value_fn=lambda data, _: _rounded(
+            data.stats.cpu_usage_percent if data.stats else None
+        ),
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_usage",
@@ -367,6 +415,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        value_fn=_memory_usage_percent,
     ),
     TrueNASSensorEntityDescription(
         key="system_cache_size-arc_value",
@@ -383,6 +432,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_name=None,
         data_uid=None,
         data_reference=None,
+        value_fn=lambda data, _: data.stats.arc_size if data.stats else None,
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_total",
@@ -400,6 +450,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        value_fn=lambda data, _: data.info.physical_memory if data.info else None,
     ),
     TrueNASSensorEntityDescription(
         key="system_memory_free",
@@ -417,6 +468,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_uid=None,
         data_reference=None,
         data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        value_fn=lambda data, _: data.stats.memory_available if data.stats else None,
     ),
     TrueNASSensorEntityDescription(
         key="dataset",
@@ -682,7 +734,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
     TrueNASSensorEntityDescription(
         key="traffic_rx",
         translation_key="traffic_rx",
-        native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.KILOBITS_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.MEGABYTES_PER_SECOND,
         suggested_display_precision=2,
         device_class=SensorDeviceClass.DATA_RATE,
@@ -696,11 +748,12 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_reference="id",
         data_attributes_list=DEVICE_ATTRIBUTES_NETWORK,
         data_exclude=("link_state", LINK_STATE_DOWN),
+        value_fn=_rx_kbps,
     ),
     TrueNASSensorEntityDescription(
         key="traffic_tx",
         translation_key="traffic_tx",
-        native_unit_of_measurement=UnitOfDataRate.KIBIBYTES_PER_SECOND,
+        native_unit_of_measurement=UnitOfDataRate.KILOBITS_PER_SECOND,
         suggested_unit_of_measurement=UnitOfDataRate.MEGABYTES_PER_SECOND,
         suggested_display_precision=2,
         device_class=SensorDeviceClass.DATA_RATE,
@@ -714,6 +767,7 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         data_reference="id",
         data_attributes_list=DEVICE_ATTRIBUTES_NETWORK,
         data_exclude=("link_state", LINK_STATE_DOWN),
+        value_fn=_tx_kbps,
     ),
     TrueNASSensorEntityDescription(
         key="ups_charge",

@@ -19,7 +19,6 @@ from homeassistant.helpers import entity_platform as ep
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.util.dt import utc_from_timestamp
 
 from .api import SECRET_SCRUB_FILTER
 from .const import (
@@ -416,9 +415,13 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
     def native_value(self) -> StateType | date | datetime | Decimal:
         """Return the value reported by the sensor.
 
-        Uses .get() so a transient API failure that empties the coordinator data
-        degrades the state to unknown instead of raising a KeyError mid-update.
+        A description with a ``value_fn`` reads the typed system snapshot.
+        Otherwise uses .get() so a transient API failure that empties the
+        coordinator data degrades the state to unknown instead of raising a
+        KeyError mid-update.
         """
+        if (value_fn := self.entity_description.value_fn) is not None:
+            return value_fn(self.coordinator.system_data, self._uid)
         value: StateType | date | datetime | Decimal = self._data.get(
             self.entity_description.data_attribute or ""
         )
@@ -537,15 +540,7 @@ class TrueNASPoolScrubProgressSensor(TrueNASSensor):
 #   TrueNASUptimeSensor
 # ---------------------------
 class TrueNASUptimeSensor(TrueNASSensor):
-    """Define an TrueNAS Uptime sensor."""
-
-    @property
-    def native_value(self) -> StateType | date | datetime | Decimal:
-        """Return the value reported by the sensor."""
-        val = self._data.get(self.entity_description.data_attribute or "")
-        if isinstance(val, (int, float)) and val > 0:
-            return utc_from_timestamp(val)
-        return None
+    """Define an TrueNAS Uptime sensor (its state comes from ``value_fn``)."""
 
     async def restart(self) -> None:
         """Restart TrueNAS systen."""

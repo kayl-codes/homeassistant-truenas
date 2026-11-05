@@ -26,7 +26,7 @@ mypy                    # strict typing (config in pyproject.toml, scoped to cus
 
 ## Architecture
 
-Data flows in one direction: **API → Coordinator → `coordinator.ds` dict → entities**.
+Data flows in one direction: **API → Coordinator → `coordinator.ds` dict → entities**. The system sensors take their state from a typed snapshot beside it, `coordinator.system_data` (see "Platforms and the entity-description pattern").
 
 ### Layers
 
@@ -45,7 +45,7 @@ Platforms registered in `PLATFORMS` ([const.py](custom_components/truenas_ce/con
 - `<platform>.py` — the entity classes and `async_setup_entry` (which only builds the `dispatcher` and calls the shared `async_add_entities`/`setup_entities`).
 - `<platform>_types.py` — exports `SENSOR_TYPES` (a tuple of frozen-dataclass entity descriptions subclassing the HA `*EntityDescription`) and `SENSOR_SERVICES`.
 
-Entity descriptions are **declarative**: each carries `data_path` (which `coordinator.ds` key to read), `data_attribute`/`data_is_on` (which field is the value), `data_reference` (field used for the unique id when iterating multiple objects), `data_attributes_list` (extra state attributes), `ha_group` (device grouping), and `func` (the dispatcher key naming the entity class to instantiate). To add a sensor/switch, you usually only add a description entry plus, if needed, a new class in the dispatcher — no changes to `entity.py`.
+Entity descriptions are **declarative**: each carries `data_path` (which `coordinator.ds` key to read), `data_attribute`/`data_is_on` (which field is the value, unless the description has a `value_fn`), `data_reference` (field used for the unique id when iterating multiple objects), `data_attributes_list` (extra state attributes), `ha_group` (device grouping), and `func` (the dispatcher key naming the entity class to instantiate). The system sensors (uptime, CPU, load, memory, ARC, network traffic) additionally carry a `value_fn(data, uid)` that reads their state from `coordinator.system_data`, a typed `TrueNASData` snapshot of aiotruenas `TrueNASSystem` results; their `data_path`/`data_attribute` still decide which entities are created. To add a sensor/switch, you usually only add a description entry plus, if needed, a new class in the dispatcher — no changes to `entity.py`.
 
 ### Services (actions)
 
