@@ -18,6 +18,12 @@ Use this file as a review checklist. Flag a violation only when the diff actuall
 - [ ] **New monitored fields go through `parse_api` specs** (`vals` / `ensure_vals` in `apiparser.py`: `/` paths, `type`, `default`, `convert`), not ad-hoc post-processing in the coordinator.
 - [ ] **New sensitive keys** (like the existing passwords/passphrases, `api_key`, serials, host/IP addresses, certificates/private keys) are added to `TO_REDACT` in `const.py` so diagnostics stay redacted. The debug logging in `api.py` masks `TO_REDACT` keys via `_redact` (query params, summarized responses and subscription events); any new log line that prints API params or payloads must go through `_redact`/`_summarize_payload` too (never log raw payloads with `%r`); where `api.py` cannot be imported (e.g. `apiparser.py`, which tests load standalone), log only `type(value).__name__`. Exception texts and error reasons go through `scrub_exception` (free-text secrets such as `password=…`, `--token …` or URL credentials are masked by `scrub_text`); new log lines that print an exception must pass it through `scrub_exception` too, and diagnostics wrap `async_redact_data` output in `scrub_strings`.
 
+## Typed snapshots (`coordinator.system_data`)
+
+- [ ] **Normalization also covers the first poll.** A rule that cleans up a reading (e.g. `physical_memory == 0` treated as missing) must also apply when there is no previous snapshot, not only while merging with `previous`. Test both paths: `previous=None` and a later poll (like `test_system_data_treats_zero_physical_memory_as_missing_on_first_poll` in `tests/test_coordinator.py`).
+- [ ] **A snapshot filters like its `ds` counterpart.** `coordinator.system_data` holds only objects that the matching `ds` key also holds (e.g. throughput only for interfaces in `ds["interface"]`, see `_retain_known_system_stats` in `coordinator.py`). Otherwise it keeps values for objects the integration does not create or has removed.
+- [ ] **A new data path updates the architecture rules in `CLAUDE.md` in the same PR** (the data-flow line and the entity-description pattern).
+
 ## Blocking calls
 
 - [ ] **No unbounded blocking call runs on Home Assistant's shared executor.**
