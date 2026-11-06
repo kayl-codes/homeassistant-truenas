@@ -50,8 +50,12 @@ from custom_components.truenas_ce.const import (
     SERVICE_ALERT_UUID,
     SERVICE_PASSPHRASE_DATASET_PATH,
 )
+from custom_components.truenas_ce.coordinator import TrueNASData
 from custom_components.truenas_ce.helper import GB_SCALED_UNITS
-from custom_components.truenas_ce.sensor_types import TrueNASSensorEntityDescription
+from custom_components.truenas_ce.sensor_types import (
+    SENSOR_TYPES,
+    TrueNASSensorEntityDescription,
+)
 
 
 def _desc(**kwargs: Any) -> TrueNASSensorEntityDescription:
@@ -250,6 +254,53 @@ def test_description_references_without_reference_returns_single_pair() -> None:
     )
 
     assert _description_references(coordinator, description) == [(None, 12345)]
+
+
+def test_description_references_without_reference_uses_value_fn() -> None:
+    """A system sensor's unit migration reads its value from system_data."""
+    coordinator = MagicMock()
+    coordinator.ds = {"system_info": {"hostname": "nas1"}}
+    calls: list[tuple[object, object]] = []
+
+    def value_fn(data: object, uid: object) -> int:
+        calls.append((data, uid))
+        return 2048
+
+    description = _desc(
+        key="system_memory_total", data_path="system_info", value_fn=value_fn
+    )
+
+    assert _description_references(coordinator, description) == [(None, 2048)]
+    assert calls == [(coordinator.system_data, None)]
+
+
+@pytest.mark.parametrize(
+    ("system_data", "unit"),
+    [
+        (
+            TrueNASData(info=SimpleNamespace(physical_memory=2 * 1024**4)),  # type: ignore[arg-type]
+            UnitOfInformation.TEBIBYTES,
+        ),
+        (TrueNASData(), UnitOfInformation.GIBIBYTES),
+    ],
+)
+def test_migrate_description_sets_system_sensor_unit_from_system_data(
+    system_data: TrueNASData, unit: UnitOfInformation
+) -> None:
+    """The memory-total sensor's unit follows system_data; before the first
+    reading it falls back to the base unit instead of failing."""
+    description = next(d for d in SENSOR_TYPES if d.key == "system_memory_total")
+    coordinator = MagicMock(ds={"system_info": {"hostname": "nas1"}})
+    coordinator.system_data = system_data
+    ent_reg = MagicMock()
+    ent_reg.async_get_entity_id.return_value = "sensor.nas1_memory_total"
+    ent_reg.async_get.return_value = SimpleNamespace(options={})
+
+    _migrate_description(ent_reg, coordinator, "TrueNAS", description, True)
+
+    ent_reg.async_update_entity_options.assert_called_once_with(
+        "sensor.nas1_memory_total", "sensor", {"unit_of_measurement": unit}
+    )
 
 
 def test_description_references_with_reference_skips_non_dict_vals() -> None:

@@ -201,22 +201,47 @@ def test_extract_composite_ref_honor_exclude_false_ignores_exclude() -> None:
 # ---------------------------
 #   _skip_keyless_description
 # ---------------------------
+_NO_SYSTEM_DATA = SimpleNamespace(system_data=None)
+
+
 def test_skip_keyless_description_true_when_attribute_missing() -> None:
     desc = TrueNASSensorEntityDescription(
         key="k", name="N", data_path="p", data_attribute="value"
     )
-    assert _skip_keyless_description(desc, {}) is True
+    assert _skip_keyless_description(_NO_SYSTEM_DATA, desc, {}) is True
 
 
 def test_skip_keyless_description_false_when_attribute_present() -> None:
     desc = TrueNASSensorEntityDescription(
         key="k", name="N", data_path="p", data_attribute="value"
     )
-    assert _skip_keyless_description(desc, {"value": 42}) is False
+    assert _skip_keyless_description(_NO_SYSTEM_DATA, desc, {"value": 42}) is False
 
 
 def test_skip_keyless_description_no_attribute_at_all() -> None:
-    assert _skip_keyless_description(_STATIC_DESC, {}) is False
+    assert _skip_keyless_description(_NO_SYSTEM_DATA, _STATIC_DESC, {}) is False
+
+
+@pytest.mark.parametrize(("value", "skipped"), [(None, True), (0, False)])
+def test_skip_keyless_description_asks_value_fn_of_the_system_data(
+    value: object, skipped: bool
+) -> None:
+    """A system sensor exists once its value_fn returns a value (0 counts),
+    whatever ds holds."""
+    system_data = object()
+    calls: list[tuple[object, object]] = []
+
+    def value_fn(data: object, uid: object) -> object:
+        calls.append((data, uid))
+        return value
+
+    desc = TrueNASSensorEntityDescription(
+        key="k", name="N", data_path="p", data_attribute="value", value_fn=value_fn
+    )
+    coordinator = SimpleNamespace(system_data=system_data)
+
+    assert _skip_keyless_description(coordinator, desc, {"value": 42}) is skipped
+    assert calls == [(system_data, None)]
 
 
 # ---------------------------
@@ -322,6 +347,25 @@ def test_collect_new_entities_keyless_description() -> None:
     result = _collect_new_entities(coordinator, [desc], _dispatcher(), set())
     assert len(result) == 1
     assert result[0]._uid is None
+
+
+def test_collect_new_entities_adds_value_fn_sensor_once_it_has_a_value() -> None:
+    """A system sensor appears on the poll that brings its first value."""
+    readings: list[float | None] = [None, 12.5]
+    desc = TrueNASSensorEntityDescription(
+        key="system_cpu_usage",
+        name="CPU",
+        data_path="system_info",
+        func="TrueNASEntity",
+        value_fn=lambda _data, _uid: readings[0],
+    )
+    coordinator = make_coordinator(data={"system_info": {"hostname": "nas1"}})
+
+    assert not _collect_new_entities(coordinator, [desc], _dispatcher(), set())
+    readings.pop(0)
+    result = _collect_new_entities(coordinator, [desc], _dispatcher(), set())
+
+    assert [entity._uid for entity in result] == [None]
 
 
 def test_collect_new_entities_referenced_description() -> None:

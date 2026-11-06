@@ -609,6 +609,100 @@ def test_uptime_sensor_reads_boot_time() -> None:
     assert sensor.native_value == _BOOT_TIME
 
 
+_SYSTEM_INFO_DS = {"system_info": {"hostname": "nas1"}}
+
+
+@pytest.mark.parametrize(
+    "key", ["system_memory_usage", "system_memory_total", "system_memory_free"]
+)
+def test_memory_sensors_carry_free_and_total_from_the_snapshot(key: str) -> None:
+    """Same attribute names and rounding as the former ds keys; ds itself no
+    longer holds them."""
+    desc = next(d for d in SENSOR_TYPES if d.key == key)
+    data = replace(
+        _SYSTEM_DATA,
+        stats=replace(_SYSTEM_DATA.stats, memory_available=8589934592.456),
+    )
+    coordinator = make_coordinator(data=_SYSTEM_INFO_DS, system_data=data)
+    sensor = TrueNASSensor(coordinator, desc)
+
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["memory-free_value"] == 8589934592.46
+    assert attributes["memory-total_value"] == 34359738368
+
+
+@pytest.mark.parametrize(
+    ("system_data", "expected"),
+    [
+        (TrueNASData(), set()),
+        (replace(_SYSTEM_DATA, info=None), {"memory-free_value"}),
+        (replace(_SYSTEM_DATA, stats=None), {"memory-total_value"}),
+    ],
+)
+def test_memory_attributes_leave_out_values_not_known_yet(
+    system_data: TrueNASData, expected: set[str]
+) -> None:
+    desc = next(d for d in SENSOR_TYPES if d.key == "system_memory_free")
+    coordinator = make_coordinator(data=_SYSTEM_INFO_DS, system_data=system_data)
+    sensor = TrueNASSensor(coordinator, desc)
+
+    attributes = sensor.extra_state_attributes
+
+    assert {"memory-free_value", "memory-total_value"} & attributes.keys() == expected
+
+
+@pytest.mark.parametrize(
+    "desc",
+    [d for d in SENSOR_TYPES if d.value_fn or d.attributes_fn],
+    ids=lambda d: d.key,
+)
+def test_snapshot_functions_never_raise(desc: TrueNASSensorEntityDescription) -> None:
+    """Entity setup and the unit migration call value_fn/attributes_fn before
+    the first poll, keyless with uid None: they must return, not raise."""
+    for data in (TrueNASData(), _SYSTEM_DATA):
+        for uid in (None, "eth0", "eth9"):
+            if desc.value_fn:
+                desc.value_fn(data, uid)
+            if desc.attributes_fn:
+                desc.attributes_fn(data, uid)
+    if desc.value_fn:
+        assert desc.value_fn(TrueNASData(), None) is None
+    if desc.attributes_fn:
+        assert desc.attributes_fn(TrueNASData(), None) == {}
+
+
+def test_attributes_fn_extends_the_data_attributes() -> None:
+    """attributes_fn adds to the data_attributes_list values and wins a clash."""
+    desc = TrueNASSensorEntityDescription(
+        key="k",
+        name="N",
+        data_path="disk",
+        data_attributes_list=["a", "c"],
+        attributes_fn=lambda _data, _uid: {"a": 2, "b": 3},
+    )
+    coordinator = make_coordinator(
+        data={"disk": {"o1": {"a": 1, "c": 4}}}, system_data=_SYSTEM_DATA
+    )
+    sensor = TrueNASSensor(coordinator, desc, "o1")
+
+    attributes = sensor.extra_state_attributes
+
+    assert {key: attributes[key] for key in ("a", "b", "c")} == {"a": 2, "b": 3, "c": 4}
+
+
+def test_data_size_system_sensor_scales_its_unit_from_the_snapshot() -> None:
+    """The GiB/TiB display unit follows value_fn, not a ds key."""
+    desc = next(d for d in SENSOR_TYPES if d.key == "system_memory_total")
+    data = replace(
+        _SYSTEM_DATA, info=replace(_SYSTEM_DATA.info, physical_memory=2 * 1024**4)
+    )
+    coordinator = make_coordinator(data=_SYSTEM_INFO_DS, system_data=data)
+    sensor = TrueNASSensor(coordinator, desc)
+
+    assert sensor.suggested_unit_of_measurement == UnitOfInformation.TEBIBYTES
+
+
 async def test_uptime_restart_calls_reboot() -> None:
     sensor = _make_sensor(TrueNASUptimeSensor, {})
     await sensor.restart()
