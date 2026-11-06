@@ -15,6 +15,7 @@ used for ``TrueNASConfigFlow``.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -3906,7 +3907,7 @@ def _systemstats_coordinator(
 
 async def test_get_systemstats_stores_readings_in_system_data_only() -> None:
     coord = _systemstats_coordinator(_stats())
-    before = {key: dict(value) for key, value in coord.ds.items()}
+    before = copy.deepcopy(coord.ds)
 
     await coord.get_systemstats()
 
@@ -4076,7 +4077,7 @@ async def test_get_systemstats_keeps_everything_when_the_call_fails(
     graph keeps its values and is reported, like the per-graph handling of
     the former TrueNASState endpoint -- the poll's other jobs still run."""
     coord = _systemstats_coordinator(TrueNASConnectionError("gone"))
-    before = {key: dict(value) for key, value in coord.ds.items()}
+    before = copy.deepcopy(coord.ds)
 
     with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
         await coord.get_systemstats()
