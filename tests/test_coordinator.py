@@ -15,6 +15,7 @@ used for ``TrueNASConfigFlow``.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -3331,10 +3332,6 @@ def _systeminfo_coordinator(
     return coord
 
 
-_NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
-_NOW_EPOCH = int(_NOW.timestamp())
-
-
 async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
     coord = _systeminfo_coordinator(_system_info())
 
@@ -3347,32 +3344,25 @@ async def test_get_systeminfo_delegates_and_runs_pipeline() -> None:
     coord._handle_update_job.assert_awaited_once()
 
 
-async def test_get_systeminfo_maps_system_info_onto_legacy_keys() -> None:
-    """Same keys, rounding and resting values as TrueNASState's endpoint."""
+async def test_get_systeminfo_writes_only_device_info_onto_ds() -> None:
+    """Same keys and values as TrueNASState's endpoint for the device info;
+    the system sensors' readings stay out of ds (they read system_data)."""
     coord = _systeminfo_coordinator(_system_info())
-    coord.ds["system_info"] = {"cpu_usage": 42.0}
 
-    with patch.object(coordinator_module, "datetime") as datetime_mock:
-        datetime_mock.now.return_value = _NOW
-        await coord.get_systeminfo()
+    await coord.get_systeminfo()
 
-    info = coord.ds["system_info"]
-    assert info["version"] == "TrueNAS-SCALE-25.04.1"
-    assert info["system_serial"] == "S123"
-    assert info["system_product"] == "X11"
-    assert info["system_manufacturer"] == "Supermicro"
-    assert info["uptime_seconds"] == 100.0
-    assert info["physmem"] == 34359738368
-    assert info["memory-total_value"] == 34359738368
-    assert info["load_shortterm"] == 0.12
-    assert info["load_midterm"] == 0.46
-    assert info["load_longterm"] == 0.79
-    assert info["uptimeEpoch"] == _NOW_EPOCH - 100
-    # A stats reading written by get_systemstats survives; the other stats
-    # keys get their resting value.
-    assert info["cpu_usage"] == 42.0
-    assert info["cpu_temperature"] is None
-    assert info["memory-usage_percent"] == 0
+    assert coord.ds["system_info"] == {
+        "version": "TrueNAS-SCALE-25.04.1",
+        "hostname": "nas1",
+        "system_serial": "S123",
+        "system_product": "X11",
+        "system_manufacturer": "Supermicro",
+        "update_available": False,
+        "update_progress": 0,
+        "update_jobid": 0,
+        "update_state": "unknown",
+        "update_version": "TrueNAS-SCALE-25.04.1",
+    }
 
 
 async def test_get_systeminfo_maps_missing_fields_to_resting_values() -> None:
@@ -3383,14 +3373,8 @@ async def test_get_systeminfo_maps_missing_fields_to_resting_values() -> None:
             manufacturer=None,
             product=None,
             serial=None,
-            physical_memory=None,
-            uptime_seconds=None,
-            load_1m=None,
-            load_5m=None,
-            load_15m=None,
         )
     )
-    coord.ds["system_info"] = {"load_shortterm": 1.5, "memory-total_value": 8}
 
     await coord.get_systeminfo()
 
@@ -3400,51 +3384,6 @@ async def test_get_systeminfo_maps_missing_fields_to_resting_values() -> None:
     assert info["system_serial"] == "unknown"
     assert info["system_product"] == "unknown"
     assert info["system_manufacturer"] == "unknown"
-    assert info["uptime_seconds"] == 0
-    assert info["physmem"] == 0
-    # A load average or memory size TrueNAS did not report keeps its value.
-    assert info["load_shortterm"] == 1.5
-    assert info["load_midterm"] == 0.0
-    assert info["memory-total_value"] == 8
-    assert info["uptimeEpoch"] == 0
-
-
-@pytest.mark.parametrize(
-    ("stored_shift", "expected_shift"),
-    [
-        # Within the 300 s tolerance: keep the stored boot time.
-        (300, 300),
-        # Beyond it (e.g. after a reboot): adopt the new boot time.
-        (301, 0),
-    ],
-)
-async def test_get_systeminfo_damps_uptime_epoch_jitter(
-    stored_shift: int, expected_shift: int
-) -> None:
-    coord = _systeminfo_coordinator(_system_info(uptime_seconds=100.0))
-    coord.ds["system_info"] = {"uptimeEpoch": _NOW_EPOCH - 100 + stored_shift}
-
-    with patch.object(coordinator_module, "datetime") as datetime_mock:
-        datetime_mock.now.return_value = _NOW
-        await coord.get_systeminfo()
-
-    assert coord.ds["system_info"]["uptimeEpoch"] == (_NOW_EPOCH - 100 + expected_shift)
-
-
-@pytest.mark.parametrize("stored", [None, "unknown", True])
-async def test_get_systeminfo_derives_uptime_epoch_from_zero_uptime(
-    stored: object,
-) -> None:
-    """A just-booted box (uptime 0) boots "now"; a stored value that is not
-    a number does not count as a previous boot time."""
-    coord = _systeminfo_coordinator(_system_info(uptime_seconds=0.0))
-    coord.ds["system_info"] = {"uptimeEpoch": stored}
-
-    with patch.object(coordinator_module, "datetime") as datetime_mock:
-        datetime_mock.now.return_value = _NOW
-        await coord.get_systeminfo()
-
-    assert coord.ds["system_info"]["uptimeEpoch"] == _NOW_EPOCH
 
 
 async def test_get_systeminfo_retains_known_stats_inputs() -> None:
@@ -3462,8 +3401,6 @@ async def test_get_systeminfo_retains_known_stats_inputs() -> None:
     assert coord._system_info.hostname == "nas2"
     assert coord._system_info.is_virtual is True
     assert coord._system_info.physical_memory == 34359738368
-    # ds keeps the raw resting value, as with TrueNASState.
-    assert coord.ds["system_info"]["physmem"] == 0
 
 
 async def test_get_systeminfo_adopts_reported_stats_inputs() -> None:
@@ -3713,8 +3650,6 @@ async def test_get_interface_maps_interfaces_onto_legacy_keys() -> None:
             "active_media_subtype": "10000Mb/s Other",
             "link_address": "aa:bb:cc:dd:ee:ff",
             "link_up": True,
-            "rx": 0,
-            "tx": 0,
         }
     }
 
@@ -3753,33 +3688,29 @@ async def test_get_interface_maps_blank_fields_to_former_values() -> None:
         "active_media_subtype": "",
         "link_address": "",
         "link_up": False,
-        "rx": 0,
-        "tx": 0,
     }
 
 
 async def test_get_interface_keeps_traffic_and_drops_removed_interfaces() -> None:
-    """An interface still reported keeps its entry dict (and so the rx/tx
-    get_systemstats wrote onto it); one TrueNAS no longer reports is dropped."""
+    """An interface still reported keeps its entry dict; one TrueNAS no
+    longer reports is dropped."""
     coord = _interface_coordinator(
         {"eth0": _interface(link_state="LINK_STATE_DOWN", link_up=False)}
     )
-    eth0 = {"id": "eth0", "rx": 12.5, "tx": 3.25, "link_up": True}
-    coord.ds["interface"] = {"eth0": eth0, "eth9": {"id": "eth9", "rx": 1, "tx": 1}}
+    eth0 = {"id": "eth0", "link_up": True}
+    coord.ds["interface"] = {"eth0": eth0, "eth9": {"id": "eth9"}}
 
     await coord.get_interface()
 
     assert set(coord.ds["interface"]) == {"eth0"}
     assert coord.ds["interface"]["eth0"] is eth0
-    assert eth0["rx"] == 12.5
-    assert eth0["tx"] == 3.25
     assert eth0["link_up"] is False
     assert eth0["link_state"] == "LINK_STATE_DOWN"
 
 
-async def test_get_interface_and_systemstats_keep_traffic_across_polls() -> None:
-    """get_systemstats writes rx/tx onto the entries get_interface built in
-    the same poll, and the next get_interface keeps them."""
+async def test_get_interface_and_systemstats_keep_traffic_out_of_ds() -> None:
+    """Throughput lives in system_data only; the ds["interface"] entries
+    get_interface builds carry no rx/tx across polls."""
     coord = _interface_coordinator({"eth0": _interface()})
     coord.ds["system_info"] = {}
     coord._system_info = _system_info()
@@ -3789,8 +3720,12 @@ async def test_get_interface_and_systemstats_keep_traffic_across_polls() -> None
     await coord.get_systemstats()
     await coord.get_interface()
 
-    assert coord.ds["interface"]["eth0"]["rx"] == 1000.0
-    assert coord.ds["interface"]["eth0"]["tx"] == 10.0
+    assert "rx" not in coord.ds["interface"]["eth0"]
+    assert "tx" not in coord.ds["interface"]["eth0"]
+    assert coord.system_data.stats is not None
+    assert coord.system_data.stats.interfaces == {
+        "eth0": InterfaceTraffic(rx_kbps=8192.0, tx_kbps=81.92)
+    }
 
 
 async def test_get_interface_empty_result_on_first_poll() -> None:
@@ -3938,10 +3873,9 @@ def test_is_data_path_failing_ignores_stale_interface_from_state() -> None:
 # ---------------------------
 #   get_systemstats
 # ---------------------------
-# get_systemstats maps aiotruenas TrueNASSystem's partial-mode SystemStats
-# onto the ds["system_info"]/ds["interface"] keys, units and rounding the
-# former TrueNASState endpoint produced; graph fetching/parsing itself is
-# tested in aiotruenas.
+# get_systemstats stores aiotruenas TrueNASSystem's partial-mode SystemStats
+# in system_data (see the system_data tests below) and reports stale graphs;
+# graph fetching/parsing itself is tested in aiotruenas.
 def _stats(**overrides: object) -> SystemStats:
     values: dict[str, object] = {
         "cpu_usage_percent": 12.3456,
@@ -3959,14 +3893,8 @@ def _systemstats_coordinator(
 ) -> TrueNASCoordinator:
     coord = _bare_coordinator()
     coord.ds = {
-        "system_info": {
-            "cpu_usage": 1.0,
-            "cpu_temperature": 30.0,
-            "memory-free_value": 2.0,
-            "memory-usage_percent": 3,
-            "cache_size-arc_value": 4.0,
-        },
-        "interface": {"eth0": {"rx": 5.0, "tx": 6.0}},
+        "system_info": {"hostname": "nas1"},
+        "interface": {"eth0": {"id": "eth0"}},
     }
     coord._system_info = _system_info()
     coord.system = MagicMock()
@@ -3977,35 +3905,24 @@ def _systemstats_coordinator(
     return coord
 
 
-async def test_get_systemstats_maps_readings_onto_legacy_keys() -> None:
+async def test_get_systemstats_stores_readings_in_system_data_only() -> None:
     coord = _systemstats_coordinator(_stats())
-    system_info = coord.ds["system_info"]
-    interface = coord.ds["interface"]
+    before = copy.deepcopy(coord.ds)
 
     await coord.get_systemstats()
 
     coord.system.get_system_stats.assert_awaited_once_with(
         coord._system_info, partial=True
     )
-    # Updated in place: other jobs keep using the same dict objects.
-    assert coord.ds["system_info"] is system_info
-    assert coord.ds["interface"] is interface
-    assert system_info["cpu_usage"] == 12.35
-    assert system_info["cpu_temperature"] == 47.25
-    assert system_info["memory-free_value"] == 8589934592
-    assert system_info["memory-usage_percent"] == 75
-    assert system_info["cache_size-arc_value"] == 4294967296
-    # kbit/s -> KiB/s (x 1000 / 8192), rounded to two decimals.
-    assert interface["eth0"]["rx"] == 1000.0
-    assert interface["eth0"]["tx"] == 10.0
+    assert coord.system_data.stats == _stats()
+    assert coord.ds == before
     assert coord._systemstats_stale_graphs_logged == frozenset()
 
 
 async def test_get_systemstats_keeps_values_of_a_failed_graph(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A graph reported in failed_graphs keeps its previous values (not None)
-    and is logged with its error."""
+    """A graph reported in failed_graphs is logged with its error."""
     coord = _systemstats_coordinator(
         _stats(
             cpu_usage_percent=None,
@@ -4020,9 +3937,6 @@ async def test_get_systemstats_keeps_values_of_a_failed_graph(
     with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
         await coord.get_systemstats()
 
-    assert coord.ds["system_info"]["cpu_usage"] == 1.0
-    assert coord.ds["interface"]["eth0"] == {"rx": 5.0, "tx": 6.0}
-    assert coord.ds["system_info"]["cache_size-arc_value"] == 4294967296
     assert coord._systemstats_stale_graphs_logged == {"cpu", "interface"}
     assert "cpu (" in caplog.text
     assert "interface (" in caplog.text
@@ -4032,8 +3946,8 @@ async def test_get_systemstats_keeps_values_of_a_failed_graph(
 async def test_get_systemstats_reports_a_graph_without_reading(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A graph that answered without a reading keeps its previous values and
-    counts as stale, as with TrueNASState."""
+    """A graph that answered without a reading counts as stale, as with
+    TrueNASState; memory_usage_percent alone does not make memory stale."""
     coord = _systemstats_coordinator(
         _stats(arc_size=None, cpu_temperature=None, memory_usage_percent=None)
     )
@@ -4041,11 +3955,30 @@ async def test_get_systemstats_reports_a_graph_without_reading(
     with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
         await coord.get_systemstats()
 
-    assert coord.ds["system_info"]["cache_size-arc_value"] == 4.0
-    assert coord.ds["system_info"]["cpu_temperature"] == 30.0
-    assert coord.ds["system_info"]["memory-usage_percent"] == 3
     assert coord._systemstats_stale_graphs_logged == {"arcsize", "cputemp"}
     assert "arcsize (no usable reading)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("overrides", "stale"),
+    [
+        ({"cpu_usage_percent": None}, {"cpu"}),
+        ({"memory_available": None}, {"memory"}),
+        (
+            {"interfaces": {"eth0": InterfaceTraffic(rx_kbps=None, tx_kbps=None)}},
+            {"interface"},
+        ),
+    ],
+)
+async def test_get_systemstats_reports_each_graph_without_reading(
+    overrides: dict[str, object], stale: set[str]
+) -> None:
+    """A known interface reported without rx and tx has no reading either."""
+    coord = _systemstats_coordinator(_stats(**overrides))
+
+    await coord.get_systemstats()
+
+    assert coord._systemstats_stale_graphs_logged == stale
 
 
 async def test_get_systemstats_does_not_expect_cputemp_on_a_vm() -> None:
@@ -4064,14 +3997,13 @@ async def test_get_systemstats_reports_interface_without_matching_reading() -> N
 
     await coord.get_systemstats()
 
-    assert coord.ds["interface"]["eth0"] == {"rx": 5.0, "tx": 6.0}
     assert "eth9" not in coord.ds["interface"]
     assert coord._systemstats_stale_graphs_logged == {"interface"}
 
 
-async def test_get_systemstats_applies_a_partial_interface_match() -> None:
-    """One interface with a reading is enough: the others and a missing
-    direction keep their values, and the graph is not stale."""
+async def test_get_systemstats_partial_interface_match_is_not_stale() -> None:
+    """One direction of one reported interface with a reading is enough for
+    the interface graph not to be stale."""
     coord = _systemstats_coordinator(
         _stats(
             interfaces={
@@ -4080,12 +4012,10 @@ async def test_get_systemstats_applies_a_partial_interface_match() -> None:
             }
         )
     )
-    coord.ds["interface"]["eth1"] = {"rx": 7.0, "tx": 8.0}
+    coord.ds["interface"]["eth1"] = {"id": "eth1"}
 
     await coord.get_systemstats()
 
-    assert coord.ds["interface"]["eth0"] == {"rx": 1000.0, "tx": 6.0}
-    assert coord.ds["interface"]["eth1"] == {"rx": 7.0, "tx": 8.0}
     assert coord._systemstats_stale_graphs_logged == frozenset()
 
 
@@ -4147,7 +4077,7 @@ async def test_get_systemstats_keeps_everything_when_the_call_fails(
     graph keeps its values and is reported, like the per-graph handling of
     the former TrueNASState endpoint -- the poll's other jobs still run."""
     coord = _systemstats_coordinator(TrueNASConnectionError("gone"))
-    before = {key: dict(value) for key, value in coord.ds.items()}
+    before = copy.deepcopy(coord.ds)
 
     with caplog.at_level(logging.WARNING, logger=coordinator_module.__name__):
         await coord.get_systemstats()

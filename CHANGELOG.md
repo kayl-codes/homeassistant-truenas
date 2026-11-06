@@ -29,6 +29,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   for a newly added interface) shows as unknown instead of 0; a reading that drops out
   later keeps its last known value. The traffic sensors now report kbit/s natively and are
   still shown in MB/s. (#226)
+- The system sensors no longer keep a second copy of their values in the integration's
+  internal data. Diagnostics now show these values in a new `system_data` section instead
+  of under `system_info` and `interface`. A system sensor is added once TrueNAS first
+  reports its value, as the CPU temperature sensor already was. The memory sensors leave out
+  their `memory-free_value` / `memory-total_value` attributes until TrueNAS reports them.
+  (#228)
 
 ### Fixed
 - **TrueNAS logged a warning every poll while the SMB connections sensor was enabled.** Even

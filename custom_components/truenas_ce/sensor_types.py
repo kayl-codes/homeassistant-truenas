@@ -135,11 +135,6 @@ DEVICE_ATTRIBUTES_DISK = (
 
 DEVICE_ATTRIBUTES_CPU: tuple[str, ...] = ()
 
-DEVICE_ATTRIBUTES_MEMORY = (
-    "memory-free_value",
-    "memory-total_value",
-)
-
 DEVICE_ATTRIBUTES_CLOUDSYNC = (
     "description",
     "direction",
@@ -237,9 +232,14 @@ class TrueNASSensorEntityDescription(SensorEntityDescription, TrueNASEntityDescr
     # network interface whose link is down).
     data_exclude: tuple[str, Any] | None = None
     # Reads the state from the typed system snapshot (coordinator.system_data)
-    # and the entity's uid, instead of data_attribute; data_path and
-    # data_attribute still decide which entities are created.
+    # and the entity's uid, instead of data_attribute. A keyless description
+    # is created once value_fn returns a value (uid is None there); data_path
+    # still decides which objects a referenced one is created for. value_fn
+    # must not raise, also before the first poll: entity setup calls it.
     value_fn: Callable[[TrueNASData, str | None], StateType | datetime] | None = None
+    # Extra state attributes from the typed system snapshot, merged over the
+    # data_attributes_list ones.
+    attributes_fn: Callable[[TrueNASData, str | None], dict[str, Any]] | None = None
     func: str = "TrueNASSensor"
 
 
@@ -253,6 +253,20 @@ def _memory_usage_percent(data: TrueNASData, _: str | None) -> int | None:
     if data.stats is None or data.stats.memory_usage_percent is None:
         return None
     return round(data.stats.memory_usage_percent)
+
+
+def _memory_attributes(data: TrueNASData, _: str | None) -> dict[str, Any]:
+    """Return the free and total memory attributes the memory sensors carry.
+
+    Keeps the attribute names and rounding of the former ``ds`` keys; a value
+    that is not known yet is left out.
+    """
+    attributes: dict[str, Any] = {}
+    if data.stats is not None and data.stats.memory_available is not None:
+        attributes["memory-free_value"] = round(data.stats.memory_available, 2)
+    if data.info is not None and data.info.physical_memory is not None:
+        attributes["memory-total_value"] = data.info.physical_memory
+    return attributes
 
 
 def _traffic(data: TrueNASData, interface_id: str | None) -> InterfaceTraffic | None:
@@ -314,7 +328,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="uptimeEpoch",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -332,7 +345,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="cpu_temperature",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -347,7 +359,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="load_shortterm",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -362,7 +373,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="load_midterm",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -377,7 +387,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="load_longterm",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -392,7 +401,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="cpu_usage",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -410,11 +418,10 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="memory-usage_percent",
         data_name=None,
         data_uid=None,
         data_reference=None,
-        data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        attributes_fn=_memory_attributes,
         value_fn=_memory_usage_percent,
     ),
     TrueNASSensorEntityDescription(
@@ -428,7 +435,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="cache_size-arc_value",
         data_name=None,
         data_uid=None,
         data_reference=None,
@@ -445,11 +451,10 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="memory-total_value",
         data_name=None,
         data_uid=None,
         data_reference=None,
-        data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        attributes_fn=_memory_attributes,
         value_fn=lambda data, _: data.info.physical_memory if data.info else None,
     ),
     TrueNASSensorEntityDescription(
@@ -463,11 +468,10 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         ha_group="System",
         data_path="system_info",
-        data_attribute="memory-free_value",
         data_name=None,
         data_uid=None,
         data_reference=None,
-        data_attributes_list=DEVICE_ATTRIBUTES_MEMORY,
+        attributes_fn=_memory_attributes,
         value_fn=lambda data, _: data.stats.memory_available if data.stats else None,
     ),
     TrueNASSensorEntityDescription(
@@ -742,7 +746,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=None,
         ha_group="Network",
         data_path="interface",
-        data_attribute="rx",
         data_name="name",
         data_uid=None,
         data_reference="id",
@@ -761,7 +764,6 @@ SENSOR_TYPES: tuple[TrueNASSensorEntityDescription, ...] = (
         entity_category=None,
         ha_group="Network",
         data_path="interface",
-        data_attribute="tx",
         data_name="name",
         data_uid=None,
         data_reference="id",

@@ -135,12 +135,18 @@ def _migrate_data_size_units(
 def _description_references(
     coordinator: TrueNASCoordinator, description: TrueNASSensorEntityDescription
 ) -> list[tuple[Any, Any]]:
-    """Return (reference, value) pairs for every entity a description produces."""
+    """Return (reference, value) pairs for every entity a description produces.
+
+    A keyless description with a ``value_fn`` (the system sensors) takes its
+    value from ``coordinator.system_data``.
+    """
     data = coordinator.ds.get(description.data_path or "")
     if not isinstance(data, dict):
         return []
 
     if not description.data_reference:
+        if description.value_fn is not None:
+            return [(None, description.value_fn(coordinator.system_data, None))]
         return [(None, data.get(description.data_attribute or ""))]
 
     pairs: list[tuple[Any, Any]] = []

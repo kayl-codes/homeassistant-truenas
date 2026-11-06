@@ -799,9 +799,17 @@ def _extract_composite_ref(
 #   Entity discovery helpers
 # ---------------------------
 def _skip_keyless_description(
-    entity_description: TrueNASEntityDescription, data: dict[str, Any]
+    coordinator: TrueNASCoordinator,
+    entity_description: TrueNASEntityDescription,
+    data: dict[str, Any],
 ) -> bool:
-    """Return True if a keyless description has no value to expose."""
+    """Return True if a keyless description has no value to expose.
+
+    A description with a ``value_fn`` (the system sensors) has a value once
+    ``value_fn`` returns one from ``coordinator.system_data``.
+    """
+    if (value_fn := getattr(entity_description, "value_fn", None)) is not None:
+        return value_fn(coordinator.system_data, None) is None
     attr_name = getattr(entity_description, "data_attribute", None) or getattr(
         entity_description, "data_is_on", None
     )
@@ -877,7 +885,7 @@ def _collect_new_entities(
             new_entities += _new_referenced_entities(
                 coordinator, entity_description, data, dispatcher, seen
             )
-        elif not _skip_keyless_description(entity_description, data):
+        elif not _skip_keyless_description(coordinator, entity_description, data):
             obj = dispatcher[entity_description.func](coordinator, entity_description)
             _append_if_new(obj, seen, new_entities)
 
@@ -1354,12 +1362,10 @@ class TrueNASEntity(CoordinatorEntity[TrueNASCoordinator], Entity):
 
         Keys are the raw API ``variable`` names, not humanized display
         labels: state attributes are meant to be machine-readable for
-        templates/automations. Most are snake_case, though a few (e.g.
-        "memory-free_value") keep a literal hyphen from the source field.
-        HA's frontend already humanizes any key without an explicit
-        ``state_attributes`` strings.json entry (e.g. "link_state" ->
-        "Link State"); an explicit entry is only needed to override that
-        generic fallback, as done for "uuids".
+        templates/automations. HA's frontend already humanizes any key
+        without an explicit ``state_attributes`` strings.json entry (e.g.
+        "link_state" -> "Link State"); an explicit entry is only needed to
+        override that generic fallback, as done for "uuids".
         """
         attributes = dict(super().extra_state_attributes or {})
         for variable in self.entity_description.data_attributes_list:

@@ -401,11 +401,7 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
                     CONF_DATA_UNIT, DEFAULT_DATA_UNIT
                 ),
             )
-            value = (
-                self._data.get(self.entity_description.data_attribute or "")
-                if self._data
-                else None
-            )
+            value = self._raw_value() if self._data else None
             unit, precision = scaled_data_unit(value, data_unit == "GiB")
             self._attr_suggested_unit_of_measurement = unit
             if precision is not None:
@@ -420,12 +416,27 @@ class TrueNASSensor(TrueNASEntity, SensorEntity):
         coordinator data degrades the state to unknown instead of raising a
         KeyError mid-update.
         """
+        return self._raw_value()
+
+    def _raw_value(self) -> StateType | date | datetime | Decimal:
+        """Return the value from ``value_fn``, else from ``data_attribute``."""
         if (value_fn := self.entity_description.value_fn) is not None:
             return value_fn(self.coordinator.system_data, self._uid)
         value: StateType | date | datetime | Decimal = self._data.get(
             self.entity_description.data_attribute or ""
         )
         return value
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """Return the state attributes, plus those of ``attributes_fn``."""
+        attributes = super().extra_state_attributes
+        if (attributes_fn := self.entity_description.attributes_fn) is None:
+            return attributes
+        return {
+            **attributes,
+            **attributes_fn(self.coordinator.system_data, self._uid),
+        }
 
     @property
     def native_unit_of_measurement(self) -> str | None:
