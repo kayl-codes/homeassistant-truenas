@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from _fakes import make_coordinator
+from homeassistant.components.repairs import RepairsFlowManager
 from homeassistant.config_entries import UnknownEntry
 
 from custom_components.truenas_ce.const import (
     CONF_STATISTICS_CLEANUP_IGNORED,
+    DOMAIN,
     MIGRATION_LEGACY_ENTRY_ID,
     MIGRATION_RECORDS,
 )
@@ -103,6 +105,38 @@ async def test_statistics_cleanup_init_uses_metadata_only_step() -> None:
     # Metadata-only orphans are still named: the id list is the only thing the
     # user can act on once the data points are gone.
     assert result["description_placeholders"]["entities"] == "- `sensor.a`"
+
+
+@pytest.mark.parametrize(
+    ("with_data", "step_id"), [(0, "init_metadata_only"), (1, "init")]
+)
+async def test_statistics_cleanup_menu_loads_and_reopens(
+    with_data: int, step_id: str
+) -> None:
+    """The flow manager must accept and redisplay either cleanup menu step."""
+    coordinator = make_coordinator()
+    coordinator.orphaned_statistics = ["sensor.a"]
+    coordinator.async_count_orphans_with_data = AsyncMock(return_value=with_data)
+    entry = SimpleNamespace(runtime_data=coordinator)
+    flow = StatisticsCleanupRepairFlow("entry1")
+    manager = RepairsFlowManager(_make_hass(entry))
+
+    with patch.object(manager, "async_create_flow", return_value=flow):
+        result = await manager.async_init(
+            DOMAIN, context={"issue_id": "statistics_orphaned_entry1"}
+        )
+
+    assert result["type"] == "menu"
+    assert result["step_id"] == step_id
+    assert result["menu_options"] == ["fix", "ignore"]
+    assert result["description_placeholders"]["entities"] == "- `sensor.a`"
+
+    reopened = await manager.async_configure(result["flow_id"])
+    assert reopened["type"] == "menu"
+    assert reopened["step_id"] == step_id
+    assert reopened["menu_options"] == ["fix", "ignore"]
+    coordinator.async_clear_orphaned_statistics.assert_not_awaited()
+    manager.async_abort(result["flow_id"])
 
 
 async def test_statistics_cleanup_init_truncates_long_id_list() -> None:
