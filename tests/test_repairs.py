@@ -110,14 +110,15 @@ async def test_statistics_cleanup_init_uses_metadata_only_step() -> None:
 @pytest.mark.parametrize(
     ("with_data", "step_id"), [(0, "init_metadata_only"), (1, "init")]
 )
+@pytest.mark.parametrize("choice", ["fix", "ignore", "abort"])
 async def test_statistics_cleanup_menu_loads_and_reopens(
-    with_data: int, step_id: str
+    with_data: int, step_id: str, choice: str
 ) -> None:
-    """The flow manager must accept and redisplay either cleanup menu step."""
+    """Only explicitly choosing Fix may clear statistics from either menu."""
     coordinator = make_coordinator()
     coordinator.orphaned_statistics = ["sensor.a"]
     coordinator.async_count_orphans_with_data = AsyncMock(return_value=with_data)
-    entry = SimpleNamespace(runtime_data=coordinator)
+    entry = SimpleNamespace(runtime_data=coordinator, options={})
     flow = StatisticsCleanupRepairFlow("entry1")
     manager = RepairsFlowManager(_make_hass(entry))
 
@@ -136,7 +137,26 @@ async def test_statistics_cleanup_menu_loads_and_reopens(
     assert reopened["step_id"] == step_id
     assert reopened["menu_options"] == ["fix", "ignore"]
     coordinator.async_clear_orphaned_statistics.assert_not_awaited()
-    manager.async_abort(result["flow_id"])
+    if choice == "abort":
+        manager.async_abort(result["flow_id"])
+    else:
+        with patch("custom_components.truenas_ce.repairs.ir.async_delete_issue"):
+            finished = await manager.async_configure(
+                result["flow_id"], {"next_step_id": choice}
+            )
+        assert finished["type"] == "create_entry"
+
+    if choice == "fix":
+        coordinator.async_clear_orphaned_statistics.assert_awaited_once()
+        manager.hass.config_entries.async_update_entry.assert_not_called()
+    else:
+        coordinator.async_clear_orphaned_statistics.assert_not_awaited()
+        if choice == "ignore":
+            manager.hass.config_entries.async_update_entry.assert_called_once_with(
+                entry, options={CONF_STATISTICS_CLEANUP_IGNORED: True}
+            )
+        else:
+            manager.hass.config_entries.async_update_entry.assert_not_called()
 
 
 async def test_statistics_cleanup_init_truncates_long_id_list() -> None:
