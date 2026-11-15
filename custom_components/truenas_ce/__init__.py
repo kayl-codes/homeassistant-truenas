@@ -140,7 +140,7 @@ def _migrate_data_size_units(
         if description.suggested_unit_of_measurement in GB_SCALED_UNITS:
             _migrate_description(ent_reg, coordinator, identity, description, binary)
         else:
-            _reset_stale_forced_unit(ent_reg, coordinator, identity, description)
+            _reset_stale_forced_unit(ent_reg, config_entry, identity, description)
 
 
 def _description_references(
@@ -238,13 +238,26 @@ def _force_entity_unit(
 
 def _reset_stale_forced_unit(
     ent_reg: er.EntityRegistry,
-    coordinator: TrueNASCoordinator,
+    config_entry: TrueNASConfigEntry,
     identity: str,
     description: TrueNASSensorEntityDescription,
 ) -> None:
-    """Undo a stale GB/GiB unit a past bug forced onto a fixed-unit description."""
-    for reference, _value in _description_references(coordinator, description):
-        _reset_entity_unit(ent_reg, identity, description, reference)
+    """Undo a stale GB/GiB unit a past bug forced onto a fixed-unit description.
+
+    The entities are found in the entity registry, not in the coordinator data:
+    the reset needs no value, and the data of the app-stat sensors is still
+    empty when the setup runs (``app.stats`` samples only arrive after the
+    subscription), which would skip exactly the sensors this reset is for.
+    """
+    base = format_unique_id(identity, description.key)
+    for entry in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id):
+        if entry.domain != "sensor" or entry.platform != DOMAIN:
+            continue
+        if entry.unique_id == base:
+            _reset_entity_unit(ent_reg, identity, description, None)
+        elif entry.unique_id.startswith(f"{base}-"):
+            reference = entry.unique_id[len(base) + 1 :]
+            _reset_entity_unit(ent_reg, identity, description, reference)
 
 
 def _reset_entity_unit(
@@ -265,6 +278,9 @@ def _reset_entity_unit(
 
     The reset runs once per entity (``_UNIT_RESET_DONE_OPTION``): the bug it
     undoes is gone, so a unit the user picks afterwards must survive restarts.
+    An entity created after the fix has no marker until its first setup, so a
+    unit picked in that window is cleared once as well (the same one-off window
+    ``_force_entity_unit`` documents).
     """
     entity_id = ent_reg.async_get_entity_id(
         "sensor", DOMAIN, format_unique_id(identity, description.key, reference)
@@ -275,24 +291,24 @@ def _reset_entity_unit(
     own_options = dict(entry.options.get(DOMAIN, {}))
     if own_options.get(_UNIT_RESET_DONE_OPTION):
         return
-    own_options[_UNIT_RESET_DONE_OPTION] = True
-    ent_reg.async_update_entity_options(entity_id, DOMAIN, own_options)
 
     target_unit = description.suggested_unit_of_measurement
     options = dict(entry.options.get("sensor", {}))
     current_unit = options.get(_UNIT_OPTION)
-    if current_unit is None or current_unit == target_unit:
-        return
+    if current_unit is not None and current_unit != target_unit:
+        del options[_UNIT_OPTION]
+        ent_reg.async_update_entity_options(entity_id, "sensor", options)
+        _LOGGER.info(
+            "Reset %s from a stale forced unit (%s) back to %s; a prior release's "
+            "unit migration incorrectly applied the GB/GiB scale to this sensor",
+            entity_id,
+            current_unit,
+            target_unit,
+        )
 
-    del options[_UNIT_OPTION]
-    ent_reg.async_update_entity_options(entity_id, "sensor", options)
-    _LOGGER.info(
-        "Reset %s from a stale forced unit (%s) back to %s; a prior release's "
-        "unit migration incorrectly applied the GB/GiB scale to this sensor",
-        entity_id,
-        current_unit,
-        target_unit,
-    )
+    # Recorded last: a failed clean-up above is retried on the next setup.
+    own_options[_UNIT_RESET_DONE_OPTION] = True
+    ent_reg.async_update_entity_options(entity_id, DOMAIN, own_options)
 
 
 # ---------------------------

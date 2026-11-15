@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import CONF_NAME, UnitOfInformation
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -576,10 +577,33 @@ def test_reset_entity_unit_clears_mismatched_option() -> None:
 
     _reset_entity_unit(ent_reg, "TrueNAS", description, "myapp")
 
+    # The marker comes last: a failed clean-up is retried on the next setup.
     assert ent_reg.async_update_entity_options.call_args_list == [
-        call("sensor.truenas_app_stats_memory", DOMAIN, {"unit_reset_done": True}),
         call("sensor.truenas_app_stats_memory", "sensor", {}),
+        call("sensor.truenas_app_stats_memory", DOMAIN, {"unit_reset_done": True}),
     ]
+
+
+def test_reset_entity_unit_retries_when_the_cleanup_fails() -> None:
+    """No done marker is written if clearing the stale unit raised."""
+    ent_reg = MagicMock()
+    ent_reg.async_get_entity_id.return_value = "sensor.truenas_app_stats_memory"
+    ent_reg.async_get.return_value = SimpleNamespace(
+        options={"sensor": {"unit_of_measurement": "GiB"}}
+    )
+    ent_reg.async_update_entity_options.side_effect = RuntimeError("registry")
+    description = _desc(
+        key="app_stats_memory",
+        data_attribute="memory",
+        suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
+    )
+
+    with pytest.raises(RuntimeError):
+        _reset_entity_unit(ent_reg, "TrueNAS", description, "myapp")
+
+    ent_reg.async_update_entity_options.assert_called_once_with(
+        "sensor.truenas_app_stats_memory", "sensor", {}
+    )
 
 
 def test_reset_entity_unit_runs_only_once_per_entity() -> None:
@@ -642,7 +666,7 @@ def test_reset_entity_unit_keeps_other_integration_markers() -> None:
 
     _reset_entity_unit(ent_reg, "TrueNAS", description, "myapp")
 
-    assert ent_reg.async_update_entity_options.call_args_list[0] == call(
+    assert ent_reg.async_update_entity_options.call_args_list[-1] == call(
         "sensor.truenas_app_stats_memory",
         DOMAIN,
         {"auto_unit": "", "unit_reset_done": True},
@@ -695,9 +719,14 @@ def test_reset_entity_unit_noop_when_entity_missing() -> None:
     ent_reg.async_update_entity_options.assert_not_called()
 
 
-def test_reset_stale_forced_unit_delegates_per_reference() -> None:
-    coordinator = MagicMock()
-    coordinator.ds = {"app_stats": {"a": {"app_name": "myapp", "memory": 100}}}
+def _registry_entry(unique_id: str, *, platform: str = DOMAIN, domain: str = "sensor"):
+    return SimpleNamespace(unique_id=unique_id, platform=platform, domain=domain)
+
+
+def test_reset_stale_forced_unit_resets_every_registered_entity() -> None:
+    """The entities come from the registry, so the reset also reaches app-stat
+    sensors whose coordinator data is still empty when the setup runs.
+    """
     description = _desc(
         key="app_stats_memory",
         data_path="app_stats",
@@ -705,12 +734,154 @@ def test_reset_stale_forced_unit_delegates_per_reference() -> None:
         data_attribute="memory",
         suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
     )
+    entry = _config_entry()
+    ent_reg = MagicMock()
+    entries = [
+        _registry_entry("truenas-app_stats_memory-my-app"),
+        _registry_entry("truenas-app_stats_memory-other"),
+        # Not this description, another platform/domain, or a longer key.
+        _registry_entry("truenas-app_stats_blkio_read-my-app"),
+        _registry_entry("truenas-app_stats_memory-x", platform="other"),
+        _registry_entry("truenas-app_stats_memory-y", domain="switch"),
+        _registry_entry("truenas-app_stats_memory_extra-z"),
+    ]
+
+    with (
+        patch.object(
+            init_module.er, "async_entries_for_config_entry", return_value=entries
+        ) as entries_mock,
+        patch.object(init_module, "_reset_entity_unit") as reset_mock,
+    ):
+        _reset_stale_forced_unit(ent_reg, entry, "TrueNAS", description)
+
+    entries_mock.assert_called_once_with(ent_reg, entry.entry_id)
+    assert reset_mock.call_args_list == [
+        call(ent_reg, "TrueNAS", description, "my-app"),
+        call(ent_reg, "TrueNAS", description, "other"),
+    ]
+
+
+def test_reset_stale_forced_unit_handles_a_keyless_entity() -> None:
+    description = _desc(
+        key="app_stats_memory",
+        suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
+    )
     ent_reg = MagicMock()
 
-    with patch.object(init_module, "_reset_entity_unit") as reset_mock:
-        _reset_stale_forced_unit(ent_reg, coordinator, "TrueNAS", description)
+    with (
+        patch.object(
+            init_module.er,
+            "async_entries_for_config_entry",
+            return_value=[_registry_entry("truenas-app_stats_memory")],
+        ),
+        patch.object(init_module, "_reset_entity_unit") as reset_mock,
+    ):
+        _reset_stale_forced_unit(ent_reg, _config_entry(), "TrueNAS", description)
 
-    reset_mock.assert_called_once_with(ent_reg, "TrueNAS", description, "myapp")
+    reset_mock.assert_called_once_with(ent_reg, "TrueNAS", description, None)
+
+
+class _UniqueIdRegistry:
+    """Registry stand-in holding several sensor entities, looked up by unique_id."""
+
+    def __init__(self, unique_ids: list[str], sensor_unit: str | None) -> None:
+        self.options: dict[str, dict[str, dict[str, Any]]] = {
+            uid: {"sensor": {"unit_of_measurement": sensor_unit}} if sensor_unit else {}
+            for uid in unique_ids
+        }
+        self.queried: list[str] = []
+        self.failing_sensor_writes = 0
+
+    def entries(self) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(unique_id=uid, platform=DOMAIN, domain="sensor")
+            for uid in self.options
+        ]
+
+    def async_get_entity_id(self, _domain: str, _platform: str, unique_id: str):
+        self.queried.append(unique_id)
+        return f"sensor.{unique_id}" if unique_id in self.options else None
+
+    def async_get(self, entity_id: str) -> SimpleNamespace:
+        stored = self.options[entity_id.removeprefix("sensor.")]
+        return SimpleNamespace(
+            options=MappingProxyType({k: dict(v) for k, v in stored.items()})
+        )
+
+    def async_update_entity_options(
+        self, entity_id: str, domain: str, options: dict[str, Any]
+    ) -> None:
+        if domain == "sensor" and self.failing_sensor_writes:
+            self.failing_sensor_writes -= 1
+            raise RuntimeError("registry write failed")
+        self.options[entity_id.removeprefix("sensor.")][domain] = dict(options)
+
+
+def test_migration_resets_app_sensors_while_coordinator_data_is_empty() -> None:
+    """End to end through the real migration: the app.stats data is still empty
+    when the setup runs, yet a stale unit on an existing app sensor is cleared.
+    """
+    entry = _config_entry(options={"data_unit": "GiB"})
+    identity = init_module.resolve_entry_identity(entry)
+    # References with '-', '/' and mixed case must round-trip unchanged.
+    unique_ids = [
+        init_module.format_unique_id(identity, "app_stats_memory", "My-App/x"),
+        init_module.format_unique_id(identity, "app_stats_blkio_read", "plain"),
+    ]
+    fake = _UniqueIdRegistry(unique_ids, "GiB")
+    coordinator = MagicMock()
+    coordinator.ds = {}
+
+    with (
+        patch.object(init_module.er, "async_get", return_value=fake),
+        patch.object(
+            init_module.er,
+            "async_entries_for_config_entry",
+            return_value=fake.entries(),
+        ),
+    ):
+        _migrate_data_size_units(MagicMock(), entry, coordinator)
+
+    assert set(fake.queried) >= set(unique_ids)
+    for uid in unique_ids:
+        assert fake.options[uid] == {DOMAIN: {"unit_reset_done": True}, "sensor": {}}
+
+
+def test_reset_entity_unit_is_retried_after_a_failed_cleanup() -> None:
+    """A failing clean-up leaves no done marker, so the next setup retries it."""
+    description = _desc(
+        key="app_stats_memory",
+        data_attribute="memory",
+        suggested_unit_of_measurement=UnitOfInformation.MEBIBYTES,
+    )
+    uid = init_module.format_unique_id("TrueNAS", description.key, "myapp")
+    fake = _UniqueIdRegistry([uid], "GiB")
+    fake.failing_sensor_writes = 1
+
+    with pytest.raises(RuntimeError):
+        _reset_entity_unit(fake, "TrueNAS", description, "myapp")  # type: ignore[arg-type]
+    assert DOMAIN not in fake.options[uid]
+
+    _reset_entity_unit(fake, "TrueNAS", description, "myapp")  # type: ignore[arg-type]
+
+    assert fake.options[uid] == {DOMAIN: {"unit_reset_done": True}, "sensor": {}}
+
+
+def test_fixed_unit_description_keys_are_no_prefix_of_another_key() -> None:
+    """``_reset_stale_forced_unit`` matches unique_ids by ``<key>-`` prefix, which
+    is only safe while no other key starts with ``<fixed key>-``."""
+    fixed_keys = {
+        d.key
+        for d in SENSOR_TYPES
+        if getattr(d, "device_class", None) == SensorDeviceClass.DATA_SIZE
+        and d.suggested_unit_of_measurement not in GB_SCALED_UNITS
+    }
+    all_keys = {d.key for d in SENSOR_TYPES}
+
+    assert fixed_keys
+    assert not [
+        key for key in all_keys for fixed in fixed_keys if key.startswith(f"{fixed}-")
+    ]
 
 
 # ---------------------------
