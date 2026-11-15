@@ -81,24 +81,33 @@ def new_commits(repo, sha):
 
 
 def _version_key(tag_name):
-    """Sort key of a stable tag name such as ``v2.13.1`` (numeric, not text)."""
-    return tuple(int(part) for part in tag_name.lstrip("v").split("."))
+    """Numeric sort key of a tag name such as ``v2.13.1`` or ``v2.13.2-rc2``.
+
+    A pre-release suffix is dropped, so ``v2.13.2-rc2`` sorts as ``v2.13.2``.
+    """
+    return tuple(int(part) for part in tag_name.split("-")[0].lstrip("v").split("."))
 
 
 def last_integration_release(github, current=None):
-    """Return the newest stable release, skipping the release being published.
+    """Return the newest stable release older than the one being published.
 
-    ``current`` is the tag name of the release being published (or None to
-    skip nothing). It is matched by exact name and the baseline is the highest
-    stable version by number, so neither depends on the order of the tag list.
-    Pre-release tags (``-rcN``) are never returned as the baseline.
+    ``current`` is the tag name of the release being published (or None for no
+    limit). It is matched by exact name, and only stable tags below its version
+    are candidates, so publishing an older release after a newer one still
+    gets its own baseline. The result is the highest such version by number,
+    so the order of the tag list does not matter. Pre-release tags (``-rcN``)
+    are never returned as the baseline.
     """
     repo = github.get_repo(REPO_NAME)
     stable_reg = r"^v?\d+(\.\d+){0,2}$"
+    versioned = current and re.match(r"^v?\d+(\.\d+){0,2}(-rc\d+)?$", current)
+    limit = _version_key(current) if versioned else None
     candidates = [
         tag
         for tag in repo.get_tags()
-        if tag.name != current and re.match(stable_reg, tag.name)
+        if tag.name != current
+        and re.match(stable_reg, tag.name)
+        and (limit is None or _version_key(tag.name) < limit)
     ]
     if not candidates:
         return {"tag_name": None, "tag_sha": None}
