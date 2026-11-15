@@ -44,6 +44,23 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   first, so the sensor keeps working without the warning; you no longer need to disable the
   sensor to keep the log clean. With a read-only key, the first refused call stops the query
   until the next reload, and the sensor stays unavailable. (#220)
+- **A unit you chose in the entity settings was reset on every restart.** The integration set
+  the display unit of its data-size sensors (for example the backup size) itself on
+  every start, which overwrote a unit picked under *Settings → Entities → (sensor) → Unit of
+  measurement*. It now remembers the unit it set last. A different unit is treated as your
+  choice and kept, also over the GB/GiB option; clearing the unit in the entity settings
+  hands the sensor back to the automatic scaling. A unit chosen before this update is
+  overwritten once, so re-select it after updating. Thanks @dominatorstang for the report.
+  (#232)
+- **The statistics cleanup repair failed when reopened for metadata-only leftovers.** If the
+  orphaned statistics had no data points, reopening the repair dialog (for example when the
+  frontend reloaded it) raised an "UnknownStep" error. It now shows the menu again with the
+  current count. Thanks @obur5 for the fix. (#229, #234)
+- **Home Assistant 2026.11 logged a deprecation warning for the integration.** The config flow
+  still imported the connection-class constant `CONN_CLASS_LOCAL_POLL`, which Home Assistant
+  removes in 2027.5.0. The unused import is gone; the connection class is already declared
+  through `iot_class` in the manifest, so nothing changes in behavior. Thanks @Lurick73 for
+  the report. (#230)
 
 ## [2.13.1] — Reload & SMB Polling Fixes
 
