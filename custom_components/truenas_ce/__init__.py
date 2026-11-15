@@ -95,6 +95,16 @@ _ALL_DESCRIPTIONS = (
     *UPDATE_SENSOR_TYPES,
 )
 
+# Registry option holding the display unit the integration itself last wrote.
+# Lives under ``options[DOMAIN]`` so it never collides with the user's choice in
+# ``options["sensor"]["unit_of_measurement"]``.
+_AUTO_UNIT_OPTION = "auto_unit"
+# Marker value meaning "the user pinned a unit; never auto-scale this entity".
+_USER_UNIT = ""
+# Registry option set once the legacy forced-unit reset has run for an entity.
+_UNIT_RESET_DONE_OPTION = "unit_reset_done"
+_UNIT_OPTION = "unit_of_measurement"
+
 
 # ---------------------------
 #   _migrate_data_size_units
@@ -109,12 +119,13 @@ def _migrate_data_size_units(
     The unit is derived from the configured base (GB/GiB) and the entity's
     current value, then written directly to the entity registry on every startup
     so the GB/GiB preference takes effect and the unit tracks the value (e.g. a
-    pool is shown in TiB once it exceeds 1 TiB). Only descriptions that opt into
-    this scaling (``suggested_unit_of_measurement in GB_SCALED_UNITS``) are
-    touched here; DATA_SIZE sensors with a deliberately fixed suggested unit
-    (e.g. app memory/block I/O in MiB) are handled by
-    ``_reset_stale_forced_unit`` instead, since an older release forced them
-    onto the GB/GiB scale too.
+    pool is shown in TiB once it exceeds 1 TiB). A unit the user pinned in the
+    entity settings is left alone (see ``_force_entity_unit``). Only
+    descriptions that opt into this scaling
+    (``suggested_unit_of_measurement in GB_SCALED_UNITS``) are touched here;
+    DATA_SIZE sensors with a deliberately fixed suggested unit (e.g. app
+    memory/block I/O in MiB) are handled by ``_reset_stale_forced_unit``
+    instead, since an older release forced them onto the GB/GiB scale too.
     """
     data_unit = config_entry.options.get(
         CONF_DATA_UNIT, config_entry.data.get(CONF_DATA_UNIT, DEFAULT_DATA_UNIT)
@@ -180,19 +191,49 @@ def _force_entity_unit(
     value: Any,
     binary: bool,
 ) -> None:
-    """Write the magnitude-appropriate display unit of one entity to the registry."""
+    """Write the magnitude-appropriate display unit of one entity to the registry.
+
+    Home Assistant stores a unit the user picks in the entity settings in the
+    same ``options["sensor"]["unit_of_measurement"]`` field. To tell the two
+    apart, the unit this function last wrote is remembered under the
+    integration's own ``options[DOMAIN]`` key; a current value that differs
+    from it was chosen by the user and is left alone. That ownership is then
+    pinned (``_USER_UNIT``), so re-picking the remembered unit later does not
+    hand the entity back to the automatic scaling. Clearing the unit removes the
+    user's override and re-enables it. An entity without a marker (installed
+    before the marker existed, or whose first setup has not run yet) counts as
+    integration-owned, so a unit chosen in that window is overwritten once.
+    A unit pinned by the user also outranks the GB/GiB base option. Picking the
+    very unit the integration currently shows changes nothing in the registry,
+    so it cannot be told apart from no choice and stays automatic.
+    """
     entity_id = ent_reg.async_get_entity_id(
         "sensor", DOMAIN, format_unique_id(identity, description.key, reference)
     )
-    if entity_id is None:
+    if entity_id is None or (entry := ent_reg.async_get(entity_id)) is None:
         return
 
     unit, _ = scaled_data_unit(value, binary)
-    entry = ent_reg.async_get(entity_id)
-    options = dict(entry.options.get("sensor", {})) if entry else {}
-    if options.get("unit_of_measurement") != unit:
-        options["unit_of_measurement"] = unit
-        ent_reg.async_update_entity_options(entity_id, "sensor", options)
+    sensor_options = dict(entry.options.get("sensor", {}))
+    own_options = dict(entry.options.get(DOMAIN, {}))
+    current = sensor_options.get(_UNIT_OPTION)
+    written = own_options.get(_AUTO_UNIT_OPTION)
+    if current is not None and written is not None and current != written:
+        _LOGGER.debug("Keeping the user-chosen unit %s of %s", current, entity_id)
+        if written != _USER_UNIT:
+            own_options[_AUTO_UNIT_OPTION] = _USER_UNIT
+            ent_reg.async_update_entity_options(entity_id, DOMAIN, own_options)
+        return
+
+    # Two writes on purpose: the public registry API replaces one options domain
+    # per call, and the marker must live outside ``options["sensor"]`` (the entity
+    # settings UI rewrites that domain). Both run synchronously in one loop tick.
+    if current != unit:
+        sensor_options[_UNIT_OPTION] = unit
+        ent_reg.async_update_entity_options(entity_id, "sensor", sensor_options)
+    if written != unit:
+        own_options[_AUTO_UNIT_OPTION] = unit
+        ent_reg.async_update_entity_options(entity_id, DOMAIN, own_options)
 
 
 def _reset_stale_forced_unit(
@@ -221,21 +262,29 @@ def _reset_entity_unit(
     these descriptions, any entity still holding a mismatched unit is a
     leftover from it; reset it and log the correction so it isn't a silent,
     permanent inconsistency for already-affected installs.
+
+    The reset runs once per entity (``_UNIT_RESET_DONE_OPTION``): the bug it
+    undoes is gone, so a unit the user picks afterwards must survive restarts.
     """
     entity_id = ent_reg.async_get_entity_id(
         "sensor", DOMAIN, format_unique_id(identity, description.key, reference)
     )
-    if entity_id is None:
+    if entity_id is None or (entry := ent_reg.async_get(entity_id)) is None:
         return
 
+    own_options = dict(entry.options.get(DOMAIN, {}))
+    if own_options.get(_UNIT_RESET_DONE_OPTION):
+        return
+    own_options[_UNIT_RESET_DONE_OPTION] = True
+    ent_reg.async_update_entity_options(entity_id, DOMAIN, own_options)
+
     target_unit = description.suggested_unit_of_measurement
-    entry = ent_reg.async_get(entity_id)
-    options = dict(entry.options.get("sensor", {})) if entry else {}
-    current_unit = options.get("unit_of_measurement")
+    options = dict(entry.options.get("sensor", {}))
+    current_unit = options.get(_UNIT_OPTION)
     if current_unit is None or current_unit == target_unit:
         return
 
-    del options["unit_of_measurement"]
+    del options[_UNIT_OPTION]
     ent_reg.async_update_entity_options(entity_id, "sensor", options)
     _LOGGER.info(
         "Reset %s from a stale forced unit (%s) back to %s; a prior release's "
