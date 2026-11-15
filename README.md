@@ -483,7 +483,7 @@ the same. Both are explained, with ready-to-use automations, in the wiki:
 After setup you can fine-tune the integration via **Settings → Devices & Services → TrueNAS → Configure**. Saving the options reloads the integration so changes take effect immediately.
 
 * **Poll interval** - How often TrueNAS is queried: `5`, `10`, `30`, `60` (default), `120` or `300` seconds. Lower values give near-live network throughput; higher values reduce load on TrueNAS. Interface RX/TX is averaged over the selected interval.
-* **Data size unit** - `GB` (base 1000) or `GiB` (base 1024); applied to all dataset, pool and memory sensors.
+* **Data size unit** - `GB` (base 1000) or `GiB` (base 1024); applied to all dataset, pool and memory sensors. A unit you choose for a single sensor under *Settings → Entities* is kept and not overwritten by this option.
 * **Behaviour**
   * *Skip disabled cronjobs* - hide cronjobs that are disabled in TrueNAS (on by default).
   * *Hide RX/TX sensors for disconnected NICs* - when enabled, traffic sensors are only created for connected interfaces; when disabled (default), every interface gets RX/TX sensors.

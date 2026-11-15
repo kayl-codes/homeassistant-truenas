@@ -14,8 +14,12 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
 
 ## [Unreleased]
 
+## [2.13.2] — SMB Log, Unit Choice & Repair Fixes
+
 ### Changed
 - Requires `aiotruenas` 1.9.0 or later (installed automatically). (#220)
+- The integration declares the Home Assistant category *NAS servers* (`computers_network.nas_servers`)
+  in its manifest, so it is grouped with the NAS integrations. (#238)
 - The system sensors (CPU, CPU temperature, memory, ZFS ARC, load, uptime, network traffic)
   now read their data through aiotruenas' typed system reader. Entities and units are
   unchanged; the load averages now come from `system.info` instead of a separate reporting
