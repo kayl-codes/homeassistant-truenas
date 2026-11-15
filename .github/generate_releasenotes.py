@@ -114,7 +114,9 @@ def last_integration_release(github, current=None):
     ]
     if not candidates:
         return {"tag_name": None, "tag_sha": None}
-    best = max(candidates, key=lambda tag: _version_key(tag.name))
+    # Equal keys (v2.13 and v2.13.0) are tie-broken by the full name, so the
+    # result does not depend on the tag-list order.
+    best = max(candidates, key=lambda tag: (_version_key(tag.name), tag.name))
     return {"tag_name": best.name, "tag_sha": best.commit.sha}
 
 

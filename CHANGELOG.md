@@ -47,7 +47,7 @@ Minimum requirements throughout this fork: **Home Assistant 2025.8.0**, **TrueNA
   went over a connection that had not enabled private methods. The connection now enables them
   first, so the sensor keeps working without the warning; you no longer need to disable the
   sensor to keep the log clean. With a read-only key, the first refused call stops the query
-  until the next reload, and the sensor stays unavailable. (#220)
+  until the next reload, and the sensor stays unavailable. (#220; the request to disable the SMB connections sensor by default for new installs is not part of this release)
 - **A unit you chose in the entity settings was reset on every restart.** The integration set
   the display unit of its data-size sensors (for example the backup size) itself on
   every start, which overwrote a unit picked under *Settings → Entities → (sensor) → Unit of
