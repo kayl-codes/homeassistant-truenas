@@ -84,8 +84,11 @@ def _version_key(tag_name):
     """Numeric sort key of a tag name such as ``v2.13.1`` or ``v2.13.2-rc2``.
 
     A pre-release suffix is dropped, so ``v2.13.2-rc2`` sorts as ``v2.13.2``.
+    Missing components are padded with 0, so the abbreviated ``v2.13`` equals
+    ``v2.13.0`` instead of comparing as a shorter, different tuple.
     """
-    return tuple(int(part) for part in tag_name.split("-")[0].lstrip("v").split("."))
+    parts = [int(part) for part in tag_name.split("-")[0].lstrip("v").split(".")]
+    return tuple(parts + [0] * (3 - len(parts)))
 
 
 def last_integration_release(github, current=None):
