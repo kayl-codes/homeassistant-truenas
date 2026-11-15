@@ -92,6 +92,12 @@ class StatisticsCleanupRepairFlow(RepairsFlow):
             },
         )
 
+    async def async_step_init_metadata_only(
+        self, user_input: dict[str, Any] | None = None
+    ) -> RepairsFlowResult:
+        """Handle the metadata-only menu using the normal initialization flow."""
+        return await self.async_step_init(user_input)
+
     async def async_step_fix(
         self, user_input: dict[str, Any] | None = None
     ) -> RepairsFlowResult:
