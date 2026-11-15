@@ -124,7 +124,9 @@ async def test_statistics_cleanup_menu_loads_and_reopens(
 
     with patch.object(manager, "async_create_flow", return_value=flow):
         result = await manager.async_init(
-            DOMAIN, context={"issue_id": "statistics_orphaned_entry1"}
+            DOMAIN,
+            context={"issue_id": "statistics_orphaned_entry1"},
+            data={"issue_id": "statistics_orphaned_entry1"},
         )
 
     assert result["type"] == "menu"
