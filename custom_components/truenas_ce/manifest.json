@@ -2,6 +2,7 @@
     "domain": "truenas_ce",
     "name": "TrueNAS CE",
     "after_dependencies": ["recorder"],
+    "categories": ["computers_network.nas_servers"],
     "codeowners": [
         "@kayl-codes"
     ],
