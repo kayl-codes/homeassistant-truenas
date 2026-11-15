@@ -63,7 +63,7 @@ jobs:
         # release, and pytest-homeassistant-custom-component's mock-open==1.4.0
         # dependency has never published a wheel, only an sdist, on any release.
         run: |
-          pip install -r requirements_tests_only_binary_exempt.txt pytest-homeassistant-custom-component==0.13.348
+          pip install -r requirements_tests_only_binary_exempt.txt pytest-homeassistant-custom-component==0.13.375
       - name: Test with pytest
         run: pytest --cov=custom_components/truenas_ce --cov-report=term-missing
 
