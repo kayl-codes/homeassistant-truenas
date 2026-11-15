@@ -15,7 +15,6 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import (
-    CONN_CLASS_LOCAL_POLL,
     ConfigEntry,
     ConfigEntryState,
     ConfigFlow,
@@ -703,7 +702,6 @@ class TrueNASConfigFlow(ConfigFlow, domain=DOMAIN):
     """TrueNASConfigFlow class."""
 
     VERSION = 1
-    CONNECTION_CLASS = CONN_CLASS_LOCAL_POLL
 
     def __init__(self) -> None:
         """Initialize the config flow."""
