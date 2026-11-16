@@ -80,52 +80,30 @@ def new_commits(repo, sha):
     return reversed(commits[:-1])
 
 
-def _version_key(tag_name):
-    """Numeric sort key of a tag name such as ``v2.13.1`` or ``v2.13.2-rc2``.
-
-    A pre-release suffix is dropped, so ``v2.13.2-rc2`` sorts as ``v2.13.2``.
-    Missing components are padded with 0, so the abbreviated ``v2.13`` equals
-    ``v2.13.0`` instead of comparing as a shorter, different tuple.
-    """
-    parts = [int(part) for part in tag_name.split("-")[0].lstrip("v").split(".")]
-    return tuple(parts + [0] * (3 - len(parts)))
-
-
-def last_integration_release(github, current=None):
-    """Return the newest stable release older than the one being published.
-
-    ``current`` is the tag name of the release being published (or None for no
-    limit). It is matched by exact name, and only stable tags below its version
-    are candidates, so publishing an older release after a newer one still
-    gets its own baseline. The result is the highest such version by number,
-    so the order of the tag list does not matter. Pre-release tags (``-rcN``)
-    are never returned as the baseline.
-    """
+def last_integration_release(github, skip=True):
+    """Return last release."""
     repo = github.get_repo(REPO_NAME)
-    stable_reg = r"^v?\d+(\.\d+){0,2}$"
-    versioned = current and re.match(r"^v?\d+(\.\d+){0,2}(-rc\d+)?$", current)
-    limit = _version_key(current) if versioned else None
-    candidates = [
-        tag
-        for tag in repo.get_tags()
-        if tag.name != current
-        and re.match(stable_reg, tag.name)
-        and (limit is None or _version_key(tag.name) < limit)
-    ]
-    if not candidates:
-        return {"tag_name": None, "tag_sha": None}
-    # Equal keys (v2.13 and v2.13.0) are tie-broken by the full name, so the
-    # result does not depend on the tag-list order.
-    best = max(candidates, key=lambda tag: (_version_key(tag.name), tag.name))
-    return {"tag_name": best.name, "tag_sha": best.commit.sha}
+    tag_sha = None
+    data = {}
+    tags = list(repo.get_tags())
+    reg = r"^v?\d+(\.\d+){0,2}$"
+    if tags:
+        for tag in tags:
+            tag_name = tag.name
+            if re.match(reg, tag_name):
+                tag_sha = tag.commit.sha
+                if skip:
+                    skip = False
+                    continue
+                break
+    data["tag_name"] = tag_name
+    data["tag_sha"] = tag_sha
+    return data
 
 
-def get_integration_commits(github, current=None):
+def get_integration_commits(github, skip=True):
     repo = github.get_repo(REPO_NAME)
-    base_sha = last_integration_release(github, current)["tag_sha"]
-    if not base_sha:
-        return NOCHANGE
-    commits = new_commits(repo, base_sha)
+    commits = new_commits(repo, last_integration_release(github, skip)["tag_sha"])
     if not commits:
         return NOCHANGE
 
@@ -164,7 +142,7 @@ if UPDATERELEASE == "yes":
         new_body = BODY.format(
             badge=badge,
             changes=CHANGES.format(
-                integration_changes=get_integration_commits(GITHUB, VERSION),
+                integration_changes=get_integration_commits(GITHUB),
             ),
         )
     # Preserve the existing draft/prerelease flags: update_release() defaults
@@ -177,11 +155,10 @@ if UPDATERELEASE == "yes":
         prerelease=RELEASE.prerelease,
     )
 else:
-    integration_changes = get_integration_commits(GITHUB)
+    integration_changes = get_integration_commits(GITHUB, False)
     if integration_changes != NOCHANGE:
-        parts = list(_version_key(last_integration_release(GITHUB)["tag_name"]))
-        parts[-1] += 1
-        VERSION = "v" + ".".join(str(part) for part in parts)
+        VERSION = last_integration_release(GITHUB, False)["tag_name"]
+        VERSION = f"{VERSION[:-1]}{int(VERSION[-1]) + 1}"
         REPO.create_issue(
             title=f"Create release {VERSION}?",
             labels=["New release"],
