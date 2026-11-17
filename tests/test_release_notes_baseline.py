@@ -335,7 +335,8 @@ def test_publish_with_curated_notes_never_reads_the_baseline(monkeypatch):
     assert github.repo.tag_reads == 0
     updated = github.repo.release.updated["message"]
     assert updated.startswith("[![Downloads")
-    assert "## Curated" in updated
+    # The curated body follows the badge unchanged: same heading, text and spacing.
+    assert updated.endswith("\n\n## Curated\n\nText.")
 
 
 def test_publish_with_empty_body_compares_up_to_the_release_tag(monkeypatch):
@@ -355,6 +356,8 @@ def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
     assert github.repo.compared == ("v2.13.11", "master")
     assert github.repo.tag_reads == 1
     assert github.repo.issues[0]["title"] == "Create release v2.13.12?"
+    # The issue body carries the commit line generated from the same range.
+    assert "- [feat: x]" in github.repo.issues[0]["body"]
 
 
 def test_truncated_compare_page_is_an_error_not_partial_notes(helpers):
