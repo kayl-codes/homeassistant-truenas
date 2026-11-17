@@ -22,6 +22,8 @@ HELPERS = (
     "get_integration_commits",
 )
 CONSTANTS = ("REPO_NAME", "NOCHANGE", "CHANGE", "_SKIP_MARKERS")
+# The GitHub compare endpoint lists at most this many commits.
+COMPARE_PAGE = 250
 REPO_NAME = "kayl-codes/homeassistant-truenas"
 
 
@@ -45,16 +47,19 @@ def _load_helpers() -> dict:
 
 
 class _FakeRepo:
-    def __init__(self, tags, shas, commits, default_branch):
+    def __init__(self, tags, shas, commits, default_branch, total=None):
         self._tags = tags
         self._shas = shas
         self._commits = commits
+        self._total = total
         self.default_branch = default_branch
         self.compared = None
         self.issues = []
         self.release = None
+        self.tag_reads = 0
 
     def get_tags(self):
+        self.tag_reads += 1
         return [
             SimpleNamespace(
                 name=tag,
@@ -66,7 +71,8 @@ class _FakeRepo:
     def compare(self, base, head):
         self.compared = (base, head)
         # An iterator without __len__, like PyGithub's PaginatedList.
-        return SimpleNamespace(commits=iter(self._commits))
+        total = len(self._commits) if self._total is None else self._total
+        return SimpleNamespace(commits=iter(self._commits), total_commits=total)
 
     def get_release(self, tag):
         return self.release
@@ -76,8 +82,10 @@ class _FakeRepo:
 
 
 class _FakeGithub:
-    def __init__(self, tags, shas=None, commits=(), default_branch="master"):
-        self.repo = _FakeRepo(tags, shas or {}, list(commits), default_branch)
+    def __init__(
+        self, tags, shas=None, commits=(), default_branch="master", total=None
+    ):
+        self.repo = _FakeRepo(tags, shas or {}, list(commits), default_branch, total)
 
     def get_repo(self, name):
         assert name == REPO_NAME
@@ -324,6 +332,7 @@ def test_publish_with_curated_notes_never_reads_the_baseline(monkeypatch):
     github.repo.release = _release("## Curated\n\nText.")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
     assert github.repo.compared is None
+    assert github.repo.tag_reads == 0
     updated = github.repo.release.updated["message"]
     assert updated.startswith("[![Downloads")
     assert "## Curated" in updated
@@ -334,6 +343,7 @@ def test_publish_with_empty_body_compares_up_to_the_release_tag(monkeypatch):
     github.repo.release = _release("")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
     assert github.repo.compared == ("v2.13.1", "v2.13.2-rc2")
+    assert github.repo.tag_reads == 1
     assert "feat: x" in github.repo.release.updated["message"]
 
 
@@ -343,4 +353,21 @@ def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
     # The newest stable tag is v2.13.11: the title proposes the next patch and the
     # commit list starts at the same tag.
     assert github.repo.compared == ("v2.13.11", "master")
+    assert github.repo.tag_reads == 1
     assert github.repo.issues[0]["title"] == "Create release v2.13.12?"
+
+
+def test_truncated_compare_page_is_an_error_not_partial_notes(helpers):
+    # The range holds one commit more than the endpoint lists.
+    commits = [_commit(f"c{i}", "feat: x") for i in range(COMPARE_PAGE)]
+    github = _FakeGithub(TAGS, commits=commits, total=COMPARE_PAGE + 1)
+    with pytest.raises(SystemExit, match="notes would be incomplete"):
+        helpers["get_integration_commits"](github, BASE_131, "v2.13.2")
+
+
+def test_complete_compare_page_of_exactly_250_is_used(helpers):
+    # total_commits equals the listed count, so nothing is cut off.
+    commits = [_commit(f"c{i}", "feat: x") for i in range(COMPARE_PAGE)]
+    github = _FakeGithub(TAGS, commits=commits)
+    notes = helpers["get_integration_commits"](github, BASE_131, "v2.13.2")
+    assert notes.count("- [") == COMPARE_PAGE
