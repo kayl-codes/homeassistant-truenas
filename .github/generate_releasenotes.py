@@ -134,7 +134,9 @@ def get_integration_commits(github, base, head=None):
         raise SystemExit(f"No older stable release tag found before {head or 'HEAD'}.")
     repo = github.get_repo(REPO_NAME)
     # Compare from the SHA read above, so a tag moved after get_tags() cannot shift it.
-    comparison = repo.compare(base["tag_sha"], head or repo.default_branch)
+    # Resolve the head once too: a tag or branch moved mid-run cannot change the range.
+    head_sha = repo.get_commit(head or repo.default_branch).sha
+    comparison = repo.compare(base["tag_sha"], head_sha)
     commits = list(comparison.commits)
     if comparison.total_commits > len(commits):
         # The compare endpoint caps the listed commits; a longer range would be

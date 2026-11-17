@@ -56,6 +56,7 @@ class _FakeRepo:
         self.compared = None
         self.issues = []
         self.release = None
+        self.release_ref = None
         self.tag_reads = 0
 
     def get_tags(self):
@@ -75,7 +76,11 @@ class _FakeRepo:
         return SimpleNamespace(commits=iter(self._commits), total_commits=total)
 
     def get_release(self, tag):
+        self.release_ref = tag
         return self.release
+
+    def get_commit(self, ref):
+        return SimpleNamespace(sha=f"sha-{ref}")
 
     def create_issue(self, **kwargs):
         self.issues.append(kwargs)
@@ -215,7 +220,7 @@ def test_changes_are_compared_up_to_the_release_tag(helpers):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
     helpers["get_integration_commits"](github, BASE_131, "v2.13.2-rc2")
     # Commits merged after the release must not reach its notes.
-    assert github.repo.compared == ("sha-v2.13.1", "v2.13.2-rc2")
+    assert github.repo.compared == ("sha-v2.13.1", "sha-v2.13.2-rc2")
 
 
 def test_changes_default_to_the_default_branch_without_a_release(helpers):
@@ -224,7 +229,7 @@ def test_changes_default_to_the_default_branch_without_a_release(helpers):
     )
     base = {"tag_name": "v2.13.2", "tag_sha": "sha-v2.13.2"}
     helpers["get_integration_commits"](github, base)
-    assert github.repo.compared == ("sha-v2.13.2", "trunk-x")
+    assert github.repo.compared == ("sha-v2.13.2", "sha-trunk-x")
 
 
 def test_no_commits_in_range_is_no_change(helpers):
@@ -331,6 +336,7 @@ def test_publish_with_curated_notes_never_reads_the_baseline(monkeypatch):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
     github.repo.release = _release("## Curated\n\nText.")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
+    assert github.repo.release_ref == "v2.13.2-rc2"
     assert github.repo.compared is None
     assert github.repo.tag_reads == 0
     updated = github.repo.release.updated["message"]
@@ -343,7 +349,8 @@ def test_publish_with_empty_body_compares_up_to_the_release_tag(monkeypatch):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
     github.repo.release = _release("")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
-    assert github.repo.compared == ("sha-v2.13.1", "v2.13.2-rc2")
+    assert github.repo.release_ref == "v2.13.2-rc2"
+    assert github.repo.compared == ("sha-v2.13.1", "sha-v2.13.2-rc2")
     assert github.repo.tag_reads == 1
     assert "feat: x" in github.repo.release.updated["message"]
 
@@ -353,7 +360,7 @@ def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
     _run_script(monkeypatch, github, "no")
     # The newest stable tag is v2.13.11: the title proposes the next patch and the
     # commit list starts at the same tag.
-    assert github.repo.compared == ("sha-v2.13.11", "master")
+    assert github.repo.compared == ("sha-v2.13.11", "sha-master")
     assert github.repo.tag_reads == 1
     assert github.repo.issues[0]["title"] == "Create release v2.13.12?"
     # The issue body carries the commit line generated from the same range.
