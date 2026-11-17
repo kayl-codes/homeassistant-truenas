@@ -133,7 +133,8 @@ def get_integration_commits(github, base, head=None):
         # claims "No changes in this release." when the baseline is unknown.
         raise SystemExit(f"No older stable release tag found before {head or 'HEAD'}.")
     repo = github.get_repo(REPO_NAME)
-    comparison = repo.compare(base["tag_name"], head or repo.default_branch)
+    # Compare from the SHA read above, so a tag moved after get_tags() cannot shift it.
+    comparison = repo.compare(base["tag_sha"], head or repo.default_branch)
     commits = list(comparison.commits)
     if comparison.total_commits > len(commits):
         # The compare endpoint caps the listed commits; a longer range would be

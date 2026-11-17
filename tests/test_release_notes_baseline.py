@@ -215,7 +215,7 @@ def test_changes_are_compared_up_to_the_release_tag(helpers):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
     helpers["get_integration_commits"](github, BASE_131, "v2.13.2-rc2")
     # Commits merged after the release must not reach its notes.
-    assert github.repo.compared == ("v2.13.1", "v2.13.2-rc2")
+    assert github.repo.compared == ("sha-v2.13.1", "v2.13.2-rc2")
 
 
 def test_changes_default_to_the_default_branch_without_a_release(helpers):
@@ -224,7 +224,7 @@ def test_changes_default_to_the_default_branch_without_a_release(helpers):
     )
     base = {"tag_name": "v2.13.2", "tag_sha": "sha-v2.13.2"}
     helpers["get_integration_commits"](github, base)
-    assert github.repo.compared == ("v2.13.2", "trunk-x")
+    assert github.repo.compared == ("sha-v2.13.2", "trunk-x")
 
 
 def test_no_commits_in_range_is_no_change(helpers):
@@ -343,7 +343,7 @@ def test_publish_with_empty_body_compares_up_to_the_release_tag(monkeypatch):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
     github.repo.release = _release("")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
-    assert github.repo.compared == ("v2.13.1", "v2.13.2-rc2")
+    assert github.repo.compared == ("sha-v2.13.1", "v2.13.2-rc2")
     assert github.repo.tag_reads == 1
     assert "feat: x" in github.repo.release.updated["message"]
 
@@ -353,7 +353,7 @@ def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
     _run_script(monkeypatch, github, "no")
     # The newest stable tag is v2.13.11: the title proposes the next patch and the
     # commit list starts at the same tag.
-    assert github.repo.compared == ("v2.13.11", "master")
+    assert github.repo.compared == ("sha-v2.13.11", "master")
     assert github.repo.tag_reads == 1
     assert github.repo.issues[0]["title"] == "Create release v2.13.12?"
     # The issue body carries the commit line generated from the same range.
@@ -373,4 +373,7 @@ def test_complete_compare_page_of_exactly_250_is_used(helpers):
     commits = [_commit(f"c{i}", "feat: x") for i in range(COMPARE_PAGE)]
     github = _FakeGithub(TAGS, commits=commits)
     notes = helpers["get_integration_commits"](github, BASE_131, "v2.13.2")
-    assert notes.count("- [") == COMPARE_PAGE
+    # Every commit link appears exactly once: no omission, no duplicate.
+    links = re.findall(r"\((https://example\.invalid/commit/[^)]+)\)", notes)
+    expected = [f"https://example.invalid/commit/c{i}" for i in range(COMPARE_PAGE)]
+    assert sorted(links) == sorted(expected)
