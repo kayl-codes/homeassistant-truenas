@@ -67,56 +67,99 @@ _SKIP_MARKERS = (
 GITHUB = Github(sys.argv[2])
 
 
-def new_commits(repo, sha):
-    """Get new commits in repo."""
-    from datetime import datetime
+def _version_key(tag_name):
+    """Numeric sort key of a tag name such as ``v2.13.1`` or ``v2.13.2-rc2``.
 
-    dateformat = "%a, %d %b %Y %H:%M:%S GMT"
-    release_commit = repo.get_commit(sha)
-    since = datetime.strptime(release_commit.last_modified, dateformat)
-    commits = list(repo.get_commits(since=since))
-    if len(commits) <= 1:
-        return False
-    return reversed(commits[:-1])
+    A pre-release suffix is dropped, so ``v2.13.2-rc2`` sorts as ``v2.13.2``.
+    Missing components are padded with 0, so the abbreviated ``v2.13`` equals
+    ``v2.13.0`` instead of comparing as a shorter, different tuple.
+    """
+    parts = [int(part) for part in tag_name.split("-")[0].lstrip("v").split(".")]
+    return tuple(parts + [0] * (3 - len(parts)))
 
 
-def last_integration_release(github, skip=True):
-    """Return last release."""
+def next_release_version(tag_name):
+    """Return the tag name of the next patch release, e.g. ``v2.13.10``."""
+    major, minor, patch = _version_key(tag_name)
+    return f"v{major}.{minor}.{patch + 1}"
+
+
+def last_integration_release(github, current=None):
+    """Return the newest stable release older than the one being published.
+
+    ``current`` is the tag name of the release being published (or None for no
+    limit). It is matched by exact name, and only stable tags below its version
+    are candidates, so publishing an older release after a newer one still
+    gets its own baseline. The result is the highest such version by number,
+    so the order of the tag list does not matter. Pre-release tags (``-rcN``)
+    are never returned as the baseline.
+    """
     repo = github.get_repo(REPO_NAME)
-    tag_sha = None
-    data = {}
-    tags = list(repo.get_tags())
-    reg = r"^v?\d+(\.\d+){0,2}$"
-    if tags:
-        for tag in tags:
-            tag_name = tag.name
-            if re.match(reg, tag_name):
-                tag_sha = tag.commit.sha
-                if skip:
-                    skip = False
-                    continue
-                break
-    data["tag_name"] = tag_name
-    data["tag_sha"] = tag_sha
-    return data
+    stable_reg = r"^v?\d+(\.\d+){0,2}$"
+    if current and not re.match(r"^v?\d+(\.\d+){0,2}(-rc\d+)?$", current):
+        # Dropping the limit would make a newer stable tag the baseline.
+        raise SystemExit(f"Unrecognised release tag {current!r}.")
+    limit = _version_key(current) if current else None
+    candidates = [
+        tag
+        for tag in repo.get_tags()
+        if tag.name != current
+        and re.match(stable_reg, tag.name)
+        and (limit is None or _version_key(tag.name) < limit)
+    ]
+    if not candidates:
+        return {"tag_name": None, "tag_sha": None}
+    # Equal keys are tie-broken by the full name, so the tag-list order is irrelevant.
+    best = max(candidates, key=lambda tag: (_version_key(tag.name), tag.name))
+    best_key = _version_key(best.name)
+    same_version = [tag for tag in candidates if _version_key(tag.name) == best_key]
+    # Equal versions (v2.13 and v2.13.0) must name the same commit; otherwise
+    # either choice could be the wrong baseline, so refuse instead of guessing.
+    if len({tag.commit.sha for tag in same_version}) > 1:
+        names = ", ".join(sorted(tag.name for tag in same_version))
+        raise SystemExit(f"Equal release tags point to different commits: {names}.")
+    return {"tag_name": best.name, "tag_sha": best.commit.sha}
 
 
-def get_integration_commits(github, skip=True):
+def get_integration_commits(github, base, head=None):
+    """Return the changelog lines from the baseline ``base`` up to ``head``.
+
+    ``base`` is the result of ``last_integration_release``. ``head`` is the tag
+    being published, or None for the default branch. Comparing against an
+    explicit head keeps commits merged after that release out of its notes.
+    """
+    if not base["tag_sha"]:
+        # No older stable tag: failing is better than a release body that
+        # claims "No changes in this release." when the baseline is unknown.
+        raise SystemExit(f"No older stable release tag found before {head or 'HEAD'}.")
     repo = github.get_repo(REPO_NAME)
-    commits = new_commits(repo, last_integration_release(github, skip)["tag_sha"])
+    # Compare from the SHA read above, so a tag moved after get_tags() cannot shift it.
+    # Resolve the head once too: a tag or branch moved mid-run cannot change the range.
+    head_sha = repo.get_commit(head or repo.default_branch).sha
+    comparison = repo.compare(base["tag_sha"], head_sha)
+    commits = list(comparison.commits)
+    if comparison.total_commits > len(commits):
+        # The compare endpoint caps the listed commits; a longer range would be
+        # cut off, so refuse instead of writing incomplete notes.
+        raise SystemExit(
+            f"Compare lists {len(commits)} of {comparison.total_commits} commits; "
+            "notes would be incomplete. Use a newer base tag or split the range."
+        )
     if not commits:
         return NOCHANGE
 
     changes = ""
     for commit in commits:
-        msg = repo.get_git_commit(commit.sha).message
+        # The compare payload already carries the full commit message.
+        msg = commit.commit.message
         if any(marker in msg for marker in _SKIP_MARKERS):
             continue
         msg = msg.split("\n", 1)[0]
         ath = commit.author.login if commit.author else "Unknown"
         changes += CHANGE.format(line=msg, link=commit.html_url, author=ath)
 
-    return changes
+    # Every commit skipped: the same "no changes" as an empty range.
+    return changes or NOCHANGE
 
 
 # Update release notes:
@@ -139,10 +182,11 @@ if UPDATERELEASE == "yes":
             new_body = f"{badge}\n\n{existing_body}"
     else:
         # No curated notes: fall back to the auto-generated badge + commit list.
+        base = last_integration_release(GITHUB, VERSION)
         new_body = BODY.format(
             badge=badge,
             changes=CHANGES.format(
-                integration_changes=get_integration_commits(GITHUB),
+                integration_changes=get_integration_commits(GITHUB, base, VERSION),
             ),
         )
     # Preserve the existing draft/prerelease flags: update_release() defaults
@@ -155,10 +199,11 @@ if UPDATERELEASE == "yes":
         prerelease=RELEASE.prerelease,
     )
 else:
-    integration_changes = get_integration_commits(GITHUB, False)
+    base = last_integration_release(GITHUB)
+    integration_changes = get_integration_commits(GITHUB, base)
     if integration_changes != NOCHANGE:
-        VERSION = last_integration_release(GITHUB, False)["tag_name"]
-        VERSION = f"{VERSION[:-1]}{int(VERSION[-1]) + 1}"
+        # Same baseline read as the commits above, so title and list agree.
+        VERSION = next_release_version(base["tag_name"])
         REPO.create_issue(
             title=f"Create release {VERSION}?",
             labels=["New release"],
