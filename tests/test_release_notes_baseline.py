@@ -21,9 +21,16 @@ HELPERS = (
     "last_integration_release",
     "get_integration_commits",
 )
-CONSTANTS = ("REPO_NAME", "NOCHANGE", "CHANGE", "_SKIP_MARKERS")
+CONSTANTS = ("REPO_NAME", "NOCHANGE", "CHANGE", "CHANGES", "BODY", "_SKIP_MARKERS")
 # The GitHub compare endpoint lists at most this many commits.
 COMPARE_PAGE = 250
+# The badge the script prepends for the release tag v2.13.2-rc2.
+RC2_BADGE = (
+    "[![Downloads for this release]"
+    "(https://img.shields.io/github/downloads/"
+    "kayl-codes/homeassistant-truenas/v2.13.2-rc2/total.svg)]"
+    "(https://github.com/kayl-codes/homeassistant-truenas/releases/v2.13.2-rc2)"
+)
 REPO_NAME = "kayl-codes/homeassistant-truenas"
 
 
@@ -328,31 +335,48 @@ class _FakeRelease:
         self.updated = kwargs
 
 
-def _release(body):
-    return _FakeRelease(body)
-
-
 def test_publish_with_curated_notes_never_reads_the_baseline(monkeypatch):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
-    github.repo.release = _release("## Curated\n\nText.")
+    github.repo.release = _FakeRelease("## Curated\n\nText.")
+    # Non-default flags: a hard-coded value in the script would not pass this.
+    github.repo.release.draft = True
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
     assert github.repo.release_ref == "v2.13.2-rc2"
     assert github.repo.compared is None
     assert github.repo.tag_reads == 0
-    updated = github.repo.release.updated["message"]
-    assert updated.startswith("[![Downloads")
-    # The curated body follows the badge unchanged: same heading, text and spacing.
-    assert updated.endswith("\n\n## Curated\n\nText.")
+    updated = github.repo.release.updated
+    # The whole body: badge, blank line, then the curated text unchanged.
+    assert updated["message"] == f"{RC2_BADGE}\n\n## Curated\n\nText."
+    # Draft and pre-release flags must survive the publish.
+    assert updated["prerelease"] is True
+    assert updated["draft"] is True
+
+
+def test_publish_with_badge_already_present_keeps_the_body_unchanged(monkeypatch):
+    github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
+    existing = f"{RC2_BADGE}\n\n## Curated\n\nText."
+    github.repo.release = _FakeRelease(existing)
+    _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
+    # A re-run must not prepend a second badge.
+    assert github.repo.release.updated["message"] == existing
 
 
 def test_publish_with_empty_body_compares_up_to_the_release_tag(monkeypatch):
     github = _FakeGithub(TAGS, commits=[_commit("a1", "feat: x")])
-    github.repo.release = _release("")
+    github.repo.release = _FakeRelease("")
     _run_script(monkeypatch, github, "yes", "refs/tags/v2.13.2-rc2")
     assert github.repo.release_ref == "v2.13.2-rc2"
     assert github.repo.compared == ("sha-v2.13.1", "sha-v2.13.2-rc2")
     assert github.repo.tag_reads == 1
-    assert "feat: x" in github.repo.release.updated["message"]
+    # Golden body, spelled out: the layout of BODY/CHANGES is pinned too.
+    expected = (
+        f"\n{RC2_BADGE}\n\n\n## Changes\n\n"
+        "- [feat: x](https://example.invalid/commit/a1) @someone\n\n\n\n"
+    )
+    updated = github.repo.release.updated
+    assert updated["message"] == expected
+    assert updated["prerelease"] is True
+    assert updated["draft"] is False
 
 
 def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
@@ -362,9 +386,14 @@ def test_issue_path_title_and_commits_share_one_baseline(monkeypatch):
     # commit list starts at the same tag.
     assert github.repo.compared == ("sha-v2.13.11", "sha-master")
     assert github.repo.tag_reads == 1
-    assert github.repo.issues[0]["title"] == "Create release v2.13.12?"
-    # The issue body carries the commit line generated from the same range.
-    assert "- [feat: x]" in github.repo.issues[0]["body"]
+    issue = github.repo.issues[0]
+    assert issue["title"] == "Create release v2.13.12?"
+    assert issue["labels"] == ["New release"]
+    assert issue["assignee"] == "kayl-codes"
+    # Golden issue body: the generated commit list from the same range.
+    assert issue["body"] == (
+        "\n## Changes\n\n- [feat: x](https://example.invalid/commit/a1) @someone\n\n\n"
+    )
 
 
 def test_truncated_compare_page_is_an_error_not_partial_notes(helpers):
